@@ -1,0 +1,89 @@
+# did-stellar.toml
+# ─────────────────────────────────────────────────────────────────────────────
+# Stellar TOML extension for did:stellar DID Method
+# Place this file at: https://<your-domain>/.well-known/did-stellar.toml
+#
+# This file acts as an off-chain companion to the on-chain DID document stored
+# in the Soroban DIDRegistry contract.  The DIDResolver SDK fetches this file
+# during resolution to enrich the DID document with additional service endpoints
+# that may be too large or too volatile to store on-chain.
+#
+# W3C DID Core §5.4 – Services
+# https://www.w3.org/TR/did-core/#services
+# ─────────────────────────────────────────────────────────────────────────────
+
+VERSION = "1.0"
+
+# The did:stellar DID controlled by this domain.
+# Must match exactly the DID registered in the DIDRegistry contract.
+DID = "did:stellar:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+
+# Network on which the DID is anchored ("testnet" | "mainnet" | "futurenet")
+NETWORK = "testnet"
+
+# Soroban RPC endpoint used for on-chain resolution
+SOROBAN_RPC_URL = "https://soroban-testnet.stellar.org"
+
+# DIDRegistry contract address on the chosen network
+DID_REGISTRY_CONTRACT = "CBZQ7J2YQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQ"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Service Endpoints
+#
+# Each [[DID_SERVICES]] block defines one service endpoint that will be merged
+# into the resolved DID document's `service` array by the DIDResolver SDK.
+#
+# Required fields: id, type, serviceEndpoint
+# Optional fields: description, priority
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[DID_SERVICES]]
+id              = "#linked-domain"
+type            = "LinkedDomains"
+serviceEndpoint = "https://example.com"
+description     = "Primary web domain associated with this DID"
+
+[[DID_SERVICES]]
+id              = "#identity-hub"
+type            = "IdentityHub"
+serviceEndpoint = "https://identity-hub.example.com/v1.0/identifiers/did:stellar:GAA...4Z"
+description     = "W3C Identity Hub for credential storage and retrieval"
+
+[[DID_SERVICES]]
+id              = "#did-comm"
+type            = "DIDCommMessaging"
+serviceEndpoint = "https://messaging.example.com/did-comm"
+description     = "DIDComm v2 messaging endpoint"
+
+[[DID_SERVICES]]
+id              = "#credential-status"
+type            = "CredentialStatusList2021"
+serviceEndpoint = "https://example.com/credentials/status/1"
+description     = "W3C Credential Status List for revocation checks"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IPFS Configuration (for large DID documents)
+#
+# When the base DID document exceeds 500 bytes the full document is stored on
+# IPFS and only the CID hash is kept on-chain.  Configure the IPFS gateway
+# below for document retrieval.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[IPFS]
+GATEWAY  = "https://ipfs.io/ipfs/"
+PIN_NODE = "https://api.pinata.cloud/pinning/pinFileToIPFS"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Universal Resolver Configuration
+#
+# Enables interoperability with https://uniresolver.io/ and other resolvers
+# that implement the W3C DID Resolution HTTP(S) Bindings specification.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[UNIVERSAL_RESOLVER]
+# Endpoint that exposes the W3C DID Resolution HTTP API for this method
+ENDPOINT      = "https://resolver.example.com/1.0/identifiers/"
+# DID method prefix handled by this resolver driver
+DID_METHOD    = "stellar"
+# Driver specification version
+DRIVER_VERSION = "1.0.0"

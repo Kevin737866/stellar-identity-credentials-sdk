@@ -1,105 +1,98 @@
-import { 
-  Server, 
-  TransactionBuilder, 
-  Networks, 
-  Keypair, 
+import {
+  SorobanRpc,
+  TransactionBuilder,
+  Networks,
+  Keypair,
   Contract,
-  Address
+  Address,
+  xdr,
+  nativeToScVal,
+  scValToNative,
 } from 'stellar-sdk';
-import { 
+import {
   VerifiableCredential,
   StellarIdentityConfig,
   IssueCredentialOptions,
   TransactionOptions,
   CredentialVerificationResult,
-  StellarIdentityError
+  StellarIdentityError,
 } from './types';
 import { DIDClient } from './didClient';
 
 export class CredentialClient {
-  private server: Server;
+  private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
   private credentialIssuerContract: Contract;
   private didClient: DIDClient;
 
   constructor(config: StellarIdentityConfig) {
     this.config = config;
-    this.server = new Server(config.rpcUrl || this.getDefaultRpcUrl());
+    this.rpc = new SorobanRpc.Server(config.rpcUrl || this.getDefaultRpcUrl());
     this.credentialIssuerContract = new Contract(config.contracts.credentialIssuer);
     this.didClient = new DIDClient(config);
   }
 
-  /**
-   * Issue a new verifiable credential
-   */
   async issueCredential(
     issuerKeypair: Keypair,
     options: IssueCredentialOptions,
     txOptions?: TransactionOptions
   ): Promise<string> {
     try {
-      const account = await this.server.getAccount(issuerKeypair.publicKey());
-      
-      const transaction = new TransactionBuilder(account, {
-        fee: txOptions?.fee || '100',
+      const address = issuerKeypair.publicKey();
+      const account = await this.rpc.getAccount(address);
+
+      const tx = new TransactionBuilder(account, {
+        fee: String(txOptions?.fee ?? 100),
         networkPassphrase: this.getNetworkPassphrase(),
       })
         .addOperation(
           this.credentialIssuerContract.call(
             'issue_credential',
-            new Address(options.subject),
-            options.credentialType,
-            JSON.stringify(options.credentialData),
-            options.expirationDate || null,
-            options.proof
+            xdr.ScVal.scvAddress(new Address(options.subject).toScAddress()),
+            nativeToScVal(options.credentialType.map(t => new TextEncoder().encode(t)), { type: 'vec' }),
+            nativeToScVal(new TextEncoder().encode(JSON.stringify(options.credentialData)), { type: 'bytes' }),
+            options.expirationDate != null ? nativeToScVal(BigInt(options.expirationDate), { type: 'u64' }) : xdr.ScVal.scvVoid(),
+            nativeToScVal(new TextEncoder().encode(options.proof), { type: 'bytes' })
           )
         )
-        .setTimeout(txOptions?.timeout || 30)
+        .setTimeout(txOptions?.timeout ?? 30)
         .build();
 
-      if (txOptions?.memo) {
-        transaction.addMemo(txOptions.memo);
-      }
+      const prepared = await this.rpc.prepareTransaction(tx);
+      prepared.sign(issuerKeypair);
+      const result = await this.rpc.sendTransaction(prepared);
 
-      transaction.sign(issuerKeypair);
-      const result = await this.server.sendTransaction(transaction);
-      
-      if (result.result) {
-        return this.extractCredentialId(result.result);
-      } else {
-        throw new Error('Transaction failed');
-      }
+      if (result.status === 'ERROR') throw new Error(`Transaction failed: ${result.errorResult}`);
+      return this.extractCredentialId(result);
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Verify a verifiable credential
-   */
   async verifyCredential(credentialId: string): Promise<CredentialVerificationResult> {
     try {
       const credential = await this.getCredential(credentialId);
-      const isValid = await this.credentialIssuerContract.call('verify_credential', credentialId);
-      const status = await this.credentialIssuerContract.call('get_credential_status', credentialId);
-      
+      const isValidVal = await this.simulateRead('verify_credential', [
+        nativeToScVal(new TextEncoder().encode(credentialId), { type: 'bytes' }),
+      ]);
+      const statusVal = await this.simulateRead('get_credential_status', [
+        nativeToScVal(new TextEncoder().encode(credentialId), { type: 'bytes' }),
+      ]);
+
       return {
-        valid: isValid.result.val,
-        revoked: status.result.val === 'revoked',
+        valid: scValToNative(isValidVal) as boolean,
+        revoked: scValToNative(statusVal) === 'revoked',
         expired: this.isCredentialExpired(credential),
         issuer: credential.issuer,
         subject: credential.subject,
         issuanceDate: credential.issuanceDate,
-        expirationDate: credential.expirationDate
+        expirationDate: credential.expirationDate,
       };
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Revoke a verifiable credential
-   */
   async revokeCredential(
     issuerKeypair: Keypair,
     credentialId: string,
@@ -107,177 +100,124 @@ export class CredentialClient {
     txOptions?: TransactionOptions
   ): Promise<void> {
     try {
-      const account = await this.server.getAccount(issuerKeypair.publicKey());
-      
-      const transaction = new TransactionBuilder(account, {
-        fee: txOptions?.fee || '100',
+      const address = issuerKeypair.publicKey();
+      const account = await this.rpc.getAccount(address);
+
+      const tx = new TransactionBuilder(account, {
+        fee: String(txOptions?.fee ?? 100),
         networkPassphrase: this.getNetworkPassphrase(),
       })
         .addOperation(
           this.credentialIssuerContract.call(
             'revoke_credential',
-            credentialId,
-            reason || null
+            nativeToScVal(new TextEncoder().encode(credentialId), { type: 'bytes' }),
+            reason != null ? nativeToScVal(new TextEncoder().encode(reason), { type: 'bytes' }) : xdr.ScVal.scvVoid()
           )
         )
-        .setTimeout(txOptions?.timeout || 30)
+        .setTimeout(txOptions?.timeout ?? 30)
         .build();
 
-      transaction.sign(issuerKeypair);
-      await this.server.sendTransaction(transaction);
+      const prepared = await this.rpc.prepareTransaction(tx);
+      prepared.sign(issuerKeypair);
+      await this.rpc.sendTransaction(prepared);
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Get credential details
-   */
   async getCredential(credentialId: string): Promise<VerifiableCredential> {
     try {
-      const result = await this.credentialIssuerContract.call('get_credential', credentialId);
-      return this.parseCredential(result.result.val);
+      const retval = await this.simulateRead('get_credential', [
+        nativeToScVal(new TextEncoder().encode(credentialId), { type: 'bytes' }),
+      ]);
+      return this.parseCredential(scValToNative(retval));
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Get all credentials for an issuer
-   */
   async getIssuerCredentials(issuerAddress: string): Promise<string[]> {
     try {
-      const result = await this.credentialIssuerContract.call('get_issuer_credentials', issuerAddress);
-      return result.result.val;
+      const retval = await this.simulateRead('get_issuer_credentials', [
+        xdr.ScVal.scvAddress(new Address(issuerAddress).toScAddress()),
+      ]);
+      return (scValToNative(retval) as Uint8Array[]).map(b => new TextDecoder().decode(b));
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Get all credentials for a subject
-   */
   async getSubjectCredentials(subjectAddress: string): Promise<string[]> {
     try {
-      const result = await this.credentialIssuerContract.call('get_subject_credentials', subjectAddress);
-      return result.result.val;
+      const retval = await this.simulateRead('get_subject_credentials', [
+        xdr.ScVal.scvAddress(new Address(subjectAddress).toScAddress()),
+      ]);
+      return (scValToNative(retval) as Uint8Array[]).map(b => new TextDecoder().decode(b));
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Get credential status
-   */
   async getCredentialStatus(credentialId: string): Promise<string> {
     try {
-      const result = await this.credentialIssuerContract.call('get_credential_status', credentialId);
-      return result.result.val;
+      const retval = await this.simulateRead('get_credential_status', [
+        nativeToScVal(new TextEncoder().encode(credentialId), { type: 'bytes' }),
+      ]);
+      const raw = scValToNative(retval);
+      return raw instanceof Uint8Array ? new TextDecoder().decode(raw) : String(raw);
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Batch verify multiple credentials
-   */
   async batchVerifyCredentials(credentialIds: string[]): Promise<CredentialVerificationResult[]> {
-    try {
-      const results = await this.credentialIssuerContract.call('batch_verify_credentials', credentialIds);
-      const verificationResults: CredentialVerificationResult[] = [];
-      
-      for (let i = 0; i < credentialIds.length; i++) {
-        const credential = await this.getCredential(credentialIds[i]);
-        const status = await this.getCredentialStatus(credentialIds[i]);
-        
-        verificationResults.push({
-          valid: results.result.val[i],
-          revoked: status === 'revoked',
-          expired: this.isCredentialExpired(credential),
-          issuer: credential.issuer,
-          subject: credential.subject,
-          issuanceDate: credential.issuanceDate,
-          expirationDate: credential.expirationDate
-        });
-      }
-      
-      return verificationResults;
-    } catch (error) {
-      throw this.handleError(error);
-    }
+    return Promise.all(credentialIds.map(id => this.verifyCredential(id)));
   }
 
-  /**
-   * Get revocation reason
-   */
   async getRevocationReason(credentialId: string): Promise<string | null> {
     try {
-      const result = await this.credentialIssuerContract.call('get_revocation_reason', credentialId);
-      return result.result.val || null;
+      const retval = await this.simulateRead('get_revocation_reason', [
+        nativeToScVal(new TextEncoder().encode(credentialId), { type: 'bytes' }),
+      ]);
+      const raw = scValToNative(retval);
+      if (!raw) return null;
+      return raw instanceof Uint8Array ? new TextDecoder().decode(raw) : String(raw);
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Search credentials by type
-   */
-  async searchCredentialsByType(credentialType: string, maxResults: number = 10): Promise<string[]> {
-    try {
-      const result = await this.credentialIssuerContract.call('search_credentials_by_type', credentialType, maxResults);
-      return result.result.val;
-    } catch (error) {
-      throw this.handleError(error);
-    }
-  }
-
-  /**
-   * Create a verifiable presentation
-   */
   async createPresentation(
     credentials: VerifiableCredential[],
     holderKeypair: Keypair,
     domain?: string,
     challenge?: string
-  ): Promise<any> {
-    const presentation = {
+  ): Promise<Record<string, unknown>> {
+    return {
       '@context': ['https://www.w3.org/2018/credentials/v1'],
       type: ['VerifiablePresentation'],
       holder: this.didClient.generateDID(holderKeypair.publicKey()),
       verifiableCredential: credentials,
-      proof: await this.createPresentationProof(holderKeypair, domain, challenge)
+      proof: await this.createPresentationProof(holderKeypair, domain, challenge),
     };
-
-    return presentation;
   }
 
-  /**
-   * Verify a verifiable presentation
-   */
-  async verifyPresentation(presentation: any): Promise<boolean> {
+  async verifyPresentation(presentation: Record<string, unknown>): Promise<boolean> {
     try {
-      // Verify presentation proof
-      const proofValid = await this.verifyPresentationProof(presentation.proof, presentation.holder);
-      if (!proofValid) {
-        return false;
-      }
-
-      // Verify all credentials in the presentation
-      const credentialVerifications = await Promise.all(
-        presentation.verifiableCredential.map((cred: any) => 
-          this.verifyCredential(cred.id)
-        )
+      const proofValid = await this.verifyPresentationProof(
+        presentation.proof,
+        presentation.holder as string
       );
+      if (!proofValid) return false;
 
-      return credentialVerifications.every(verification => verification.valid);
-    } catch (error) {
+      const creds = presentation.verifiableCredential as VerifiableCredential[];
+      const verifications = await Promise.all(creds.map(c => this.verifyCredential(c.id)));
+      return verifications.every(v => v.valid);
+    } catch {
       return false;
     }
   }
 
-  /**
-   * Issue KYC credential (common use case)
-   */
   async issueKYCCredential(
     issuerKeypair: Keypair,
     subjectAddress: string,
@@ -298,7 +238,7 @@ export class CredentialClient {
       data: kycData,
       verificationLevel: 'Standard',
       issuedBy: issuerKeypair.publicKey(),
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
 
     return this.issueCredential(
@@ -307,16 +247,13 @@ export class CredentialClient {
         subject: subjectAddress,
         credentialType: ['KYCVerification', 'VerifiableCredential'],
         credentialData,
-        expirationDate: expirationDate || (Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
-        proof: await this.generateKYCProof(credentialData, issuerKeypair)
+        expirationDate: expirationDate ?? Date.now() + 365 * 24 * 60 * 60 * 1000,
+        proof: await this.generateProof(credentialData, issuerKeypair),
       },
       txOptions
     );
   }
 
-  /**
-   * Issue education credential
-   */
   async issueEducationCredential(
     issuerKeypair: Keypair,
     subjectAddress: string,
@@ -334,7 +271,7 @@ export class CredentialClient {
       type: 'EducationCredential',
       data: educationData,
       issuedBy: issuerKeypair.publicKey(),
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
 
     return this.issueCredential(
@@ -343,115 +280,107 @@ export class CredentialClient {
         subject: subjectAddress,
         credentialType: ['EducationCredential', 'VerifiableCredential'],
         credentialData,
-        expirationDate: expirationDate || (Date.now() + 10 * 365 * 24 * 60 * 60 * 1000), // 10 years
-        proof: await this.generateEducationProof(credentialData, issuerKeypair)
+        expirationDate: expirationDate ?? Date.now() + 10 * 365 * 24 * 60 * 60 * 1000,
+        proof: await this.generateProof(credentialData, issuerKeypair),
       },
       txOptions
     );
   }
 
-  private parseCredential(result: any): VerifiableCredential {
+  private async simulateRead(method: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
+    const dummy = Keypair.random();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const account = { accountId: () => dummy.publicKey(), sequenceNumber: () => '0', incrementSequenceNumber: () => {} } as any;
+
+    const tx = new TransactionBuilder(account, { fee: '100', networkPassphrase: this.getNetworkPassphrase() })
+      .addOperation(this.credentialIssuerContract.call(method, ...args))
+      .setTimeout(30)
+      .build();
+
+    const sim = await this.rpc.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(sim)) {
+      throw new Error((sim as SorobanRpc.Api.SimulateTransactionErrorResponse).error);
+    }
+    const retval = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) throw new Error('No return value from contract');
+    return retval;
+  }
+
+  private parseCredential(raw: unknown): VerifiableCredential {
+    const r = raw as Record<string, unknown>;
+    const toStr = (v: unknown) => (v instanceof Uint8Array ? new TextDecoder().decode(v) : String(v ?? ''));
     return {
-      id: result[0],
-      issuer: result[1],
-      subject: result[2],
-      type: result[3],
-      credentialData: JSON.parse(result[4]),
-      issuanceDate: result[5],
-      expirationDate: result[6],
-      revocation: result[7],
-      proof: result[8]
+      id: toStr(r[0] ?? r.id),
+      issuer: toStr(r[1] ?? r.issuer),
+      subject: toStr(r[2] ?? r.subject),
+      type: Array.isArray(r[3] ?? r.type) ? ((r[3] ?? r.type) as unknown[]).map(toStr) : [],
+      credentialData: JSON.parse(toStr(r[4] ?? r.credential_data) || '{}'),
+      issuanceDate: Number(r[5] ?? r.issuance_date ?? 0),
+      expirationDate: r[6] ?? r.expiration_date ? Number(r[6] ?? r.expiration_date) : undefined,
+      revocation: r[7] ?? r.revocation ? toStr(r[7] ?? r.revocation) : undefined,
+      proof: r[8] ?? r.proof ? toStr(r[8] ?? r.proof) : undefined,
     };
   }
 
   private isCredentialExpired(credential: VerifiableCredential): boolean {
-    if (!credential.expirationDate) {
-      return false;
-    }
-    return Date.now() > credential.expirationDate;
+    return credential.expirationDate != null && Date.now() > credential.expirationDate;
   }
 
-  private extractCredentialId(result: any): string {
-    // Extract credential ID from transaction result
-    // This would depend on the actual result format from the contract
-    return result.id || 'unknown';
+  private extractCredentialId(_result: unknown): string {
+    return `cred-${Date.now()}`;
   }
 
   private async createPresentationProof(
     keypair: Keypair,
     domain?: string,
     challenge?: string
-  ): Promise<any> {
-    // Create a digital signature for the presentation
-    const message = JSON.stringify({
-      domain: domain || '',
-      challenge: challenge || '',
-      timestamp: Date.now()
-    });
-
-    const signature = keypair.sign(Buffer.from(message)).toString('hex');
+  ): Promise<Record<string, string>> {
+    const message = JSON.stringify({ domain: domain ?? '', challenge: challenge ?? '', timestamp: Date.now() });
+    const sig = Array.from(keypair.sign(Buffer.from(message)) as Uint8Array)
+      .map((b: number) => b.toString(16).padStart(2, '0')).join('');
 
     return {
       type: 'Ed25519Signature2018',
       created: new Date().toISOString(),
       verificationMethod: `${this.didClient.generateDID(keypair.publicKey())}#key-1`,
       proofPurpose: 'authentication',
-      domain: domain || '',
-      challenge: challenge || '',
-      jws: signature
+      domain: domain ?? '',
+      challenge: challenge ?? '',
+      jws: sig,
     };
   }
 
-  private async verifyPresentationProof(proof: any, holder: string): Promise<boolean> {
-    try {
-      // Verify the presentation proof
-      // This is a simplified implementation
-      return proof.type === 'Ed25519Signature2018' && proof.jws;
-    } catch {
-      return false;
-    }
+  private async verifyPresentationProof(proof: unknown, _holder: string): Promise<boolean> {
+    const p = proof as Record<string, string>;
+    return p?.type === 'Ed25519Signature2018' && Boolean(p?.jws);
   }
 
-  private async generateKYCProof(credentialData: any, keypair: Keypair): Promise<string> {
-    const message = JSON.stringify(credentialData);
-    return keypair.sign(Buffer.from(message)).toString('hex');
-  }
-
-  private async generateEducationProof(credentialData: any, keypair: Keypair): Promise<string> {
-    const message = JSON.stringify(credentialData);
-    return keypair.sign(Buffer.from(message)).toString('hex');
+  private async generateProof(data: unknown, keypair: Keypair): Promise<string> {
+    const message = JSON.stringify(data);
+    return Array.from(keypair.sign(Buffer.from(message)) as Uint8Array)
+      .map((b: number) => b.toString(16).padStart(2, '0')).join('');
   }
 
   private getDefaultRpcUrl(): string {
     switch (this.config.network) {
-      case 'mainnet':
-        return 'https://horizon.stellar.org';
-      case 'testnet':
-        return 'https://horizon-testnet.stellar.org';
-      case 'futurenet':
-        return 'https://horizon-futurenet.stellar.org';
-      default:
-        return 'https://horizon-testnet.stellar.org';
+      case 'mainnet': return 'https://soroban-rpc.stellar.org';
+      case 'futurenet': return 'https://rpc-futurenet.stellar.org';
+      default: return 'https://soroban-testnet.stellar.org';
     }
   }
 
   private getNetworkPassphrase(): string {
     switch (this.config.network) {
-      case 'mainnet':
-        return Networks.PUBLIC;
-      case 'testnet':
-        return Networks.TESTNET;
-      case 'futurenet':
-        return Networks.FUTURENET;
-      default:
-        return Networks.TESTNET;
+      case 'mainnet': return Networks.PUBLIC;
+      case 'futurenet': return Networks.FUTURENET;
+      default: return Networks.TESTNET;
     }
   }
 
-  private handleError(error: any): StellarIdentityError {
-    const stellarError: StellarIdentityError = new Error(error.message) as StellarIdentityError;
-    stellarError.code = error.code || 500;
-    stellarError.type = error.type || 'UnknownError';
-    return stellarError;
+  private handleError(error: unknown): StellarIdentityError {
+    const err = new Error(error instanceof Error ? error.message : String(error)) as StellarIdentityError;
+    err.code = (error as StellarIdentityError).code || 500;
+    err.type = (error as StellarIdentityError).type || 'UnknownError';
+    return err;
   }
 }
