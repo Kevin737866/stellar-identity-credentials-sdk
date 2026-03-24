@@ -1,456 +1,323 @@
-import { 
-  Server, 
-  TransactionBuilder, 
-  Networks, 
-  Keypair, 
+import {
+  SorobanRpc,
+  TransactionBuilder,
+  Networks,
+  Keypair,
   Contract,
-  Address
+  Address,
+  xdr,
+  nativeToScVal,
+  scValToNative,
 } from 'stellar-sdk';
-import { 
+import {
   ReputationData,
   ReputationScoreResult,
   StellarIdentityConfig,
   TransactionOptions,
-  StellarIdentityError
+  StellarIdentityError,
 } from './types';
 
 export class ReputationClient {
-  private server: Server;
+  private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
   private reputationScoreContract: Contract;
 
   constructor(config: StellarIdentityConfig) {
     this.config = config;
-    this.server = new Server(config.rpcUrl || this.getDefaultRpcUrl());
+    this.rpc = new SorobanRpc.Server(config.rpcUrl || this.getDefaultRpcUrl());
     this.reputationScoreContract = new Contract(config.contracts.reputationScore);
   }
 
-  /**
-   * Initialize reputation tracking for an address
-   */
-  async initializeReputation(
-    address: string,
-    txOptions?: TransactionOptions
-  ): Promise<void> {
+  async initializeReputation(address: string, txOptions?: TransactionOptions): Promise<void> {
     try {
-      const keypair = Keypair.fromSecret(address); // This would need to be provided differently
-      
-      const account = await this.server.getAccount(keypair.publicKey());
-      
-      const transaction = new TransactionBuilder(account, {
-        fee: txOptions?.fee || '100',
+      const keypair = Keypair.fromPublicKey(address);
+      const account = await this.rpc.getAccount(address);
+
+      const tx = new TransactionBuilder(account, {
+        fee: String(txOptions?.fee ?? 100),
         networkPassphrase: this.getNetworkPassphrase(),
       })
         .addOperation(
-          this.reputationScoreContract.call('initialize_reputation', new Address(address))
+          this.reputationScoreContract.call(
+            'initialize_reputation',
+            xdr.ScVal.scvAddress(new Address(address).toScAddress())
+          )
         )
-        .setTimeout(txOptions?.timeout || 30)
+        .setTimeout(txOptions?.timeout ?? 30)
         .build();
 
-      transaction.sign(keypair);
-      await this.server.sendTransaction(transaction);
+      const prepared = await this.rpc.prepareTransaction(tx);
+      prepared.sign(keypair);
+      await this.rpc.sendTransaction(prepared);
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Update reputation based on transaction
-   */
   async updateTransactionReputation(
     address: string,
     successful: boolean,
     amount: number,
-    txOptions?: TransactionOptions
+    _txOptions?: TransactionOptions
   ): Promise<number> {
     try {
-      const result = await this.reputationScoreContract.call(
-        'update_transaction_reputation',
-        new Address(address),
-        successful,
-        amount
-      );
-      
-      return result.result.val;
+      const retval = await this.simulateRead('update_transaction_reputation', [
+        xdr.ScVal.scvAddress(new Address(address).toScAddress()),
+        nativeToScVal(successful),
+        nativeToScVal(BigInt(amount), { type: 'u64' }),
+      ]);
+      return Number(scValToNative(retval));
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Update reputation based on credential verification
-   */
   async updateCredentialReputation(
     address: string,
     credentialValid: boolean,
     credentialType: string,
-    txOptions?: TransactionOptions
+    _txOptions?: TransactionOptions
   ): Promise<number> {
     try {
-      const result = await this.reputationScoreContract.call(
-        'update_credential_reputation',
-        new Address(address),
-        credentialValid,
-        credentialType
-      );
-      
-      return result.result.val;
+      const retval = await this.simulateRead('update_credential_reputation', [
+        xdr.ScVal.scvAddress(new Address(address).toScAddress()),
+        nativeToScVal(credentialValid),
+        nativeToScVal(new TextEncoder().encode(credentialType), { type: 'bytes' }),
+      ]);
+      return Number(scValToNative(retval));
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Get reputation score for an address
-   */
   async getReputationScore(address: string): Promise<number> {
     try {
-      const result = await this.reputationScoreContract.call('get_reputation_score', new Address(address));
-      return result.result.val;
+      const retval = await this.simulateRead('get_reputation_score', [
+        xdr.ScVal.scvAddress(new Address(address).toScAddress()),
+      ]);
+      return Number(scValToNative(retval));
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Get full reputation data for an address
-   */
   async getReputationData(address: string): Promise<ReputationData> {
     try {
-      const result = await this.reputationScoreContract.call('get_reputation_data', new Address(address));
-      return this.parseReputationData(result.result.val);
+      const retval = await this.simulateRead('get_reputation_data', [
+        xdr.ScVal.scvAddress(new Address(address).toScAddress()),
+      ]);
+      return this.parseReputationData(scValToNative(retval));
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Batch get reputation scores for multiple addresses
-   */
   async batchGetReputationScores(addresses: string[]): Promise<number[]> {
+    return Promise.all(addresses.map(a => this.getReputationScore(a)));
+  }
+
+  async getReputationHistory(address: string, _limit = 10): Promise<number[]> {
     try {
-      const stellarAddresses = addresses.map(addr => new Address(addr));
-      const result = await this.reputationScoreContract.call('batch_get_reputation_scores', stellarAddresses);
-      return result.result.val;
+      const retval = await this.simulateRead('get_reputation_history', [
+        xdr.ScVal.scvAddress(new Address(address).toScAddress()),
+      ]);
+      const raw = scValToNative(retval);
+      return Array.isArray(raw) ? raw.map(Number) : [];
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Get reputation history for an address
-   */
-  async getReputationHistory(address: string, limit: number = 10): Promise<number[]> {
-    try {
-      const result = await this.reputationScoreContract.call('get_reputation_history', new Address(address), limit);
-      return result.result.val;
-    } catch (error) {
-      throw this.handleError(error);
-    }
-  }
-
-  /**
-   * Calculate reputation percentile rank
-   */
   async getReputationPercentile(address: string): Promise<number> {
     try {
-      const result = await this.reputationScoreContract.call('get_reputation_percentile', new Address(address));
-      return result.result.val;
+      const retval = await this.simulateRead('get_reputation_percentile', [
+        xdr.ScVal.scvAddress(new Address(address).toScAddress()),
+      ]);
+      return Number(scValToNative(retval));
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Check if address meets minimum reputation threshold
-   */
   async meetsReputationThreshold(address: string, threshold: number): Promise<boolean> {
     try {
-      const result = await this.reputationScoreContract.call('meets_reputation_threshold', new Address(address), threshold);
-      return result.result.val;
+      const retval = await this.simulateRead('meets_reputation_threshold', [
+        xdr.ScVal.scvAddress(new Address(address).toScAddress()),
+        nativeToScVal(BigInt(threshold), { type: 'u32' }),
+      ]);
+      return scValToNative(retval) as boolean;
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Get reputation factors for an address
-   */
   async getReputationFactors(address: string): Promise<Record<string, number>> {
     try {
-      const result = await this.reputationScoreContract.call('get_reputation_factors', new Address(address));
-      return this.parseReputationFactors(result.result.val);
+      const retval = await this.simulateRead('get_reputation_factors', [
+        xdr.ScVal.scvAddress(new Address(address).toScAddress()),
+      ]);
+      return this.parseReputationFactors(scValToNative(retval));
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Reset reputation (admin function)
-   */
   async resetReputation(
     adminKeypair: Keypair,
     address: string,
     txOptions?: TransactionOptions
   ): Promise<void> {
     try {
-      const account = await this.server.getAccount(adminKeypair.publicKey());
-      
-      const transaction = new TransactionBuilder(account, {
-        fee: txOptions?.fee || '100',
+      const account = await this.rpc.getAccount(adminKeypair.publicKey());
+
+      const tx = new TransactionBuilder(account, {
+        fee: String(txOptions?.fee ?? 100),
         networkPassphrase: this.getNetworkPassphrase(),
       })
         .addOperation(
-          this.reputationScoreContract.call('reset_reputation', new Address(address))
+          this.reputationScoreContract.call(
+            'reset_reputation',
+            xdr.ScVal.scvAddress(new Address(address).toScAddress())
+          )
         )
-        .setTimeout(txOptions?.timeout || 30)
+        .setTimeout(txOptions?.timeout ?? 30)
         .build();
 
-      transaction.sign(adminKeypair);
-      await this.server.sendTransaction(transaction);
+      const prepared = await this.rpc.prepareTransaction(tx);
+      prepared.sign(adminKeypair);
+      await this.rpc.sendTransaction(prepared);
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
-  /**
-   * Get top reputation addresses
-   */
-  async getTopReputationAddresses(limit: number = 10): Promise<string[]> {
-    try {
-      const result = await this.reputationScoreContract.call('get_top_reputation_addresses', limit);
-      return result.result.val;
-    } catch (error) {
-      throw this.handleError(error);
-    }
-  }
-
-  /**
-   * Get comprehensive reputation analysis
-   */
   async getReputationAnalysis(address: string): Promise<ReputationScoreResult> {
-    try {
-      const [score, percentile, factors, history, lastUpdated] = await Promise.all([
-        this.getReputationScore(address),
-        this.getReputationPercentile(address),
-        this.getReputationFactors(address),
-        this.getReputationHistory(address),
-        this.getLastUpdated(address)
-      ]);
-
-      return {
-        score,
-        percentile,
-        factors,
-        history,
-        lastUpdated
-      };
-    } catch (error) {
-      throw this.handleError(error);
-    }
+    const [score, percentile, factors, history, lastUpdated] = await Promise.all([
+      this.getReputationScore(address),
+      this.getReputationPercentile(address),
+      this.getReputationFactors(address),
+      this.getReputationHistory(address),
+      this.getReputationData(address).then(d => d.lastUpdated).catch(() => Date.now()),
+    ]);
+    return { score, percentile, factors, history, lastUpdated };
   }
 
-  /**
-   * Build reputation through transaction history
-   */
   async buildTransactionReputation(
     address: string,
-    transactions: Array<{
-      hash: string;
-      successful: boolean;
-      amount: number;
-      timestamp: number;
-    }>,
+    transactions: Array<{ hash: string; successful: boolean; amount: number; timestamp: number }>,
     txOptions?: TransactionOptions
   ): Promise<number> {
-    let currentScore = await this.getReputationScore(address).catch(() => 50); // Default to 50 if not found
-
+    let score = await this.getReputationScore(address).catch(() => 50);
     for (const tx of transactions) {
       try {
-        currentScore = await this.updateTransactionReputation(
-          address,
-          tx.successful,
-          tx.amount,
-          txOptions
-        );
+        score = await this.updateTransactionReputation(address, tx.successful, tx.amount, txOptions);
       } catch (error) {
-        console.warn(`Failed to update reputation for transaction ${tx.hash}:`, error);
+        console.warn(`Failed to update reputation for tx ${tx.hash}:`, error);
       }
     }
-
-    return currentScore;
+    return score;
   }
 
-  /**
-   * Build reputation through credential validation
-   */
   async buildCredentialReputation(
     address: string,
-    credentials: Array<{
-      type: string;
-      valid: boolean;
-      issuer: string;
-      issuanceDate: number;
-    }>,
+    credentials: Array<{ type: string; valid: boolean; issuer: string; issuanceDate: number }>,
     txOptions?: TransactionOptions
   ): Promise<number> {
-    let currentScore = await this.getReputationScore(address).catch(() => 50); // Default to 50 if not found
-
-    for (const credential of credentials) {
+    let score = await this.getReputationScore(address).catch(() => 50);
+    for (const cred of credentials) {
       try {
-        currentScore = await this.updateCredentialReputation(
-          address,
-          credential.valid,
-          credential.type,
-          txOptions
-        );
+        score = await this.updateCredentialReputation(address, cred.valid, cred.type, txOptions);
       } catch (error) {
-        console.warn(`Failed to update reputation for credential ${credential.type}:`, error);
+        console.warn(`Failed to update reputation for credential ${cred.type}:`, error);
       }
     }
-
-    return currentScore;
+    return score;
   }
 
-  /**
-   * Get reputation tier classification
-   */
-  getReputationTier(score: number): {
-    tier: string;
-    color: string;
-    description: string;
-  } {
-    if (score >= 90) {
-      return {
-        tier: 'Excellent',
-        color: '#10B981', // Green
-        description: 'Outstanding reputation with excellent track record'
-      };
-    } else if (score >= 75) {
-      return {
-        tier: 'Good',
-        color: '#3B82F6', // Blue
-        description: 'Strong reputation with good performance'
-      };
-    } else if (score >= 60) {
-      return {
-        tier: 'Fair',
-        color: '#F59E0B', // Yellow
-        description: 'Moderate reputation with room for improvement'
-      };
-    } else if (score >= 40) {
-      return {
-        tier: 'Poor',
-        color: '#F97316', // Orange
-        description: 'Low reputation requiring attention'
-      };
-    } else {
-      return {
-        tier: 'Very Poor',
-        color: '#EF4444', // Red
-        description: 'Very low reputation with significant issues'
-      };
-    }
+  getReputationTier(score: number): { tier: string; color: string; description: string } {
+    if (score >= 90) return { tier: 'Excellent', color: '#10B981', description: 'Outstanding reputation with excellent track record' };
+    if (score >= 75) return { tier: 'Good', color: '#3B82F6', description: 'Strong reputation with good performance' };
+    if (score >= 60) return { tier: 'Fair', color: '#F59E0B', description: 'Moderate reputation with room for improvement' };
+    if (score >= 40) return { tier: 'Poor', color: '#F97316', description: 'Low reputation requiring attention' };
+    return { tier: 'Very Poor', color: '#EF4444', description: 'Very low reputation with significant issues' };
   }
 
-  /**
-   * Calculate reputation trend
-   */
-  calculateReputationTrend(history: number[]): {
-    trend: 'up' | 'down' | 'stable';
-    change: number;
-    percentage: number;
-  } {
-    if (history.length < 2) {
-      return { trend: 'stable', change: 0, percentage: 0 };
-    }
-
-    const recent = history.slice(-5); // Last 5 entries
-    const older = history.slice(-10, -5); // Previous 5 entries if available
-
-    if (older.length === 0) {
-      return { trend: 'stable', change: 0, percentage: 0 };
-    }
-
-    const recentAvg = recent.reduce((sum, val) => sum + val, 0) / recent.length;
-    const olderAvg = older.reduce((sum, val) => sum + val, 0) / older.length;
-    
+  calculateReputationTrend(history: number[]): { trend: 'up' | 'down' | 'stable'; change: number; percentage: number } {
+    if (history.length < 2) return { trend: 'stable', change: 0, percentage: 0 };
+    const recent = history.slice(-5);
+    const older = history.slice(-10, -5);
+    if (older.length === 0) return { trend: 'stable', change: 0, percentage: 0 };
+    const recentAvg = recent.reduce((s, v) => s + v, 0) / recent.length;
+    const olderAvg = older.reduce((s, v) => s + v, 0) / older.length;
     const change = recentAvg - olderAvg;
     const percentage = olderAvg > 0 ? (change / olderAvg) * 100 : 0;
-
-    let trend: 'up' | 'down' | 'stable';
-    if (Math.abs(percentage) < 2) {
-      trend = 'stable';
-    } else if (change > 0) {
-      trend = 'up';
-    } else {
-      trend = 'down';
-    }
-
+    const trend: 'up' | 'down' | 'stable' = Math.abs(percentage) < 2 ? 'stable' : change > 0 ? 'up' : 'down';
     return { trend, change, percentage };
   }
 
-  private parseReputationData(result: any): ReputationData {
+  private async simulateRead(method: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
+    const dummy = Keypair.random();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const account = { accountId: () => dummy.publicKey(), sequenceNumber: () => '0', incrementSequenceNumber: () => {} } as any;
+
+    const tx = new TransactionBuilder(account, { fee: '100', networkPassphrase: this.getNetworkPassphrase() })
+      .addOperation(this.reputationScoreContract.call(method, ...args))
+      .setTimeout(30)
+      .build();
+
+    const sim = await this.rpc.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(sim)) {
+      throw new Error((sim as SorobanRpc.Api.SimulateTransactionErrorResponse).error);
+    }
+    const retval = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) throw new Error('No return value from contract');
+    return retval;
+  }
+
+  private parseReputationData(raw: unknown): ReputationData {
+    const r = Array.isArray(raw) ? raw : [];
     return {
-      address: result[0],
-      score: result[1],
-      transactionCount: result[2],
-      successfulTransactions: result[3],
-      credentialCount: result[4],
-      validCredentials: result[5],
-      lastUpdated: result[6],
-      reputationFactors: this.parseReputationFactors(result[7])
+      address: String(r[0] ?? ''),
+      score: Number(r[1] ?? 0),
+      transactionCount: Number(r[2] ?? 0),
+      successfulTransactions: Number(r[3] ?? 0),
+      credentialCount: Number(r[4] ?? 0),
+      validCredentials: Number(r[5] ?? 0),
+      lastUpdated: Number(r[6] ?? 0),
+      reputationFactors: this.parseReputationFactors(r[7]),
     };
   }
 
-  private parseReputationFactors(factors: any): Record<string, number> {
+  private parseReputationFactors(factors: unknown): Record<string, number> {
     const result: Record<string, number> = {};
-    // Parse the Map<string, u32> from contract result
-    for (const [key, value] of factors) {
-      result[key] = value;
+    if (factors && typeof factors === 'object') {
+      for (const [key, value] of Object.entries(factors as Record<string, unknown>)) {
+        result[key] = Number(value);
+      }
     }
     return result;
   }
 
-  private async getLastUpdated(address: string): Promise<number> {
-    try {
-      const data = await this.getReputationData(address);
-      return data.lastUpdated;
-    } catch {
-      return Date.now();
-    }
-  }
-
   private getDefaultRpcUrl(): string {
     switch (this.config.network) {
-      case 'mainnet':
-        return 'https://horizon.stellar.org';
-      case 'testnet':
-        return 'https://horizon-testnet.stellar.org';
-      case 'futurenet':
-        return 'https://horizon-futurenet.stellar.org';
-      default:
-        return 'https://horizon-testnet.stellar.org';
+      case 'mainnet': return 'https://soroban-rpc.stellar.org';
+      case 'futurenet': return 'https://rpc-futurenet.stellar.org';
+      default: return 'https://soroban-testnet.stellar.org';
     }
   }
 
   private getNetworkPassphrase(): string {
     switch (this.config.network) {
-      case 'mainnet':
-        return Networks.PUBLIC;
-      case 'testnet':
-        return Networks.TESTNET;
-      case 'futurenet':
-        return Networks.FUTURENET;
-      default:
-        return Networks.TESTNET;
+      case 'mainnet': return Networks.PUBLIC;
+      case 'futurenet': return Networks.FUTURENET;
+      default: return Networks.TESTNET;
     }
   }
 
-  private handleError(error: any): StellarIdentityError {
-    const stellarError: StellarIdentityError = new Error(error.message) as StellarIdentityError;
-    stellarError.code = error.code || 500;
-    stellarError.type = error.type || 'UnknownError';
-    return stellarError;
+  private handleError(error: unknown): StellarIdentityError {
+    const err = new Error(error instanceof Error ? error.message : String(error)) as StellarIdentityError;
+    err.code = (error as StellarIdentityError).code || 500;
+    err.type = (error as StellarIdentityError).type || 'UnknownError';
+    return err;
   }
 }

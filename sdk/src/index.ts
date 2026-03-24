@@ -1,8 +1,25 @@
+// Ambient declaration so require() compiles without @types/node installed.
+// At runtime Node.js provides require natively.
+/* eslint-disable no-var */
+declare var require: (id: string) => any; // eslint-disable-line @typescript-eslint/no-explicit-any
+/* eslint-enable no-var */
+
+import { Keypair } from 'stellar-sdk';
+
 // Core clients
 export { DIDClient } from './didClient';
 export { CredentialClient } from './credentialClient';
 export { ReputationClient } from './reputationClient';
 export { ZKProofsClient } from './zkProofs';
+
+// W3C-compliant DID Resolver (did:stellar method)
+export { DIDResolver } from './didResolver';
+export type {
+  W3CResolutionResult,
+  DIDResolutionMetadata,
+  DIDDocumentMetadata,
+  DereferencingResult,
+} from './didResolver';
 
 // Types and interfaces
 export type {
@@ -54,12 +71,12 @@ export class StellarIdentitySDK {
    * Initialize all identity components for a user
    */
   async initializeUserIdentity(
-    stellarAddress: string,
+    keypair: Keypair,
     verificationMethods: any[],
     services: any[]
   ) {
-    // Initialize DID
-    const did = await this.did.createDID(stellarAddress, {
+    const stellarAddress = keypair.publicKey();
+    const did = await this.did.createDID(keypair, {
       verificationMethods,
       services
     });
@@ -186,9 +203,11 @@ export const UTILS = {
   /**
    * Generate a random Stellar keypair
    */
-  generateKeypair() {
-    const { Keypair } = require('stellar-sdk');
-    return Keypair.random();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  generateKeypair(): any {
+    // stellar-sdk is a peer dependency; loaded at runtime
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return (require('stellar-sdk') as Record<string, any>).Keypair.random();
   },
 
   /**
@@ -196,8 +215,9 @@ export const UTILS = {
    */
   validateStellarAddress(address: string): boolean {
     try {
-      const { Address } = require('stellar-sdk');
-      Address.fromString(address);
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const stellar = require('stellar-sdk') as Record<string, any>;
+      stellar.Address.fromString(address);
       return true;
     } catch {
       return false;

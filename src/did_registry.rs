@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, Address, Bytes, BytesN, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, Address, Bytes, BytesN, Env, Vec,
 };
 
 use crate::{DIDDocument, Service, VerificationMethod};
@@ -11,7 +11,8 @@ pub enum DIDRegistryError {
     NotFound = 2,
     Unauthorized = 3,
     InvalidFormat = 4,
-    Expired = 5,
+    Deactivated = 5,
+    InvalidSignature = 6,
 }
 
 #[contract]
@@ -19,190 +20,180 @@ pub struct DIDRegistry;
 
 #[contractimpl]
 impl DIDRegistry {
-    /// Create a new DID document for a Stellar address
-    /// DID format: did:stellar:<stellar_address>
+    /// Register a new DID anchored to a Stellar account.
+    ///
+    /// `did_id` is the full DID string as UTF-8 bytes, e.g.
+    /// `b"did:stellar:GAA...4Z"` or `b"did:stellar:GAA...4Z:entity-123"`.
+    /// The client SDK computes this from the Stellar public key.
     pub fn create_did(
         env: Env,
         controller: Address,
+        did_id: Bytes,
         verification_methods: Vec<VerificationMethod>,
         services: Vec<Service>,
     ) -> Result<(), DIDRegistryError> {
-        // Verify controller authorization
         controller.require_auth();
 
-        // Generate DID from Stellar address
-        let did = Self::generate_did(&env, &controller);
+        if !Self::check_did_prefix(&env, &did_id) {
+            return Err(DIDRegistryError::InvalidFormat);
+        }
 
-        // Check if DID already exists
-        if env.storage().persistent().has(&did) {
+        if env.storage().persistent().has(&did_id) {
             return Err(DIDRegistryError::AlreadyExists);
         }
 
-        // Create DID document
         let now = env.ledger().timestamp();
-        let did_document = DIDDocument {
-            id: did.clone(),
+        let doc = DIDDocument {
+            id: did_id.clone(),
             controller: controller.clone(),
-            verification_method: verification_methods.to_vec(&env),
-            authentication: Vec::new(&env), // Will be populated separately
-            service: services.to_vec(&env),
+            verification_method: verification_methods,
+            authentication: Vec::new(&env),
+            service: services,
             created: now,
             updated: now,
+            deactivated: false,
         };
 
-        // Store DID document
-        env.storage().persistent().set(&did, &did_document);
-
-        // Store reverse mapping from controller to DID
-        env.storage().persistent().set(&controller, &did);
+        env.storage().persistent().set(&did_id, &doc);
+        env.storage().persistent().set(&controller, &did_id);
 
         Ok(())
     }
 
-    /// Resolve a DID document
+    /// Resolve a DID document by its DID string.
+    /// Returns the document even when deactivated (W3C DID Core §7.1.2).
     pub fn resolve_did(env: Env, did: Bytes) -> Result<DIDDocument, DIDRegistryError> {
-        let did_document: DIDDocument = env
-            .storage()
+        env.storage()
             .persistent()
             .get(&did)
-            .ok_or(DIDRegistryError::NotFound)?;
-
-        // Check if document has expired (if expiration is set)
-        if let Some(expiration) = did_document.verification_method.first().and_then(|vm| {
-            // This is a simplified check - in practice, you'd have a separate expiration field
-            None
-        }) {
-            if env.ledger().timestamp() > *expiration {
-                return Err(DIDRegistryError::Expired);
-            }
-        }
-
-        Ok(did_document)
+            .ok_or(DIDRegistryError::NotFound)
     }
 
-    /// Update DID document
+    /// Update verification methods and/or service endpoints.
+    /// Deactivated DIDs cannot be updated.
     pub fn update_did(
         env: Env,
         controller: Address,
         verification_methods: Option<Vec<VerificationMethod>>,
         services: Option<Vec<Service>>,
     ) -> Result<(), DIDRegistryError> {
-        // Verify controller authorization
         controller.require_auth();
 
-        // Get existing DID
         let did: Bytes = env
             .storage()
             .persistent()
             .get(&controller)
             .ok_or(DIDRegistryError::NotFound)?;
 
-        let mut did_document: DIDDocument = env
+        let mut doc: DIDDocument = env
             .storage()
             .persistent()
             .get(&did)
             .ok_or(DIDRegistryError::NotFound)?;
 
-        // Update verification methods if provided
-        if let Some(new_methods) = verification_methods {
-            did_document.verification_method = new_methods.to_vec(&env);
+        if doc.deactivated {
+            return Err(DIDRegistryError::Deactivated);
         }
 
-        // Update services if provided
-        if let Some(new_services) = services {
-            did_document.service = new_services.to_vec(&env);
+        if let Some(methods) = verification_methods {
+            doc.verification_method = methods;
+        }
+        if let Some(svcs) = services {
+            doc.service = svcs;
         }
 
-        // Update timestamp
-        did_document.updated = env.ledger().timestamp();
-
-        // Store updated document
-        env.storage().persistent().set(&did, &did_document);
+        doc.updated = env.ledger().timestamp();
+        env.storage().persistent().set(&did, &doc);
 
         Ok(())
     }
 
-    /// Deactivate a DID document
+    /// Soft-delete a DID document (tombstone).
+    /// The document is preserved on-chain with `deactivated = true` for audit.
     pub fn deactivate_did(env: Env, controller: Address) -> Result<(), DIDRegistryError> {
-        // Verify controller authorization
         controller.require_auth();
 
-        // Get DID from controller
         let did: Bytes = env
             .storage()
             .persistent()
             .get(&controller)
             .ok_or(DIDRegistryError::NotFound)?;
 
-        // Remove DID document
-        env.storage().persistent().remove(&did);
+        let mut doc: DIDDocument = env
+            .storage()
+            .persistent()
+            .get(&did)
+            .ok_or(DIDRegistryError::NotFound)?;
 
-        // Remove reverse mapping
-        env.storage().persistent().remove(&controller);
+        if doc.deactivated {
+            return Err(DIDRegistryError::Deactivated);
+        }
+
+        doc.deactivated = true;
+        doc.updated = env.ledger().timestamp();
+        env.storage().persistent().set(&did, &doc);
 
         Ok(())
     }
 
-    /// Add authentication method to DID
+    /// Add a verification method fragment ID to the authentication array.
     pub fn add_authentication(
         env: Env,
         controller: Address,
         authentication_method: Bytes,
     ) -> Result<(), DIDRegistryError> {
-        // Verify controller authorization
         controller.require_auth();
 
-        // Get existing DID
         let did: Bytes = env
             .storage()
             .persistent()
             .get(&controller)
             .ok_or(DIDRegistryError::NotFound)?;
 
-        let mut did_document: DIDDocument = env
+        let mut doc: DIDDocument = env
             .storage()
             .persistent()
             .get(&did)
             .ok_or(DIDRegistryError::NotFound)?;
 
-        // Add authentication method
-        did_document.authentication.push_back(authentication_method);
+        if doc.deactivated {
+            return Err(DIDRegistryError::Deactivated);
+        }
 
-        // Update timestamp
-        did_document.updated = env.ledger().timestamp();
-
-        // Store updated document
-        env.storage().persistent().set(&did, &did_document);
+        doc.authentication.push_back(authentication_method);
+        doc.updated = env.ledger().timestamp();
+        env.storage().persistent().set(&did, &doc);
 
         Ok(())
     }
 
-    /// Remove authentication method from DID
+    /// Remove a verification method fragment ID from the authentication array.
     pub fn remove_authentication(
         env: Env,
         controller: Address,
         authentication_method: Bytes,
     ) -> Result<(), DIDRegistryError> {
-        // Verify controller authorization
         controller.require_auth();
 
-        // Get existing DID
         let did: Bytes = env
             .storage()
             .persistent()
             .get(&controller)
             .ok_or(DIDRegistryError::NotFound)?;
 
-        let mut did_document: DIDDocument = env
+        let mut doc: DIDDocument = env
             .storage()
             .persistent()
             .get(&did)
             .ok_or(DIDRegistryError::NotFound)?;
 
-        // Remove authentication method
+        if doc.deactivated {
+            return Err(DIDRegistryError::Deactivated);
+        }
+
         let mut found = false;
-        let mut new_auth = Vec::new(&env);
-        for auth in did_document.authentication.iter() {
+        let mut new_auth: Vec<Bytes> = Vec::new(&env);
+        for auth in doc.authentication.iter() {
             if auth != authentication_method {
                 new_auth.push_back(auth);
             } else {
@@ -214,42 +205,95 @@ impl DIDRegistry {
             return Err(DIDRegistryError::NotFound);
         }
 
-        did_document.authentication = new_auth;
-        did_document.updated = env.ledger().timestamp();
-
-        // Store updated document
-        env.storage().persistent().set(&did, &did_document);
+        doc.authentication = new_auth;
+        doc.updated = env.ledger().timestamp();
+        env.storage().persistent().set(&did, &doc);
 
         Ok(())
     }
 
-    /// Check if a DID exists
+    /// Verify an ed25519 signature using the DID's primary verification key.
+    ///
+    /// `env.crypto().ed25519_verify()` panics (rolls back the transaction)
+    /// if the signature is invalid — this is the correct on-chain behaviour.
+    pub fn verify_signature(
+        env: Env,
+        did: Bytes,
+        message: Bytes,
+        signature: BytesN<64>,
+    ) -> Result<bool, DIDRegistryError> {
+        let doc: DIDDocument = env
+            .storage()
+            .persistent()
+            .get(&did)
+            .ok_or(DIDRegistryError::NotFound)?;
+
+        if doc.deactivated {
+            return Err(DIDRegistryError::Deactivated);
+        }
+
+        let vm = doc
+            .verification_method
+            .get(0)
+            .ok_or(DIDRegistryError::NotFound)?;
+
+        env.crypto().ed25519_verify(&vm.public_key, &message, &signature);
+
+        Ok(true)
+    }
+
+    /// Verify an ed25519 signature using a specific verification method by index.
+    pub fn verify_signature_with_method(
+        env: Env,
+        did: Bytes,
+        message: Bytes,
+        signature: BytesN<64>,
+        method_index: u32,
+    ) -> Result<bool, DIDRegistryError> {
+        let doc: DIDDocument = env
+            .storage()
+            .persistent()
+            .get(&did)
+            .ok_or(DIDRegistryError::NotFound)?;
+
+        if doc.deactivated {
+            return Err(DIDRegistryError::Deactivated);
+        }
+
+        let vm = doc
+            .verification_method
+            .get(method_index)
+            .ok_or(DIDRegistryError::NotFound)?;
+
+        env.crypto().ed25519_verify(&vm.public_key, &message, &signature);
+
+        Ok(true)
+    }
+
+    /// Returns `true` if a DID document exists (active or tombstoned).
     pub fn did_exists(env: Env, did: Bytes) -> bool {
         env.storage().persistent().has(&did)
     }
 
-    /// Get DID for a controller address
+    /// Returns the DID Bytes for a given controller address, or `None`.
     pub fn get_controller_did(env: Env, controller: Address) -> Option<Bytes> {
         env.storage().persistent().get(&controller)
     }
 
-    /// Generate DID from Stellar address
-    fn generate_did(env: &Env, address: &Address) -> Bytes {
-        let stellar_address = address.to_string();
-        let did_string = format!("did:stellar:{}", stellar_address);
-        Bytes::from_slice(env, did_string.as_bytes())
-    }
+    fn check_did_prefix(env: &Env, did: &Bytes) -> bool {
+        let prefix = Bytes::from_slice(env, b"did:stellar:");
+        let prefix_len = prefix.len();
 
-    /// Validate DID format
-    pub fn validate_did_format(did: &Bytes) -> bool {
-        let did_str = String::from_utf8_lossy(did.to_array().as_slice());
-        did_str.starts_with("did:stellar:")
-    }
+        if did.len() < prefix_len {
+            return false;
+        }
 
-    /// Get all DIDs (for admin purposes)
-    pub fn get_all_dids(env: Env) -> Vec<Bytes> {
-        // This would require a more complex implementation with tracking
-        // For now, return empty vector
-        Vec::new(&env)
+        for i in 0..prefix_len {
+            if did.get(i) != prefix.get(i) {
+                return false;
+            }
+        }
+
+        true
     }
 }
