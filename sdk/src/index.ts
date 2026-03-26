@@ -14,6 +14,21 @@ export { ZKProofsClient } from './zkProofs';
 
 // W3C VC Data Model 2.0 — credential registry SDK
 export { CredentialsClient } from './credentials';
+
+// Regulatory compliance — sanctions screening, Travel Rule, ZK proofs
+export { ComplianceClient } from './compliance';
+export type {
+  ScreeningStatus,
+  ScreeningResult,
+  TransactionRisk,
+  ComplianceReport,
+  AuditEntry,
+  TravelRulePayload,
+  ZKComplianceProof,
+  AlertSubscription,
+  AlertEvent,
+  SanctionsListInfo,
+} from './compliance';
 export type {
   CredentialSchema,
   W3CVerifiableCredential,
