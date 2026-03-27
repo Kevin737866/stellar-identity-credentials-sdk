@@ -1,0 +1,10 @@
+C:\Users\dmanl\OneDrive\Documents\GitHub\stellar-identity-credentials-sdk\target\debug\deps\ark_groth16-213e5cb3b38c0f5a.d: C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\lib.rs C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\r1cs_to_qap.rs C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\data_structures.rs C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\generator.rs C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\prover.rs C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\verifier.rs
+
+C:\Users\dmanl\OneDrive\Documents\GitHub\stellar-identity-credentials-sdk\target\debug\deps\libark_groth16-213e5cb3b38c0f5a.rmeta: C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\lib.rs C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\r1cs_to_qap.rs C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\data_structures.rs C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\generator.rs C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\prover.rs C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\verifier.rs
+
+C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\lib.rs:
+C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\r1cs_to_qap.rs:
+C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\data_structures.rs:
+C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\generator.rs:
+C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\prover.rs:
+C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ark-groth16-0.4.0\src\verifier.rs:

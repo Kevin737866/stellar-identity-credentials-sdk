@@ -118,10 +118,13 @@ export interface ZKProof {
   circuitId: string;
   publicInputs: string[];
   proofBytes: string;
+  verifyingKeyHash: string;
+  nullifier: string;
   verifierAddress: string;
   createdAt: number;
   expiresAt?: number;
   metadata: Record<string, string>;
+  revealedAttributes: string[];
 }
 
 export interface ZKCircuit {
@@ -129,11 +132,39 @@ export interface ZKCircuit {
   name: string;
   description: string;
   verifierKey: string;
+  verifyingKeyHash: string;
   publicInputCount: number;
   privateInputCount: number;
   createdBy: string;
   createdAt: number;
   active: boolean;
+  circuitType: CircuitType;
+  supportedAttributes: string[];
+}
+
+export enum CircuitType {
+  RangeProof = 'RangeProof',
+  SetMembership = 'SetMembership',
+  CredentialOwnership = 'CredentialOwnership',
+  CompositeProof = 'CompositeProof',
+  EqualityProof = 'EqualityProof',
+}
+
+export interface ZKAttestation {
+  credentialId: string;
+  proofHash: string;
+  nullifier: string;
+  revealedAttributes: string[];
+  circuitId: string;
+  createdAt: number;
+  expiresAt?: number;
+}
+
+export interface NullifierRecord {
+  nullifier: string;
+  usedAt: number;
+  context: string;
+  proofId: string;
 }
 
 export interface ComplianceRecord {
@@ -185,8 +216,79 @@ export interface ZKProofOptions {
   circuitId: string;
   publicInputs: string[];
   proofBytes: string;
+  nullifier: string;
+  revealedAttributes: string[];
   expiresAt?: number;
   metadata?: Record<string, string>;
+  context?: string;
+  txOptions?: TransactionOptions;
+}
+
+export interface ProofGenerationInputs {
+  [key: string]: any;
+}
+
+export interface AgeProofInputs {
+  birthYear: number;
+  currentYear: number;
+  minAge: number;
+  randomness: string;
+}
+
+export interface IncomeProofInputs {
+  income: number;
+  minIncome: number;
+  randomness: string;
+}
+
+export interface KYCCredentialInputs {
+  credentialId: string;
+  subjectPrivateKey: string;
+  issuanceTimestamp: number;
+  personalInfoHash: string;
+  verificationScore: number;
+  issuerPublicKey: { x: string; y: string };
+  subjectAddress: string;
+  expirationTimestamp: number;
+  birthYear?: number;
+  currentYear?: number;
+  minAge?: number;
+  ageRandomness?: string;
+  countryCode?: string;
+  countryMerkleProof?: string[][];
+  countryIndex?: number;
+  countryMerkleRoot?: string;
+}
+
+export interface LoanApplicationInputs {
+  income: number;
+  creditScore: number;
+  employmentMonths: number;
+  debtAmount: number;
+  residenceProof: string;
+  incomeRandomness: string;
+  creditRandomness: string;
+  employmentRandomness: string;
+  residenceRandomness: string;
+  residenceMerkleProof: string[][];
+  residenceIndex: number;
+}
+
+export interface CircuitPerformance {
+  circuitName: string;
+  proofGenerationTime: number;
+  verificationTime: number;
+  proofSize: number;
+  memoryUsage: number;
+  lastUpdated: number;
+}
+
+export interface BatchProofResult {
+  proofId: string;
+  circuitId: string;
+  success: boolean;
+  generationTime: number;
+  error?: string;
 }
 
 export interface ComplianceCheckOptions {
