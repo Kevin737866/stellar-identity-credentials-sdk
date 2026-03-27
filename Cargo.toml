@@ -36,11 +36,3 @@ panic = "abort"
 codegen-units = 1
 lto = true
 
-[workspace]
-members = [
-    "contracts/did_registry",
-    "contracts/credential_issuer", 
-    "contracts/reputation_score",
-    "contracts/zk_attestation",
-    "contracts/compliance_filter"
-]

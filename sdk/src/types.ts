@@ -33,15 +33,84 @@ export interface VerifiableCredential {
   proof?: string;
 }
 
+export interface ReputationFactors {
+  transactionVolume: number;
+  transactionConsistency: number;
+  credentialCount: number;
+  credentialDiversity: number;
+  accountAge: number;
+  disputeHistory: number;
+}
+
 export interface ReputationData {
-  address: string;
+  did: string;
   score: number;
   transactionCount: number;
   successfulTransactions: number;
   credentialCount: number;
   validCredentials: number;
   lastUpdated: number;
-  reputationFactors: Record<string, number>;
+  createdAt: number;
+  reputationFactors: ReputationFactors;
+  transactionVolumeSum: number;
+  counterpartyDiversity: number;
+  feeConsistency: number;
+  contractInteractions: number;
+  verifiedKyc: number;
+  employmentCredentials: number;
+  academicCredentials: number;
+  selfClaimedCredentials: number;
+  sanctionsMatches: number;
+  credentialRevocations: number;
+  disputes: number;
+}
+
+export interface ReputationHistoryPoint {
+  timestamp: number;
+  score: number;
+  eventType: string;
+}
+
+export interface TrustEdge {
+  truster: string;
+  subject: string;
+  weight: number;
+  reason: string;
+  timestamp: number;
+}
+
+export interface ReputationBreakdown {
+  did: string;
+  score: number;
+  rawScore: number;
+  percentile: number;
+  tier: string;
+  factors: ReputationFactors;
+  penalties: {
+    sanctionsMatches: number;
+    credentialRevocations: number;
+    disputes: number;
+  };
+  lastUpdated: number;
+}
+
+export interface ReputationComparison {
+  didA: ReputationBreakdown;
+  didB: ReputationBreakdown;
+  delta: {
+    score: number;
+    percentile: number;
+    factors: ReputationFactors;
+  };
+  winner: 'didA' | 'didB' | 'tie';
+}
+
+export interface ReputationTierProof {
+  did: string;
+  tier: string;
+  scoreRange: [number, number];
+  commitment: string;
+  generatedAt: number;
 }
 
 export interface ZKProof {
