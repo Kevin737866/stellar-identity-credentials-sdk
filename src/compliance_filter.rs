@@ -1,369 +1,538 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, Address, Bytes, Env, Symbol, Vec, Map,
+    contract, contracterror, contractimpl, contracttype,
+    Address, Bytes, BytesN, Env, Vec,
 };
+
+// ~1 year TTL in ledgers (5s/ledger)
+const COMPLIANCE_TTL_LEDGERS: u32 = 6_307_200;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum ComplianceFilterError {
-    AddressBlocked = 1,
-    HighRisk = 2,
-    Unauthorized = 3,
-    NotFound = 4,
-    InvalidRiskScore = 5,
+    AddressBlocked    = 1,
+    HighRisk          = 2,
+    Unauthorized      = 3,
+    NotFound          = 4,
+    InvalidRiskScore  = 5,
+    OracleStale       = 6,
+    InvalidHash       = 7,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ComplianceRecord {
-    pub address: Address,
-    pub risk_score: u32, // 0-100, where 100 is highest risk
-    pub sanctions_list: Vec<Bytes>,
-    pub last_checked: u64,
-    pub check_count: u32,
-    pub status: Symbol, // "cleared", "flagged", "blocked"
-    pub metadata: Map<Symbol, Bytes>,
-}
+// ---------------------------------------------------------------------------
+// Core data structures
+// ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// On-chain reference to an external sanctions list (OFAC, UN, EU, etc.).
+/// The actual entries are stored separately; this holds the integrity hash
+/// supplied by the oracle so consumers can verify off-chain data.
+#[contracttype]
+#[derive(Clone)]
 pub struct SanctionsList {
-    pub list_id: Symbol,
-    pub name: Bytes,
+    /// e.g. b"OFAC_SDN", b"UN_CONSOLIDATED", b"EU_FINANCIAL"
     pub source: Bytes,
     pub last_updated: u64,
+    /// SHA-256 hash of the full list supplied by the oracle
+    pub hash: BytesN<32>,
     pub active: bool,
-    pub entries: Vec<Address>,
+    pub entry_count: u32,
 }
+
+/// Result of a single address/DID screening.
+#[contracttype]
+#[derive(Clone)]
+pub struct ScreeningResult {
+    pub address: Address,
+    /// "clear" | "suspicious" | "blocked"
+    pub status: Bytes,
+    /// 0–100; 100 = highest risk
+    pub risk_score: u32,
+    /// List source IDs where matches were found
+    pub matches: Vec<Bytes>,
+    pub timestamp: u64,
+}
+
+/// Jurisdiction-specific compliance rule.
+#[contracttype]
+#[derive(Clone)]
+pub struct ComplianceRule {
+    /// e.g. b"FATF", b"GDPR", b"CCPA", b"MiCA"
+    pub jurisdiction: Bytes,
+    /// Human-readable requirement description (JSON bytes)
+    pub requirement: Bytes,
+    /// b"mandatory" | b"advisory"
+    pub enforcement: Bytes,
+    pub active: bool,
+    pub created: u64,
+}
+
+/// Immutable audit-trail entry written on every compliance decision.
+#[contracttype]
+#[derive(Clone)]
+pub struct RegulatoryReport {
+    pub subject: Address,
+    /// JSON-encoded activity summary
+    pub activity_summary: Bytes,
+    /// JSON-encoded array of risk flag strings
+    pub risk_flags: Bytes,
+    pub timestamp: u64,
+    /// Ledger sequence for on-chain ordering
+    pub ledger_sequence: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Storage key helpers
+// ---------------------------------------------------------------------------
+
+fn key_list(env: &Env, source: &Bytes) -> Bytes {
+    let mut k = Bytes::from_slice(env, b"list:");
+    k.append(source);
+    k
+}
+
+fn key_entries(env: &Env, source: &Bytes) -> Bytes {
+    let mut k = Bytes::from_slice(env, b"entries:");
+    k.append(source);
+    k
+}
+
+fn key_screening(env: &Env, addr: &Address) -> Bytes {
+    let mut k = Bytes::from_slice(env, b"screen:");
+    k.append(&Bytes::from_slice(env, addr.to_string().as_bytes()));
+    k
+}
+
+fn key_rule(env: &Env, jurisdiction: &Bytes) -> Bytes {
+    let mut k = Bytes::from_slice(env, b"rule:");
+    k.append(jurisdiction);
+    k
+}
+
+fn key_audit(env: &Env, addr: &Address, ts: u64) -> Bytes {
+    let mut k = Bytes::from_slice(env, b"audit:");
+    k.append(&Bytes::from_slice(env, addr.to_string().as_bytes()));
+    k.append(&Bytes::from_slice(env, b":"));
+    k.append(&Bytes::from_slice(env, ts.to_string().as_bytes()));
+    k
+}
+
+fn key_audit_index(env: &Env, addr: &Address) -> Bytes {
+    let mut k = Bytes::from_slice(env, b"aidx:");
+    k.append(&Bytes::from_slice(env, addr.to_string().as_bytes()));
+    k
+}
+
+fn key_list_index(env: &Env) -> Bytes {
+    Bytes::from_slice(env, b"list_index")
+}
+
+// ---------------------------------------------------------------------------
+// Contract
+// ---------------------------------------------------------------------------
 
 #[contract]
 pub struct ComplianceFilter;
 
 #[contractimpl]
 impl ComplianceFilter {
-    /// Initialize compliance checking for an address
-    pub fn initialize_compliance(env: Env, address: Address) -> Result<(), ComplianceFilterError> {
-        // Check if compliance record already exists
-        if env.storage().persistent().has(&address) {
-            return Err(ComplianceFilterError::NotFound); // Already exists
-        }
+    // -----------------------------------------------------------------------
+    // Sanctions list management (oracle-driven)
+    // -----------------------------------------------------------------------
 
-        let compliance_record = ComplianceRecord {
-            address: address.clone(),
-            risk_score: 0, // Start with neutral risk
-            sanctions_list: Vec::new(&env),
-            last_checked: env.ledger().timestamp(),
-            check_count: 0,
-            status: Symbol::new(&env, "cleared"),
-            metadata: Map::new(&env),
+    /// Register or update a sanctions list reference.
+    /// Called by an authorized oracle (Band Protocol / DIA) with the SHA-256
+    /// hash of the full list for integrity verification.
+    pub fn update_sanctions_list(
+        env: Env,
+        admin: Address,
+        source: Bytes,
+        hash: BytesN<32>,
+        entry_count: u32,
+    ) -> Result<(), ComplianceFilterError> {
+        admin.require_auth();
+
+        let list = SanctionsList {
+            source: source.clone(),
+            last_updated: env.ledger().timestamp(),
+            hash,
+            active: true,
+            entry_count,
         };
 
-        env.storage().persistent().set(&address, &compliance_record);
+        let k = key_list(&env, &source);
+        env.storage().persistent().set(&k, &list);
+        env.storage().persistent().extend_ttl(&k, COMPLIANCE_TTL_LEDGERS, COMPLIANCE_TTL_LEDGERS);
+
+        // Maintain global list index
+        let idx_key = key_list_index(&env);
+        let mut index: Vec<Bytes> = env
+            .storage()
+            .persistent()
+            .get(&idx_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut found = false;
+        for s in index.iter() {
+            if s == source {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            index.push_back(source.clone());
+            env.storage().persistent().set(&idx_key, &index);
+            env.storage().persistent().extend_ttl(&idx_key, COMPLIANCE_TTL_LEDGERS, COMPLIANCE_TTL_LEDGERS);
+        }
+
         Ok(())
     }
 
-    /// Check address compliance against sanctions lists
-    pub fn check_compliance(env: Env, address: Address) -> Result<ComplianceRecord, ComplianceFilterError> {
-        let mut compliance_record: ComplianceRecord = env
-            .storage()
-            .persistent()
-            .get(&address)
-            .unwrap_or_else(|| ComplianceRecord {
-                address: address.clone(),
-                risk_score: 0,
-                sanctions_list: Vec::new(&env),
-                last_checked: 0,
-                check_count: 0,
-                status: Symbol::new(&env, "cleared"),
-                metadata: Map::new(&env),
-            });
-
-        // Check against all active sanctions lists
-        let mut found_lists = Vec::new(&env);
-        let mut is_blocked = false;
-        let mut risk_score = compliance_record.risk_score;
-
-        // Get all active sanctions lists
-        let active_lists = Self::get_active_sanctions_lists(env.clone());
-        
-        for list_id in active_lists.iter() {
-            if let Some(list) = Self::get_sanctions_list(env.clone(), list_id.clone()) {
-                if list.active {
-                    // Check if address is in this sanctions list
-                    if Self::is_address_in_list(&list, &address) {
-                        found_lists.push_back(list_id.clone());
-                        is_blocked = true;
-                        risk_score = 100; // Maximum risk for sanctioned addresses
-                    }
-                }
-            }
-        }
-
-        // Update compliance record
-        compliance_record.sanctions_list = found_lists;
-        compliance_record.risk_score = risk_score;
-        compliance_record.last_checked = env.ledger().timestamp();
-        compliance_record.check_count += 1;
-
-        // Set status based on findings
-        compliance_record.status = if is_blocked {
-            Symbol::new(&env, "blocked")
-        } else if risk_score > 70 {
-            Symbol::new(&env, "flagged")
-        } else {
-            Symbol::new(&env, "cleared")
-        };
-
-        // Store updated record
-        env.storage().persistent().set(&address, &compliance_record);
-
-        if is_blocked {
-            return Err(ComplianceFilterError::AddressBlocked);
-        } else if risk_score > 70 {
-            return Err(ComplianceFilterError::HighRisk);
-        }
-
-        Ok(compliance_record)
-    }
-
-    /// Create or update a sanctions list
-    pub fn update_sanctions_list(
+    /// Bulk-load address entries for a sanctions list.
+    /// Entries are stored as a Vec<Address> keyed by source.
+    pub fn load_list_entries(
         env: Env,
-        list_id: Symbol,
-        name: Bytes,
+        admin: Address,
         source: Bytes,
         entries: Vec<Address>,
     ) -> Result<(), ComplianceFilterError> {
-        let list = SanctionsList {
-            list_id: list_id.clone(),
-            name: name.clone(),
-            source: source.clone(),
-            last_updated: env.ledger().timestamp(),
-            active: true,
-            entries: entries.to_vec(&env),
-        };
+        admin.require_auth();
 
-        env.storage().persistent().set(&list_id, &list);
+        if !env.storage().persistent().has(&key_list(&env, &source)) {
+            return Err(ComplianceFilterError::NotFound);
+        }
+
+        let k = key_entries(&env, &source);
+        env.storage().persistent().set(&k, &entries);
+        env.storage().persistent().extend_ttl(&k, COMPLIANCE_TTL_LEDGERS, COMPLIANCE_TTL_LEDGERS);
         Ok(())
     }
 
-    /// Get compliance record for an address
-    pub fn get_compliance_record(env: Env, address: Address) -> Result<ComplianceRecord, ComplianceFilterError> {
-        env.storage()
-            .persistent()
-            .get(&address)
-            .ok_or(ComplianceFilterError::NotFound)
-    }
-
-    /// Get sanctions list by ID
-    pub fn get_sanctions_list(env: Env, list_id: Symbol) -> Option<SanctionsList> {
-        env.storage().persistent().get(&list_id)
-    }
-
-    /// Deactivate a sanctions list
-    pub fn deactivate_sanctions_list(env: Env, list_id: Symbol) -> Result<(), ComplianceFilterError> {
+    /// Deactivate a sanctions list (e.g. superseded by newer version).
+    pub fn deactivate_sanctions_list(
+        env: Env,
+        admin: Address,
+        source: Bytes,
+    ) -> Result<(), ComplianceFilterError> {
+        admin.require_auth();
+        let k = key_list(&env, &source);
         let mut list: SanctionsList = env
             .storage()
             .persistent()
-            .get(&list_id)
+            .get(&k)
             .ok_or(ComplianceFilterError::NotFound)?;
-
         list.active = false;
         list.last_updated = env.ledger().timestamp();
-
-        env.storage().persistent().set(&list_id, &list);
+        env.storage().persistent().set(&k, &list);
         Ok(())
     }
 
-    /// Update risk score for an address
-    pub fn update_risk_score(
+    pub fn get_sanctions_list(env: Env, source: Bytes) -> Option<SanctionsList> {
+        env.storage().persistent().get(&key_list(&env, &source))
+    }
+
+    // -----------------------------------------------------------------------
+    // Screening
+    // -----------------------------------------------------------------------
+
+    /// Screen a single Stellar address against all active sanctions lists.
+    /// Returns ScreeningResult and writes an immutable audit entry.
+    /// Status: "clear" | "suspicious" | "blocked"
+    pub fn screen_address(
         env: Env,
         address: Address,
+    ) -> Result<ScreeningResult, ComplianceFilterError> {
+        let (result, blocked) = Self::run_screening(&env, &address);
+
+        // Persist latest result
+        let sk = key_screening(&env, &address);
+        env.storage().persistent().set(&sk, &result);
+        env.storage().persistent().extend_ttl(&sk, COMPLIANCE_TTL_LEDGERS, COMPLIANCE_TTL_LEDGERS);
+
+        // Immutable audit trail
+        Self::append_audit(
+            &env,
+            &address,
+            b"screen_address",
+            &result.risk_flags_bytes(&env),
+        );
+
+        if blocked {
+            return Err(ComplianceFilterError::AddressBlocked);
+        }
+        if result.risk_score > 70 {
+            return Err(ComplianceFilterError::HighRisk);
+        }
+
+        Ok(result)
+    }
+
+    /// Comprehensive DID screening: resolves the DID to its controller address
+    /// and screens it, plus checks any linked accounts stored on-chain.
+    pub fn screen_did(
+        env: Env,
+        did_bytes: Bytes,
+    ) -> Result<ScreeningResult, ComplianceFilterError> {
+        // Extract address from did:stellar:<address> bytes
+        let address = Self::did_bytes_to_address(&env, &did_bytes)?;
+        Self::screen_address(env, address)
+    }
+
+    /// Update the risk score for an address (e.g. from Chainalysis/Elliptic webhook).
+    pub fn update_risk_score(
+        env: Env,
+        oracle: Address,
+        address: Address,
         new_score: u32,
-        reason: Option<Bytes>,
+        reason: Bytes,
     ) -> Result<(), ComplianceFilterError> {
+        oracle.require_auth();
         if new_score > 100 {
             return Err(ComplianceFilterError::InvalidRiskScore);
         }
 
-        let mut compliance_record: ComplianceRecord = env
+        let sk = key_screening(&env, &address);
+        let mut result: ScreeningResult = env
             .storage()
             .persistent()
-            .get(&address)
-            .ok_or(ComplianceFilterError::NotFound)?;
+            .get(&sk)
+            .unwrap_or_else(|| ScreeningResult {
+                address: address.clone(),
+                status: Bytes::from_slice(&env, b"clear"),
+                risk_score: 0,
+                matches: Vec::new(&env),
+                timestamp: 0,
+            });
 
-        compliance_record.risk_score = new_score;
-        compliance_record.last_checked = env.ledger().timestamp();
+        result.risk_score = new_score;
+        result.status = Self::status_from_score(&env, new_score, !result.matches.is_empty());
+        result.timestamp = env.ledger().timestamp();
 
-        // Update status based on new risk score
-        compliance_record.status = if new_score > 70 {
-            Symbol::new(&env, "flagged")
-        } else {
-            Symbol::new(&env, "cleared")
-        };
+        env.storage().persistent().set(&sk, &result);
+        env.storage().persistent().extend_ttl(&sk, COMPLIANCE_TTL_LEDGERS, COMPLIANCE_TTL_LEDGERS);
 
-        // Store reason if provided
-        if let Some(reason_bytes) = reason {
-            compliance_record.metadata.set(
-                Symbol::new(&env, "last_risk_update_reason"),
-                reason_bytes,
-            );
-        }
-
-        env.storage().persistent().set(&address, &compliance_record);
+        Self::append_audit(&env, &address, b"risk_score_update", &reason);
         Ok(())
     }
 
-    /// Batch check compliance for multiple addresses
-    pub fn batch_check_compliance(env: Env, addresses: Vec<Address>) -> Vec<Result<ComplianceRecord, ComplianceFilterError>> {
+    pub fn get_screening_result(env: Env, address: Address) -> Option<ScreeningResult> {
+        env.storage().persistent().get(&key_screening(&env, &address))
+    }
+
+    // -----------------------------------------------------------------------
+    // Compliance rules (FATF, GDPR, CCPA, MiCA)
+    // -----------------------------------------------------------------------
+
+    pub fn register_compliance_rule(
+        env: Env,
+        admin: Address,
+        jurisdiction: Bytes,
+        requirement: Bytes,
+        enforcement: Bytes,
+    ) -> Result<(), ComplianceFilterError> {
+        admin.require_auth();
+        let rule = ComplianceRule {
+            jurisdiction: jurisdiction.clone(),
+            requirement,
+            enforcement,
+            active: true,
+            created: env.ledger().timestamp(),
+        };
+        let k = key_rule(&env, &jurisdiction);
+        env.storage().persistent().set(&k, &rule);
+        env.storage().persistent().extend_ttl(&k, COMPLIANCE_TTL_LEDGERS, COMPLIANCE_TTL_LEDGERS);
+        Ok(())
+    }
+
+    pub fn get_compliance_rule(env: Env, jurisdiction: Bytes) -> Option<ComplianceRule> {
+        env.storage().persistent().get(&key_rule(&env, &jurisdiction))
+    }
+
+    // -----------------------------------------------------------------------
+    // Regulatory reporting / audit trail
+    // -----------------------------------------------------------------------
+
+    /// Write a regulatory report for a subject. Immutable — cannot be overwritten.
+    pub fn file_regulatory_report(
+        env: Env,
+        reporter: Address,
+        subject: Address,
+        activity_summary: Bytes,
+        risk_flags: Bytes,
+    ) -> Result<Bytes, ComplianceFilterError> {
+        reporter.require_auth();
+        let ts = env.ledger().timestamp();
+        let report = RegulatoryReport {
+            subject: subject.clone(),
+            activity_summary,
+            risk_flags: risk_flags.clone(),
+            timestamp: ts,
+            ledger_sequence: env.ledger().sequence(),
+        };
+        let k = key_audit(&env, &subject, ts);
+        // Only set if not already present — immutability guarantee
+        if !env.storage().persistent().has(&k) {
+            env.storage().persistent().set(&k, &report);
+            env.storage().persistent().extend_ttl(&k, COMPLIANCE_TTL_LEDGERS, COMPLIANCE_TTL_LEDGERS);
+            Self::append_audit_key(&env, &subject, &k);
+        }
+        Ok(k)
+    }
+
+    /// Retrieve all audit report keys for a subject (for off-chain fetching).
+    pub fn get_audit_trail(env: Env, subject: Address) -> Vec<Bytes> {
+        env.storage()
+            .persistent()
+            .get(&key_audit_index(&env, &subject))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Fetch a single regulatory report by its key.
+    pub fn get_regulatory_report(env: Env, report_key: Bytes) -> Option<RegulatoryReport> {
+        env.storage().persistent().get(&report_key)
+    }
+
+    // -----------------------------------------------------------------------
+    // Batch operations
+    // -----------------------------------------------------------------------
+
+    pub fn batch_screen_addresses(env: Env, addresses: Vec<Address>) -> Vec<ScreeningResult> {
         let mut results = Vec::new(&env);
-        for address in addresses.iter() {
-            let result = Self::check_compliance(env.clone(), address.clone());
+        for addr in addresses.iter() {
+            let (result, _) = Self::run_screening(&env, &addr);
             results.push_back(result);
         }
         results
     }
 
-    /// Get all active sanctions lists
-    fn get_active_sanctions_lists(env: Env) -> Vec<Symbol> {
-        // This would require maintaining an index of sanctions lists
-        // For now, return some common list identifiers
-        let mut lists = Vec::new(&env);
-        lists.push_back(Symbol::new(&env, "OFAC"));
-        lists.push_back(Symbol::new(&env, "UN"));
-        lists.push_back(Symbol::new(&env, "EU"));
-        lists
-    }
+    // -----------------------------------------------------------------------
+    // Internal helpers
+    // -----------------------------------------------------------------------
 
-    /// Check if address is in a sanctions list
-    fn is_address_in_list(list: &SanctionsList, address: &Address) -> bool {
-        for entry in list.entries.iter() {
-            if entry == address {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Get risk score for an address
-    pub fn get_risk_score(env: Env, address: Address) -> Result<u32, ComplianceFilterError> {
-        let record: ComplianceRecord = env
+    fn run_screening(env: &Env, address: &Address) -> (ScreeningResult, bool) {
+        let idx_key = key_list_index(env);
+        let sources: Vec<Bytes> = env
             .storage()
             .persistent()
-            .get(&address)
-            .ok_or(ComplianceFilterError::NotFound)?;
-        Ok(record.risk_score)
-    }
+            .get(&idx_key)
+            .unwrap_or_else(|| Vec::new(env));
 
-    /// Check if address is blocked
-    pub fn is_address_blocked(env: Env, address: Address) -> bool {
-        if let Ok(record) = Self::get_compliance_record(env, address) {
-            record.status == Symbol::new(&env, "blocked")
-        } else {
-            false
-        }
-    }
+        let mut matches: Vec<Bytes> = Vec::new(env);
+        let mut blocked = false;
 
-    /// Get compliance statistics
-    pub fn get_compliance_stats(env: Env) -> Map<Symbol, u32> {
-        let mut stats = Map::new(&env);
-        
-        // This would require maintaining global statistics
-        // For now, return empty stats
-        stats.set(Symbol::new(&env, "total_checks"), 0u32);
-        stats.set(Symbol::new(&env, "blocked_addresses"), 0u32);
-        stats.set(Symbol::new(&env, "flagged_addresses"), 0u32);
-        stats.set(Symbol::new(&env, "cleared_addresses"), 0u32);
-        
-        stats
-    }
-
-    /// Add address to sanctions list
-    pub fn add_to_sanctions_list(
-        env: Env,
-        list_id: Symbol,
-        address: Address,
-    ) -> Result<(), ComplianceFilterError> {
-        let mut list: SanctionsList = env
-            .storage()
-            .persistent()
-            .get(&list_id)
-            .ok_or(ComplianceFilterError::NotFound)?;
-
-        // Check if address already exists in list
-        for entry in list.entries.iter() {
-            if entry == address {
-                return Ok(()); // Already in list
+        for source in sources.iter() {
+            let list_key = key_list(env, &source);
+            let list: Option<SanctionsList> = env.storage().persistent().get(&list_key);
+            if let Some(l) = list {
+                if !l.active {
+                    continue;
+                }
+                let entries_key = key_entries(env, &source);
+                let entries: Vec<Address> = env
+                    .storage()
+                    .persistent()
+                    .get(&entries_key)
+                    .unwrap_or_else(|| Vec::new(env));
+                for entry in entries.iter() {
+                    if entry == *address {
+                        matches.push_back(source.clone());
+                        blocked = true;
+                        break;
+                    }
+                }
             }
         }
 
-        // Add address to list
-        list.entries.push_back(address);
-        list.last_updated = env.ledger().timestamp();
+        let risk_score: u32 = if blocked { 100 } else { 0 };
+        let status = Self::status_from_score(env, risk_score, blocked);
 
-        env.storage().persistent().set(&list_id, &list);
-
-        // Update compliance record for the address
-        Self::check_compliance(env, address)?;
-
-        Ok(())
-    }
-
-    /// Remove address from sanctions list
-    pub fn remove_from_sanctions_list(
-        env: Env,
-        list_id: Symbol,
-        address: Address,
-    ) -> Result<(), ComplianceFilterError> {
-        let mut list: SanctionsList = env
-            .storage()
-            .persistent()
-            .get(&list_id)
-            .ok_or(ComplianceFilterError::NotFound)?;
-
-        // Find and remove address from list
-        let mut found = false;
-        let mut new_entries = Vec::new(&env);
-        for entry in list.entries.iter() {
-            if entry != address {
-                new_entries.push_back(entry);
-            } else {
-                found = true;
-            }
-        }
-
-        if !found {
-            return Ok(()); // Address not in list
-        }
-
-        list.entries = new_entries;
-        list.last_updated = env.ledger().timestamp();
-
-        env.storage().persistent().set(&list_id, &list);
-
-        // Re-check compliance for the address
-        Self::check_compliance(env, address)?;
-
-        Ok(())
-    }
-
-    /// Get compliance history for an address
-    pub fn get_compliance_history(env: Env, address: Address, limit: u32) -> Vec<u64> {
-        let history_key = Symbol::new(&env, &format!("history:{}", address.to_string()));
-        let history: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&history_key)
-            .unwrap_or_else(|| Vec::new(&env));
-
-        // Return last 'limit' entries
-        let start = if history.len() > limit {
-            history.len() - limit
-        } else {
-            0
+        let result = ScreeningResult {
+            address: address.clone(),
+            status,
+            risk_score,
+            matches,
+            timestamp: env.ledger().timestamp(),
         };
 
-        let mut result = Vec::new(&env);
-        for i in start..history.len() {
-            result.push_back(history.get(i).unwrap());
+        (result, blocked)
+    }
+
+    fn status_from_score(env: &Env, score: u32, blocked: bool) -> Bytes {
+        if blocked || score >= 100 {
+            Bytes::from_slice(env, b"blocked")
+        } else if score > 70 {
+            Bytes::from_slice(env, b"suspicious")
+        } else {
+            Bytes::from_slice(env, b"clear")
         }
-        result
+    }
+
+    fn append_audit(env: &Env, address: &Address, action: &[u8], detail: &Bytes) {
+        let ts = env.ledger().timestamp();
+        let mut summary = Bytes::from_slice(env, action);
+        summary.append(&Bytes::from_slice(env, b":"));
+        summary.append(detail);
+
+        let report = RegulatoryReport {
+            subject: address.clone(),
+            activity_summary: summary,
+            risk_flags: detail.clone(),
+            timestamp: ts,
+            ledger_sequence: env.ledger().sequence(),
+        };
+        let k = key_audit(env, address, ts);
+        if !env.storage().persistent().has(&k) {
+            env.storage().persistent().set(&k, &report);
+            env.storage().persistent().extend_ttl(&k, COMPLIANCE_TTL_LEDGERS, COMPLIANCE_TTL_LEDGERS);
+            Self::append_audit_key(env, address, &k);
+        }
+    }
+
+    fn append_audit_key(env: &Env, address: &Address, key: &Bytes) {
+        let idx = key_audit_index(env, address);
+        let mut keys: Vec<Bytes> = env
+            .storage()
+            .persistent()
+            .get(&idx)
+            .unwrap_or_else(|| Vec::new(env));
+        keys.push_back(key.clone());
+        env.storage().persistent().set(&idx, &keys);
+        env.storage().persistent().extend_ttl(&idx, COMPLIANCE_TTL_LEDGERS, COMPLIANCE_TTL_LEDGERS);
+    }
+
+    fn did_bytes_to_address(env: &Env, did: &Bytes) -> Result<Address, ComplianceFilterError> {
+        // did:stellar:<address> — skip first 12 bytes ("did:stellar:")
+        let prefix_len = 12u32;
+        if did.len() <= prefix_len {
+            return Err(ComplianceFilterError::NotFound);
+        }
+        let mut addr_bytes = Bytes::new(env);
+        for i in prefix_len..did.len() {
+            let b = did.get(i).unwrap_or(0);
+            if b == b':' {
+                break;
+            }
+            addr_bytes.push_back(b);
+        }
+        // Parse as Stellar strkey — use Address::from_string equivalent
+        let addr_str = core::str::from_utf8(
+            &addr_bytes.to_array::<56>().unwrap_or([0u8; 56])
+        ).unwrap_or("");
+        // Soroban Address can be constructed from a string via the env
+        Ok(Address::from_str(env, addr_str))
+    }
+}
+
+// Helper: extract risk_flags bytes from a ScreeningResult for audit logging
+impl ScreeningResult {
+    fn risk_flags_bytes(&self, env: &Env) -> Bytes {
+        if self.matches.is_empty() {
+            Bytes::from_slice(env, b"none")
+        } else {
+            let mut out = Bytes::from_slice(env, b"matched:");
+            for m in self.matches.iter() {
+                out.append(&m);
+                out.append(&Bytes::from_slice(env, b","));
+            }
+            out
+        }
     }
 }
