@@ -12,6 +12,20 @@ export { CredentialClient } from './credentialClient';
 export { ReputationClient } from './reputationClient';
 export { ZKProofsClient } from './zkProofs';
 
+// W3C VC Data Model 2.0 — credential registry SDK
+export { CredentialsClient } from './credentials';
+export type {
+  CredentialSchema,
+  W3CVerifiableCredential,
+  CredentialProof,
+  VerifiablePresentation,
+  PresentationProof,
+  RevocationStatus,
+  IssuerReputation as CredentialIssuerReputation,
+  CredentialStatusList,
+  CredentialType,
+} from './credentials';
+
 // W3C-compliant DID Resolver (did:stellar method)
 export { DIDResolver } from './didResolver';
 export type {
