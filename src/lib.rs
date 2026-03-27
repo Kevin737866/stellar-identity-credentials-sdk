@@ -49,9 +49,11 @@ pub struct VerifiableCredential {
     pub issuer: Address,
     pub subject: Address,
     pub type_: Vec<Bytes>,
-    pub credential_data: Bytes,
+    pub claims: Bytes,
     pub issuance_date: u64,
     pub expiration_date: Option<u64>,
+    pub parent_credential: Option<Bytes>,
+    pub schema_id: Option<Bytes>,
     pub revocation: Option<Bytes>,
     pub proof: Option<Bytes>,
 }
