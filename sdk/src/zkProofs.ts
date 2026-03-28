@@ -8,6 +8,9 @@ import {
   nativeToScVal,
   scValToNative,
 } from 'stellar-sdk';
+import * as snarkjs from 'snarkjs';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
   ZKProof,
   ZKCircuit,
@@ -16,17 +19,442 @@ import {
   StellarIdentityConfig,
   TransactionOptions,
   StellarIdentityError,
+  CircuitType,
+  ProofGenerationInputs,
 } from './types';
 
 export class ZKProofsClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
   private zkAttestationContract: Contract;
+  private circuitCache: Map<string, any> = new Map();
+  private wasmCache: Map<string, any> = new Map();
+  private zkeyCache: Map<string, any> = new Map();
 
   constructor(config: StellarIdentityConfig) {
     this.config = config;
     this.rpc = new SorobanRpc.Server(config.rpcUrl || this.getDefaultRpcUrl());
     this.zkAttestationContract = new Contract(config.contracts.zkAttestation);
+  }
+
+  /**
+   * Generate a zero-knowledge proof using WASM witness generation
+   */
+  async generateProof(
+    circuitName: string,
+    privateInputs: any,
+    publicInputs: any,
+    options?: { wasmPath?: string; zkeyPath?: string }
+  ): Promise<{ proof: any; publicSignals: any }> {
+    try {
+      const wasmPath = options?.wasmPath || this.getCircuitPath(circuitName, '.wasm');
+      const zkeyPath = options?.zkeyPath || this.getCircuitPath(circuitName, '.zkey');
+
+      // Load WASM and zkey with caching
+      const wasm = await this.loadWasm(wasmPath);
+      const zkey = await this.loadZkey(zkeyPath);
+
+      // Generate proof
+      const startTime = Date.now();
+      const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+        privateInputs,
+        wasm,
+        zkey
+      );
+      const generationTime = Date.now() - startTime;
+
+      console.log(`Proof generated in ${generationTime}ms`);
+
+      return { proof, publicSignals };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Verify a proof on-chain
+   */
+  async verifyProofOnChain(
+    proofId: string,
+    publicInputs: string[]
+  ): Promise<ZKVerificationResult> {
+    try {
+      const retval = await this.simulateRead('verify_proof', [
+        nativeToScVal(new TextEncoder().encode(proofId), { type: 'bytes' }),
+      ]);
+      
+      const isValid = scValToNative(retval) as boolean;
+      const proof = await this.getProof(proofId);
+      
+      return {
+        valid: isValid,
+        circuitId: proof.circuitId,
+        proofId: proof.proofId,
+        verifiedAt: Date.now(),
+        expiresAt: proof.expiresAt,
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Create high-level age proof
+   */
+  async createAgeProof(
+    birthYear: number,
+    currentYear: number,
+    minAge: number,
+    options?: ZKProofOptions
+  ): Promise<string> {
+    try {
+      const age = currentYear - birthYear;
+      const randomness = this.generateSalt();
+      
+      // Generate age commitment
+      const commitment = this.generateCommitment(age.toString(), randomness);
+      
+      // Generate ZK proof
+      const { proof, publicSignals } = await this.generateProof(
+        'age_range_proof',
+        {
+          birth_year: birthYear,
+          current_year: currentYear,
+          min_age: minAge,
+          randomness: this.hexToField(randomness),
+        },
+        {
+          commitment: commitment.split(',').map((s, i) => i === 0 ? this.hexToField(s) : s),
+          min_age: minAge,
+        }
+      );
+
+      // Submit proof to contract
+      const proofBytes = JSON.stringify(proof);
+      const nullifier = this.generateNullifier(
+        `age_${birthYear}`,
+        'age_range_proof',
+        options?.context || 'default'
+      );
+
+      return this.submitProof(
+        this.config.keypair,
+        {
+          circuitId: 'age_range_proof',
+          publicInputs: [commitment, minAge.toString()],
+          proofBytes,
+          nullifier,
+          revealedAttributes: ['age_commitment'],
+          expiresAt: options?.expiresAt,
+          metadata: {
+            type: 'age_verification',
+            minAge: minAge.toString(),
+            context: options?.context || 'default',
+          },
+        },
+        options?.txOptions
+      );
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Create high-level income proof
+   */
+  async createIncomeProof(
+    income: number,
+    minIncome: number,
+    options?: ZKProofOptions
+  ): Promise<string> {
+    try {
+      const randomness = this.generateSalt();
+      const commitment = this.generateCommitment(income.toString(), randomness);
+      
+      const { proof, publicSignals } = await this.generateProof(
+        'income_range_proof',
+        {
+          income: income,
+          min_income: minIncome,
+          randomness: this.hexToField(randomness),
+        },
+        {
+          commitment: commitment.split(',').map((s, i) => i === 0 ? this.hexToField(s) : s),
+          min_income: minIncome,
+        }
+      );
+
+      const proofBytes = JSON.stringify(proof);
+      const nullifier = this.generateNullifier(
+        `income_${income}`,
+        'income_range_proof',
+        options?.context || 'default'
+      );
+
+      return this.submitProof(
+        this.config.keypair,
+        {
+          circuitId: 'income_range_proof',
+          publicInputs: [commitment, minIncome.toString()],
+          proofBytes,
+          nullifier,
+          revealedAttributes: ['income_commitment'],
+          expiresAt: options?.expiresAt,
+          metadata: {
+            type: 'income_verification',
+            minIncome: minIncome.toString(),
+            context: options?.context || 'default',
+          },
+        },
+        options?.txOptions
+      );
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Create composite KYC proof
+   */
+  async createKYCProof(
+    credential: any,
+    requiredChecks: string[],
+    options?: ZKProofOptions
+  ): Promise<string> {
+    try {
+      const inputs: any = {
+        credential_id: credential.id,
+        subject_private_key: this.hexToField(credential.privateKey),
+        issuance_timestamp: credential.issuedAt,
+        personal_info_hash: this.hexToField(credential.personalInfoHash),
+        verification_score: credential.verificationScore,
+        issuer_public_key: [
+          this.hexToField(credential.issuerPubKey.x),
+          this.hexToField(credential.issuerPubKey.y),
+        ],
+        subject_address: this.hexToField(credential.subjectAddress),
+        expiration_timestamp: credential.expiresAt,
+      };
+
+      // Add age-specific inputs if required
+      if (requiredChecks.includes('age')) {
+        inputs.birth_year = credential.birthYear;
+        inputs.current_year = new Date().getFullYear();
+        inputs.min_age = 18;
+        inputs.age_randomness = this.hexToField(this.generateSalt());
+      }
+
+      // Add country-specific inputs if required
+      if (requiredChecks.includes('country')) {
+        inputs.country_code = this.hexToField(credential.countryCode);
+        inputs.country_merkle_proof = credential.countryMerkleProof;
+        inputs.country_index = credential.countryIndex;
+        inputs.country_merkle_root = this.hexToField(credential.countryMerkleRoot);
+      }
+
+      const { proof, publicSignals } = await this.generateProof(
+        'kyc_composite_proof',
+        inputs,
+        {
+          credential_hash: this.hexToField(credential.hash),
+          // Add other public inputs as needed
+        }
+      );
+
+      const proofBytes = JSON.stringify(proof);
+      const nullifier = this.generateNullifier(
+        credential.id,
+        'kyc_composite_proof',
+        options?.context || 'default'
+      );
+
+      return this.submitProof(
+        this.config.keypair,
+        {
+          circuitId: 'kyc_composite_proof',
+          publicInputs: [credential.hash],
+          proofBytes,
+          nullifier,
+          revealedAttributes: requiredChecks.map(check => Symbol.for(check)),
+          expiresAt: options?.expiresAt,
+          metadata: {
+            type: 'kyc_verification',
+            requiredChecks: requiredChecks.join(','),
+            context: options?.context || 'default',
+            credential_id: credential.id,
+          },
+        },
+        options?.txOptions
+      );
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Create loan application proof with multiple requirements
+   */
+  async createLoanApplicationProof(
+    application: any,
+    options?: ZKProofOptions
+  ): Promise<string> {
+    try {
+      const inputs = {
+        income: application.income,
+        credit_score: application.creditScore,
+        employment_months: application.employmentMonths,
+        debt_amount: application.debtAmount,
+        residence_proof: this.hexToField(application.residenceProof),
+        income_randomness: this.hexToField(this.generateSalt()),
+        credit_randomness: this.hexToField(this.generateSalt()),
+        employment_randomness: this.hexToField(this.generateSalt()),
+        residence_randomness: this.hexToField(this.generateSalt()),
+        residence_merkle_proof: application.residenceMerkleProof,
+        residence_index: application.residenceIndex,
+      };
+
+      const publicInputs = {
+        min_income: application.minIncome,
+        min_credit_score: application.minCreditScore,
+        max_debt_to_income: application.maxDebtToIncome,
+        min_employment_months: application.minEmploymentMonths,
+        residence_merkle_root: this.hexToField(application.residenceMerkleRoot),
+      };
+
+      const { proof, publicSignals } = await this.generateProof(
+        'loan_application_composite_proof',
+        inputs,
+        publicInputs
+      );
+
+      const proofBytes = JSON.stringify(proof);
+      const nullifier = this.generateNullifier(
+        `loan_${application.applicantId}`,
+        'loan_application_composite_proof',
+        options?.context || 'default'
+      );
+
+      return this.submitProof(
+        this.config.keypair,
+        {
+          circuitId: 'loan_application_composite_proof',
+          publicInputs: Object.values(publicInputs).map(v => v.toString()),
+          proofBytes,
+          nullifier,
+          revealedAttributes: ['income_commitment', 'credit_commitment', 'employment_status'],
+          expiresAt: options?.expiresAt,
+          metadata: {
+            type: 'loan_application',
+            applicant_id: application.applicantId,
+            loan_amount: application.loanAmount,
+            context: options?.context || 'default',
+          },
+        },
+        options?.txOptions
+      );
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Batch generate multiple proofs for efficiency
+   */
+  async batchGenerateProofs(
+    proofs: Array<{
+      circuitName: string;
+      privateInputs: any;
+      publicInputs: any;
+    }>
+  ): Promise<Array<{ proof: any; publicSignals: any; generationTime: number }>> {
+    const results = [];
+    
+    for (const proofRequest of proofs) {
+      const startTime = Date.now();
+      try {
+        const result = await this.generateProof(
+          proofRequest.circuitName,
+          proofRequest.privateInputs,
+          proofRequest.publicInputs
+        );
+        results.push({
+          ...result,
+          generationTime: Date.now() - startTime,
+        });
+      } catch (error) {
+        results.push({
+          proof: null,
+          publicSignals: null,
+          generationTime: Date.now() - startTime,
+          error: error.message,
+        });
+      }
+    }
+    
+    return results;
+  }
+
+  /**
+   * Load WASM file with caching
+   */
+  private async loadWasm(wasmPath: string): Promise<any> {
+    if (this.wasmCache.has(wasmPath)) {
+      return this.wasmCache.get(wasmPath);
+    }
+
+    try {
+      const wasmBuffer = readFileSync(wasmPath);
+      const wasm = await WebAssembly.compile(wasmBuffer);
+      this.wasmCache.set(wasmPath, wasm);
+      return wasm;
+    } catch (error) {
+      throw new Error(`Failed to load WASM from ${wasmPath}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Load zkey file with caching
+   */
+  private async loadZkey(zkeyPath: string): Promise<any> {
+    if (this.zkeyCache.has(zkeyPath)) {
+      return this.zkeyCache.get(zkeyPath);
+    }
+
+    try {
+      const zkeyBuffer = readFileSync(zkeyPath);
+      const zkey = JSON.parse(zkeyBuffer.toString());
+      this.zkeyCache.set(zkeyPath, zkey);
+      return zkey;
+    } catch (error) {
+      throw new Error(`Failed to load zkey from ${zkeyPath}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get circuit file path
+   */
+  private getCircuitPath(circuitName: string, extension: string): string {
+    const circuitsDir = join(__dirname, '..', '..', 'circuits');
+    return join(circuitsDir, `${circuitName}${extension}`);
+  }
+
+  /**
+   * Convert hex string to field element
+   */
+  private hexToField(hex: string): string {
+    // Remove 0x prefix if present
+    const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
+    // Convert to decimal string
+    return BigInt('0x' + cleanHex).toString();
+  }
+
+  /**
+   * Generate nullifier for proof
+   */
+  private generateNullifier(credentialId: string, circuitId: string, context: string): string {
+    const crypto = require('crypto') as typeof import('crypto');
+    const data = `${credentialId}${circuitId}${context}`;
+    return crypto.createHash('sha256').update(data).digest('hex');
   }
 
   async registerCircuit(
