@@ -38,6 +38,24 @@ export type {
   AttributeExpiration 
 } from './dataMinimization';
 
+export { RegulatoryReportingClient } from './regulatoryReporting';
+export type {
+  TemplateSection,
+  ReportTemplate,
+  ReportField,
+  ReportSection,
+  RegulatoryReport,
+  SARReport,
+  ReportSchedule,
+  TransactionReport,
+  ExportSnapshot,
+  PaginatedReports,
+  PaginatedSARs,
+  ReportStatistics,
+  ExportFormat,
+} from './regulatoryReporting';
+export { DEFAULT_TEMPLATES } from './regulatoryReporting';
+
 export {
   ErrorCode,
   StellarIdentityError,
@@ -114,6 +132,7 @@ import { ReputationClient } from './reputation';
 import { ZKProofsClient } from './zkProofs';
 import { CacheManager } from './cacheManager';
 import { EventSubscriber } from './eventSubscriber';
+import { RegulatoryReportingClient } from './regulatoryReporting';
 import { StellarIdentityConfig } from './types';
 
 /**
