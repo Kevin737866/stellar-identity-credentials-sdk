@@ -75,6 +75,7 @@ export type {
   DIDResolutionMetadata,
   DIDDocumentMetadata,
   DereferencingResult,
+  DIDResolveOptions,
 } from './didResolver';
 
 export type {
