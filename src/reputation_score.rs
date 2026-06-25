@@ -1074,8 +1074,7 @@ mod tests {
         let env = setup_env();
         bootstrap(&env);
         let intruder = Address::generate(&env);
-        let result =
-            ReputationScore::update_config(env.clone(), intruder, default_config());
+        let result = ReputationScore::update_config(env.clone(), intruder, default_config());
         assert_eq!(result.unwrap_err(), ReputationScoreError::NotAdmin);
     }
 }

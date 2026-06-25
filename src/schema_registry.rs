@@ -1,6 +1,4 @@
-use soroban_sdk::{
-    contract, contracterror, contractimpl, Address, Bytes, Env,
-};
+use soroban_sdk::{contract, contracterror, contractimpl, Address, Bytes, Env};
 
 use crate::CredentialSchema;
 
@@ -55,10 +53,9 @@ impl CredentialSchemaRegistry {
 
         env.storage().persistent().set(&version_key, &schema);
 
-        env.storage().persistent().set(
-            &Self::make_version_key(&env, &schema_id),
-            &1u32
-        );
+        env.storage()
+            .persistent()
+            .set(&Self::make_version_key(&env, &schema_id), &1u32);
 
         Ok(())
     }
@@ -107,10 +104,9 @@ impl CredentialSchemaRegistry {
         };
 
         env.storage().persistent().set(&new_version_key, &schema);
-        env.storage().persistent().set(
-            &Self::make_version_key(&env, &schema_id),
-            &new_version
-        );
+        env.storage()
+            .persistent()
+            .set(&Self::make_version_key(&env, &schema_id), &new_version);
 
         Ok(())
     }
@@ -123,12 +119,11 @@ impl CredentialSchemaRegistry {
     ) -> Result<CredentialSchema, SchemaRegistryError> {
         let target_version = match version {
             Some(v) => v,
-            None => {
-                env.storage()
-                    .persistent()
-                    .get(&Self::make_version_key(&env, &schema_id))
-                    .ok_or(SchemaRegistryError::NotFound)?
-            }
+            None => env
+                .storage()
+                .persistent()
+                .get(&Self::make_version_key(&env, &schema_id))
+                .ok_or(SchemaRegistryError::NotFound)?,
         };
 
         let version_key = Self::get_version_key(&env, &schema_id, target_version);
@@ -139,10 +134,7 @@ impl CredentialSchemaRegistry {
     }
 
     /// Basic validation logic: check if a credential's schema exists and is active.
-    pub fn validate_schema_exists(
-        env: Env,
-        schema_id: Bytes,
-    ) -> Result<bool, SchemaRegistryError> {
+    pub fn validate_schema_exists(env: Env, schema_id: Bytes) -> Result<bool, SchemaRegistryError> {
         Self::get_schema(env, schema_id, None).map(|_| true)
     }
 

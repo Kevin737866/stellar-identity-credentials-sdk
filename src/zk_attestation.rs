@@ -305,11 +305,7 @@ impl ZKAttestation {
     }
 
     /// Paginated list of registered circuits (#56).
-    pub fn get_registered_circuits(
-        env: Env,
-        page: u32,
-        page_size: u32,
-    ) -> PaginatedCircuits {
+    pub fn get_registered_circuits(env: Env, page: u32, page_size: u32) -> PaginatedCircuits {
         let all: Vec<Symbol> = env
             .storage()
             .persistent()
@@ -403,7 +399,10 @@ impl ZKAttestation {
         let mut id = Bytes::from_slice(env, b"zk:");
         id.append(&Bytes::from_slice(env, timestamp.to_string().as_bytes()));
         id.append(&Bytes::from_slice(env, b":"));
-        id.append(&Bytes::from_slice(env, env.ledger().sequence().to_string().as_bytes()));
+        id.append(&Bytes::from_slice(
+            env,
+            env.ledger().sequence().to_string().as_bytes(),
+        ));
         id
     }
 
