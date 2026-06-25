@@ -2,27 +2,56 @@ extern crate alloc;
 
 pub mod did_registry;
 pub mod credential_issuer;
-pub mod credential_schema;
+pub mod schema_registry;
 pub mod reputation_score;
 pub mod zk_attestation;
 pub mod compliance_filter;
 pub mod storage_optimization;
 pub mod gas_benchmark;
+pub mod credential_offer;
+pub mod did_recovery;
+pub mod reputation_oracle;
 
 #[cfg(test)]
 mod integration_tests;
 #[cfg(test)]
 mod fuzz_test_script;
+#[cfg(test)]
+mod oracles;
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec};
 
 pub use did_registry::DIDRegistry;
+pub use did_registry::MultiSigConfig;
+pub use did_registry::Signer;
+pub use did_registry::PendingMultiSigOperation;
 pub use credential_issuer::CredentialIssuer;
-pub use credential_schema::CredentialSchema;
+pub use schema_registry::CredentialSchemaRegistry;
 pub use reputation_score::ReputationScore;
 pub use zk_attestation::ZKAttestation;
 pub use zk_attestation::ZKAttestationRecord;
 pub use compliance_filter::ComplianceFilter;
+pub use credential_offer::CredentialOfferContract;
+pub use credential_offer::CredentialOffer;
+pub use credential_offer::OfferStatus;
+pub use credential_offer::OfferStatusCode;
+pub use credential_offer::CredentialOfferError;
+pub use credential_offer::PaginatedOffers;
+pub use did_recovery::DIDRecovery;
+pub use did_recovery::RecoveryConfig;
+pub use did_recovery::RecoveryMethod;
+pub use did_recovery::RecoveryRequest;
+pub use did_recovery::RecoveryRequestStatus;
+pub use did_recovery::GuardianRecord;
+pub use did_recovery::DIDRecoveryError;
+pub use reputation_oracle::ReputationOracle;
+pub use reputation_oracle::OracleRecord;
+pub use reputation_oracle::OracleStatus;
+pub use reputation_oracle::OracleDataFeed;
+pub use reputation_oracle::OracleDispute;
+pub use reputation_oracle::DisputeStatus;
+pub use reputation_oracle::ReputationOracleError;
+pub use reputation_oracle::PaginatedFeeds;
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -39,6 +68,17 @@ pub struct DIDDocument {
     pub created: u64,
     pub updated: u64,
     pub deactivated: bool,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct CredentialSchema {
+    pub id: Bytes,
+    pub issuer: Address,
+    pub version: u32,
+    pub definition: Bytes,
+    pub created: u64,
+    pub updated: u64,
 }
 
 #[contracttype]
@@ -149,15 +189,17 @@ impl StellarIdentity {
         env: Env,
         did_registry_address: Address,
         credential_issuer_address: Address,
+        schema_registry_address: Address,
         reputation_score_address: Address,
         zk_attestation_address: Address,
         compliance_filter_address: Address,
     ) {
-        env.storage().instance().set(&StorageKey::DidRegistry, &did_registry_address);
-        env.storage().instance().set(&StorageKey::CredentialIssuer, &credential_issuer_address);
-        env.storage().instance().set(&StorageKey::ReputationScore, &reputation_score_address);
-        env.storage().instance().set(&StorageKey::ZkAttestation, &zk_attestation_address);
-        env.storage().instance().set(&StorageKey::ComplianceFilter, &compliance_filter_address);
+        env.storage().instance().set(&Symbol::new(&env, "did_registry"), &did_registry_address);
+        env.storage().instance().set(&Symbol::new(&env, "credential_issuer"), &credential_issuer_address);
+        env.storage().instance().set(&Symbol::new(&env, "schema_registry"), &schema_registry_address);
+        env.storage().instance().set(&Symbol::new(&env, "reputation_score"), &reputation_score_address);
+        env.storage().instance().set(&Symbol::new(&env, "zk_attestation"), &zk_attestation_address);
+        env.storage().instance().set(&Symbol::new(&env, "compliance_filter"), &compliance_filter_address);
     }
 
     pub fn get_did_registry_address(env: Env) -> Option<Address> {
@@ -166,6 +208,10 @@ impl StellarIdentity {
 
     pub fn get_credential_issuer_address(env: Env) -> Option<Address> {
         env.storage().instance().get(&StorageKey::CredentialIssuer)
+    }
+
+    pub fn get_schema_registry_address(env: Env) -> Option<Address> {
+        env.storage().instance().get(&Symbol::new(&env, "schema_registry"))
     }
 
     pub fn get_reputation_score_address(env: Env) -> Option<Address> {

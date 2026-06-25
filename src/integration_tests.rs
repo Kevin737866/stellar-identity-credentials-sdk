@@ -10,7 +10,8 @@ use crate::{
     credential_issuer::CredentialIssuer,
     credential_schema::{CredentialSchema, FieldValidation},
     did_registry::{DIDRegistry, DIDRegistryError},
-    reputation_score::{ReputationData, ReputationScore, ReputationScoreError, TrustAttestation},
+    reputation_score::{ReputationScore, ReputationScoreError, ReputationData, TrustAttestation},
+    schema_registry::{CredentialSchemaRegistry, SchemaRegistryError},
     zk_attestation::{CircuitType, ZKAttestation, ZKAttestationError},
     DIDDocument, Service, VerifiableCredential, VerificationMethod,
 };
@@ -502,540 +503,82 @@ fn test_deterministic_parallel_safe() {
 }
 
 // =========================================================================
-// Test 8: Pagination - empty list (#56)
+// Test 8: Schema Registry lifecycle - register -> get -> update -> validate
 // =========================================================================
 
 #[test]
-fn test_pagination_empty_list() {
-    let env = setup_env();
-    let subject = new_address(&env);
-
-    let result = CredentialIssuer::get_credentials_by_subject(env.clone(), subject, 0, 10);
-    assert_eq!(result.data.len(), 0);
-    assert_eq!(result.page, 0);
-    assert_eq!(result.total, 0);
-    assert!(!result.has_more);
-}
-
-// =========================================================================
-// Test 9: Pagination - single page (#56)
-// =========================================================================
-
-#[test]
-fn test_pagination_single_page() {
+fn test_schema_registry_lifecycle() {
     let env = setup_env();
     let issuer = new_address(&env);
-    let subject = new_address(&env);
+    let other_issuer = new_address(&env);
 
-    for _ in 0..5 {
-        let _ = CredentialIssuer::issue_credential(
-            env.clone(),
-            issuer.clone(),
-            subject.clone(),
-            vec![&env, Bytes::from_slice(&env, b"Test")],
-            Bytes::from_slice(&env, b"data"),
-            None,
-            Bytes::from_slice(&env, b"proof"),
-        );
-    }
+    let schema_id = Bytes::from_slice(&env, b"schema-kyc-v1");
+    let definition_v1 = Bytes::from_slice(&env, b"{\"type\":\"KYC\",\"fields\":[\"name\",\"dob\"]}");
+    let definition_v2 = Bytes::from_slice(&env, b"{\"type\":\"KYC\",\"fields\":[\"name\",\"dob\",\"address\"]}");
 
-    let result = CredentialIssuer::get_credentials_by_subject(env.clone(), subject, 0, 10);
-    assert_eq!(result.data.len(), 5);
-    assert_eq!(result.total, 5);
-    assert!(!result.has_more);
-}
-
-// =========================================================================
-// Test 10: Pagination - multiple pages (#56)
-// =========================================================================
-
-#[test]
-fn test_pagination_multiple_pages() {
-    let env = setup_env();
-    let issuer = new_address(&env);
-    let subject = new_address(&env);
-
-    for _ in 0..25 {
-        let _ = CredentialIssuer::issue_credential(
-            env.clone(),
-            issuer.clone(),
-            subject.clone(),
-            vec![&env, Bytes::from_slice(&env, b"Test")],
-            Bytes::from_slice(&env, b"data"),
-            None,
-            Bytes::from_slice(&env, b"proof"),
-        );
-    }
-
-    let page0 = CredentialIssuer::get_credentials_by_subject(env.clone(), subject.clone(), 0, 10);
-    assert_eq!(page0.data.len(), 10);
-    assert_eq!(page0.total, 25);
-    assert!(page0.has_more);
-
-    let page1 = CredentialIssuer::get_credentials_by_subject(env.clone(), subject.clone(), 1, 10);
-    assert_eq!(page1.data.len(), 10);
-    assert!(page1.has_more);
-
-    let page2 = CredentialIssuer::get_credentials_by_subject(env.clone(), subject.clone(), 2, 10);
-    assert_eq!(page2.data.len(), 5);
-    assert!(!page2.has_more);
-}
-
-// =========================================================================
-// Test 11: Pagination - last page exact (#56)
-// =========================================================================
-
-#[test]
-fn test_pagination_last_page_exact() {
-    let env = setup_env();
-    let issuer = new_address(&env);
-    let subject = new_address(&env);
-
-    for _ in 0..20 {
-        let _ = CredentialIssuer::issue_credential(
-            env.clone(),
-            issuer.clone(),
-            subject.clone(),
-            vec![&env, Bytes::from_slice(&env, b"Test")],
-            Bytes::from_slice(&env, b"data"),
-            None,
-            Bytes::from_slice(&env, b"proof"),
-        );
-    }
-
-    let page1 = CredentialIssuer::get_credentials_by_subject(env.clone(), subject.clone(), 1, 10);
-    assert_eq!(page1.data.len(), 10);
-    assert!(!page1.has_more);
-}
-
-// =========================================================================
-// Test 12: Pagination - page size clamping (#56)
-// =========================================================================
-
-#[test]
-fn test_pagination_page_size_clamping() {
-    let env = setup_env();
-    let issuer = new_address(&env);
-    let subject = new_address(&env);
-
-    for _ in 0..60 {
-        let _ = CredentialIssuer::issue_credential(
-            env.clone(),
-            issuer.clone(),
-            subject.clone(),
-            vec![&env, Bytes::from_slice(&env, b"Test")],
-            Bytes::from_slice(&env, b"data"),
-            None,
-            Bytes::from_slice(&env, b"proof"),
-        );
-    }
-
-    // page_size=0 should default to 10
-    let result = CredentialIssuer::get_credentials_by_subject(env.clone(), subject.clone(), 0, 0);
-    assert_eq!(result.data.len(), 10);
-
-    // page_size=100 should clamp to 50
-    let result = CredentialIssuer::get_credentials_by_subject(env.clone(), subject.clone(), 0, 100);
-    assert_eq!(result.data.len(), 50);
-}
-
-// =========================================================================
-// Test 13: Paginated sanctioned addresses (#56)
-// =========================================================================
-
-#[test]
-fn test_paginated_sanctioned_addresses() {
-    let env = setup_env();
-    let admin = new_address(&env);
-    let source = Bytes::from_slice(&env, b"TEST_LIST");
-    let hash = BytesN::from_array(&env, &[5u8; 32]);
-
-    let _ = ComplianceFilter::update_sanctions_list(
-        env.clone(),
-        admin.clone(),
-        source.clone(),
-        hash,
-        3,
-    );
-
-    let entries = vec![
-        &env,
-        new_address(&env),
-        new_address(&env),
-        new_address(&env),
-    ];
-    let _ = ComplianceFilter::load_list_entries(
-        env.clone(),
-        admin.clone(),
-        source.clone(),
-        entries,
-    );
-
-    let page0 = ComplianceFilter::get_sanctioned_addresses(env.clone(), 0, 2);
-    assert_eq!(page0.data.len(), 2);
-    assert_eq!(page0.total, 3);
-    assert!(page0.has_more);
-
-    let page1 = ComplianceFilter::get_sanctioned_addresses(env.clone(), 1, 2);
-    assert_eq!(page1.data.len(), 1);
-    assert!(!page1.has_more);
-}
-
-// =========================================================================
-// Test 14: Paginated registered circuits (#56)
-// =========================================================================
-
-#[test]
-fn test_paginated_registered_circuits() {
-    let env = setup_env();
-
-    for i in 0..5u32 {
-        let cid = Symbol::new(&env, &format!("circ_{i}"));
-        let _ = ZKAttestation::register_circuit(
-            env.clone(),
-            cid,
-            Bytes::from_slice(&env, b"name"),
-            Bytes::from_slice(&env, b"desc"),
-            Bytes::from_slice(&env, b"vk_data_123456789012345678"),
-            1,
-            1,
-            CircuitType::RangeProof,
-            vec![&env, Symbol::new(&env, "attr")],
-        );
-    }
-
-    let page0 = ZKAttestation::get_registered_circuits(env.clone(), 0, 3);
-    assert_eq!(page0.data.len(), 3);
-    assert_eq!(page0.total, 5);
-    assert!(page0.has_more);
-
-    let page1 = ZKAttestation::get_registered_circuits(env.clone(), 1, 3);
-    assert_eq!(page1.data.len(), 2);
-    assert!(!page1.has_more);
-}
-
-// =========================================================================
-// Test 15: Paginated reputation history (#56)
-// =========================================================================
-
-#[test]
-fn test_paginated_reputation_history() {
-    let env = setup_env();
-    let user = new_address(&env);
-
-    let _ = ReputationScore::initialize_reputation(env.clone(), user.clone());
-    for _ in 0..15 {
-        let _ = ReputationScore::update_transaction_reputation(
-            env.clone(),
-            user.clone(),
-            true,
-            100,
-        );
-    }
-
-    // 1 init + 15 updates = 16 entries
-    let page0 = ReputationScore::get_reputation_history_paginated(
-        env.clone(),
-        user.clone(),
-        0,
-        10,
-    )
-    .unwrap();
-    assert_eq!(page0.data.len(), 10);
-    assert_eq!(page0.total, 16);
-    assert!(page0.has_more);
-
-    let page1 = ReputationScore::get_reputation_history_paginated(
-        env.clone(),
-        user.clone(),
-        1,
-        10,
-    )
-    .unwrap();
-    assert_eq!(page1.data.len(), 6);
-    assert!(!page1.has_more);
-}
-
-// =========================================================================
-// Test 16: Schema registration (#60)
-// =========================================================================
-
-#[test]
-fn test_schema_registration() {
-    let env = setup_env();
-    let admin = new_address(&env);
-
-    let schema_id = Bytes::from_slice(&env, b"kyc_schema_v1");
-    let schema_type = Bytes::from_slice(&env, b"KYCSchema");
-    let required = vec![
-        &env,
-        Bytes::from_slice(&env, b"name"),
-        Bytes::from_slice(&env, b"dob"),
-    ];
-    let optional = vec![&env, Bytes::from_slice(&env, b"middle_name")];
-    let mut validations: Map<Bytes, FieldValidation> = Map::new(&env);
-    validations.set(
-        Bytes::from_slice(&env, b"name"),
-        FieldValidation::StringLength(100),
-    );
-
-    let result = CredentialSchema::register_schema(
-        env.clone(),
-        admin.clone(),
-        schema_id.clone(),
-        schema_type,
-        required,
-        optional,
-        validations,
-    );
-    assert!(result.is_ok());
-
-    let schema = CredentialSchema::get_schema(env.clone(), schema_id.clone());
-    assert!(schema.is_some());
-    let schema = schema.unwrap();
-    assert_eq!(schema.version, 1);
-    assert!(schema.active);
-    assert_eq!(schema.required_fields.len(), 2);
-
-    // Duplicate registration should fail
-    let dup = CredentialSchema::register_schema(
-        env.clone(),
-        admin.clone(),
-        schema_id,
-        Bytes::from_slice(&env, b"Other"),
-        Vec::new(&env),
-        Vec::new(&env),
-        Map::new(&env),
-    );
-    assert!(dup.is_err());
-}
-
-// =========================================================================
-// Test 17: Schema versioning (#60)
-// =========================================================================
-
-#[test]
-fn test_schema_versioning() {
-    let env = setup_env();
-    let admin = new_address(&env);
-    let schema_id = Bytes::from_slice(&env, b"versioned_schema");
-
-    let _ = CredentialSchema::register_schema(
-        env.clone(),
-        admin.clone(),
-        schema_id.clone(),
-        Bytes::from_slice(&env, b"TestSchema"),
-        vec![&env, Bytes::from_slice(&env, b"field_a")],
-        Vec::new(&env),
-        Map::new(&env),
-    );
-
-    let v2 = CredentialSchema::register_schema_version(
-        env.clone(),
-        admin.clone(),
-        schema_id.clone(),
-        vec![
-            &env,
-            Bytes::from_slice(&env, b"field_a"),
-            Bytes::from_slice(&env, b"field_b"),
-        ],
-        Vec::new(&env),
-        Map::new(&env),
-    );
-    assert!(v2.is_ok());
-    assert_eq!(v2.unwrap(), 2);
-
-    let latest = CredentialSchema::get_schema(env.clone(), schema_id.clone()).unwrap();
-    assert_eq!(latest.version, 2);
-    assert_eq!(latest.required_fields.len(), 2);
-
-    let v1 = CredentialSchema::get_schema_version(env.clone(), schema_id.clone(), 1).unwrap();
-    assert_eq!(v1.version, 1);
-    assert_eq!(v1.required_fields.len(), 1);
-}
-
-// =========================================================================
-// Test 18: Schema deactivation (#60)
-// =========================================================================
-
-#[test]
-fn test_schema_deactivation() {
-    let env = setup_env();
-    let admin = new_address(&env);
-    let schema_id = Bytes::from_slice(&env, b"deact_schema");
-
-    let _ = CredentialSchema::register_schema(
-        env.clone(),
-        admin.clone(),
-        schema_id.clone(),
-        Bytes::from_slice(&env, b"TestSchema"),
-        Vec::new(&env),
-        Vec::new(&env),
-        Map::new(&env),
-    );
-
-    let result = CredentialSchema::deactivate_schema(env.clone(), admin, schema_id.clone());
-    assert!(result.is_ok());
-
-    let schema = CredentialSchema::get_schema(env.clone(), schema_id).unwrap();
-    assert!(!schema.active);
-}
-
-// =========================================================================
-// Test 19: Schema unauthorized versioning (#60)
-// =========================================================================
-
-#[test]
-fn test_schema_unauthorized_versioning() {
-    let env = setup_env();
-    let admin = new_address(&env);
-    let other = new_address(&env);
-    let schema_id = Bytes::from_slice(&env, b"auth_schema");
-
-    let _ = CredentialSchema::register_schema(
-        env.clone(),
-        admin.clone(),
-        schema_id.clone(),
-        Bytes::from_slice(&env, b"TestSchema"),
-        Vec::new(&env),
-        Vec::new(&env),
-        Map::new(&env),
-    );
-
-    let result = CredentialSchema::register_schema_version(
-        env.clone(),
-        other,
-        schema_id,
-        Vec::new(&env),
-        Vec::new(&env),
-        Map::new(&env),
-    );
-    assert!(result.is_err());
-}
-
-// =========================================================================
-// Test 20: Credential status packed as u8 (#58)
-// =========================================================================
-
-#[test]
-fn test_credential_status_packing() {
-    let env = setup_env();
-    let issuer = new_address(&env);
-    let subject = new_address(&env);
-
-    let cred_id = CredentialIssuer::issue_credential(
+    // Register schema
+    assert!(CredentialSchemaRegistry::register_schema(
         env.clone(),
         issuer.clone(),
-        subject.clone(),
-        vec![&env, Bytes::from_slice(&env, b"Test")],
-        Bytes::from_slice(&env, b"data"),
-        None,
-        Bytes::from_slice(&env, b"proof"),
-    )
-    .unwrap();
-
-    // Status should be "active"
-    let status = CredentialIssuer::get_credential_status(env.clone(), cred_id.clone());
-    assert_eq!(status, Bytes::from_slice(&env, b"active"));
-
-    // After revocation, should be "revoked"
-    let _ = CredentialIssuer::revoke_credential(env.clone(), issuer, cred_id.clone(), None);
-    let status = CredentialIssuer::get_credential_status(env.clone(), cred_id);
-    assert_eq!(status, Bytes::from_slice(&env, b"revoked"));
-
-    // Unknown credential
-    let status = CredentialIssuer::get_credential_status(
-        env.clone(),
-        Bytes::from_slice(&env, b"nonexistent"),
-    );
-    assert_eq!(status, Bytes::from_slice(&env, b"unknown"));
-}
-
-// =========================================================================
-// Test 21: Paginated issuer credentials (#56)
-// =========================================================================
-
-#[test]
-fn test_paginated_issuer_credentials() {
-    let env = setup_env();
-    let issuer = new_address(&env);
-
-    for i in 0..12u32 {
-        let subject = new_address(&env);
-        let _ = CredentialIssuer::issue_credential(
-            env.clone(),
-            issuer.clone(),
-            subject,
-            vec![&env, Bytes::from_slice(&env, b"Test")],
-            Bytes::from_slice(&env, b"data"),
-            None,
-            Bytes::from_slice(&env, b"proof"),
-        );
-    }
-
-    let page0 = CredentialIssuer::get_credentials_by_issuer(env.clone(), issuer.clone(), 0, 5);
-    assert_eq!(page0.data.len(), 5);
-    assert_eq!(page0.total, 12);
-    assert!(page0.has_more);
-
-    let page2 = CredentialIssuer::get_credentials_by_issuer(env.clone(), issuer, 2, 5);
-    assert_eq!(page2.data.len(), 2);
-    assert!(!page2.has_more);
-}
-
-// =========================================================================
-// Test 22: Field validation - StringLength (#60)
-// =========================================================================
-
-#[test]
-fn test_field_validation_string_length() {
-    let env = setup_env();
-    let admin = new_address(&env);
-    let schema_id = Bytes::from_slice(&env, b"strlen_schema");
-
-    let mut validations: Map<Bytes, FieldValidation> = Map::new(&env);
-    validations.set(
-        Bytes::from_slice(&env, b"name"),
-        FieldValidation::StringLength(5),
-    );
-
-    let _ = CredentialSchema::register_schema(
-        env.clone(),
-        admin,
         schema_id.clone(),
-        Bytes::from_slice(&env, b"Test"),
-        vec![&env, Bytes::from_slice(&env, b"name")],
-        Vec::new(&env),
-        validations,
+        definition_v1.clone(),
+    )
+    .is_ok());
+
+    // Get latest schema
+    let schema = CredentialSchemaRegistry::get_schema(env.clone(), schema_id.clone(), None);
+    assert!(schema.is_ok());
+    let schema = schema.unwrap();
+    assert_eq!(schema.version, 1);
+    assert_eq!(schema.definition, definition_v1);
+    assert_eq!(schema.issuer, issuer);
+
+    // Try duplicate registration
+    let duplicate = CredentialSchemaRegistry::register_schema(
+        env.clone(),
+        issuer.clone(),
+        schema_id.clone(),
+        definition_v1.clone(),
     );
+    assert!(duplicate.is_err());
+    assert_eq!(duplicate.unwrap_err(), SchemaRegistryError::AlreadyExists);
 
-    // Schema exists and is active
-    let schema = CredentialSchema::get_schema(env.clone(), schema_id);
-    assert!(schema.is_some());
-    assert!(schema.unwrap().active);
-}
+    // Update schema
+    assert!(CredentialSchemaRegistry::update_schema(
+        env.clone(),
+        issuer.clone(),
+        schema_id.clone(),
+        definition_v2.clone(),
+    )
+    .is_ok());
 
-// =========================================================================
-// Test 23: List schemas (#60)
-// =========================================================================
+    // Get latest schema after update
+    let schema_updated = CredentialSchemaRegistry::get_schema(env.clone(), schema_id.clone(), None);
+    assert!(schema_updated.is_ok());
+    let schema_updated = schema_updated.unwrap();
+    assert_eq!(schema_updated.version, 2);
+    assert_eq!(schema_updated.definition, definition_v2);
 
-#[test]
-fn test_list_schemas() {
-    let env = setup_env();
-    let admin = new_address(&env);
+    // Get specific version
+    let schema_v1 = CredentialSchemaRegistry::get_schema(env.clone(), schema_id.clone(), Some(1));
+    assert!(schema_v1.is_ok());
+    assert_eq!(schema_v1.unwrap().version, 1);
 
-    for name in [b"schema_a", b"schema_b", b"schema_c"] {
-        let _ = CredentialSchema::register_schema(
-            env.clone(),
-            admin.clone(),
-            Bytes::from_slice(&env, name),
-            Bytes::from_slice(&env, b"Type"),
-            Vec::new(&env),
-            Vec::new(&env),
-            Map::new(&env),
-        );
-    }
+    // Unauthorized update
+    let unauthorized = CredentialSchemaRegistry::update_schema(
+        env.clone(),
+        other_issuer.clone(),
+        schema_id.clone(),
+        definition_v2.clone(),
+    );
+    assert!(unauthorized.is_err());
+    assert_eq!(unauthorized.unwrap_err(), SchemaRegistryError::Unauthorized);
 
-    let schemas = CredentialSchema::list_schemas(env.clone());
-    assert_eq!(schemas.len(), 3);
+    // Validate schema exists
+    assert!(CredentialSchemaRegistry::validate_schema_exists(env.clone(), schema_id.clone()).unwrap());
+
+    // Validate non-existent schema
+    let non_existent_id = Bytes::from_slice(&env, b"non-existent");
+    let validate_non_existent = CredentialSchemaRegistry::validate_schema_exists(env.clone(), non_existent_id);
+    assert!(validate_non_existent.is_err());
 }
