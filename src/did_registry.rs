@@ -237,11 +237,16 @@ impl DIDRegistry {
             return Err(DIDRegistryError::Deactivated);
         }
 
-        doc.authentication.push_back(authentication_method);
+        doc.authentication.push_back(authentication_method.clone());
         doc.updated = env.ledger().timestamp();
         env.storage()
             .persistent()
-            .set(&DidKey::Doc(did), &doc);
+            .set(&DidKey::Doc(did.clone()), &doc);
+
+        env.events().publish(
+            (Symbol::new(&env, "AuthenticationAdded"),),
+            (did, controller, authentication_method),
+        );
 
         Ok(())
     }
@@ -287,7 +292,12 @@ impl DIDRegistry {
         doc.updated = env.ledger().timestamp();
         env.storage()
             .persistent()
-            .set(&DidKey::Doc(did), &doc);
+            .set(&DidKey::Doc(did.clone()), &doc);
+
+        env.events().publish(
+            (Symbol::new(&env, "AuthenticationRemoved"),),
+            (did, controller, authentication_method),
+        );
 
         Ok(())
     }
@@ -938,5 +948,153 @@ mod tests {
 
         let result = DIDRegistry::deactivate_did(env.clone(), controller);
         assert_eq!(result.err().unwrap(), DIDRegistryError::NotFound);
+    }
+
+    // ── Issue #41: Event emission tests ──
+
+    #[test]
+    fn test_did_created_event_emitted() {
+        let env = setup_env();
+        env.mock_all_auths();
+        let controller = Address::generate(&env);
+        let did = make_did_bytes(&env, &controller);
+        let vm = make_vm(&env, "#key-1", &[1u8; 32]);
+
+        DIDRegistry::create_did(
+            env.clone(),
+            controller,
+            did.clone(),
+            vec![&env, vm],
+            make_services(&env),
+        )
+        .unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "DIDCreated",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_authentication_added_event_emitted() {
+        let env = setup_env();
+        env.mock_all_auths();
+        let controller = Address::generate(&env);
+        let did = make_did_bytes(&env, &controller);
+        let vm = make_vm(&env, "#key-1", &[1u8; 32]);
+        let auth_method = Bytes::from_slice(&env, b"auth-key-1");
+
+        DIDRegistry::create_did(
+            env.clone(),
+            controller.clone(),
+            did,
+            vec![&env, vm],
+            make_services(&env),
+        )
+        .unwrap();
+
+        DIDRegistry::add_authentication(env.clone(), controller, auth_method).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "AuthenticationAdded",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_authentication_removed_event_emitted() {
+        let env = setup_env();
+        env.mock_all_auths();
+        let controller = Address::generate(&env);
+        let did = make_did_bytes(&env, &controller);
+        let vm = make_vm(&env, "#key-1", &[1u8; 32]);
+        let auth_method = Bytes::from_slice(&env, b"auth-key-1");
+
+        DIDRegistry::create_did(
+            env.clone(),
+            controller.clone(),
+            did,
+            vec![&env, vm],
+            make_services(&env),
+        )
+        .unwrap();
+
+        DIDRegistry::add_authentication(env.clone(), controller.clone(), auth_method.clone()).unwrap();
+        DIDRegistry::remove_authentication(env.clone(), controller, auth_method).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "AuthenticationRemoved",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_did_updated_event_emitted() {
+        let env = setup_env();
+        env.mock_all_auths();
+        let controller = Address::generate(&env);
+        let did = make_did_bytes(&env, &controller);
+        let vm = make_vm(&env, "#key-1", &[1u8; 32]);
+
+        DIDRegistry::create_did(
+            env.clone(),
+            controller.clone(),
+            did,
+            vec![&env, vm],
+            make_services(&env),
+        )
+        .unwrap();
+
+        DIDRegistry::update_did(env.clone(), controller, None, None).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "DIDUpdated",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_did_deactivated_event_emitted() {
+        let env = setup_env();
+        env.mock_all_auths();
+        let controller = Address::generate(&env);
+        let did = make_did_bytes(&env, &controller);
+        let vm = make_vm(&env, "#key-1", &[1u8; 32]);
+
+        DIDRegistry::create_did(
+            env.clone(),
+            controller.clone(),
+            did,
+            vec![&env, vm],
+            make_services(&env),
+        )
+        .unwrap();
+
+        DIDRegistry::deactivate_did(env.clone(), controller).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "DIDDeactivated",
+            )))
+        }));
     }
 }

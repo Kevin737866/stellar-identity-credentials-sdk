@@ -63,6 +63,7 @@ enum CfKey {
     Audit(Address, u64),
     AuditIndex(Address),
     ListIndex,
+    RiskWeights,
 }
 
 // ── Data structures ───────────────────────────────────────────────────────────
@@ -114,6 +115,15 @@ pub struct BatchScreenResult {
     pub blocked: bool,
     pub risk_score: u32,
     pub status: Bytes,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiskWeights {
+    pub sanctions_weight: u32,
+    pub oracle_weight: u32,
+    pub high_risk_threshold: u32,
+    pub last_updated: u64,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -348,10 +358,9 @@ impl ComplianceFilter {
         detail.append(&Bytes::from_slice(&env, b",jurisdiction:"));
         detail.append(&jurisdiction);
         Self::append_audit(&env, &address, b"sanctioned", &detail);
-
         env.events().publish(
-            (Symbol::new(&env, "sanctioned"), address),
-            source,
+            (Symbol::new(&env, "AddressSanctioned"), address.clone()),
+            (source, reason, jurisdiction),
         );
         Ok(())
     }
@@ -406,7 +415,7 @@ impl ComplianceFilter {
             &Bytes::from_slice(&env, b"removed"),
         );
         env.events().publish(
-            (Symbol::new(&env, "desanctioned"), address),
+            (Symbol::new(&env, "AddressRemovedFromSanctions"), address.clone()),
             source,
         );
         Ok(())
@@ -706,6 +715,45 @@ impl ComplianceFilter {
 
     pub fn get_compliance_rule(env: Env, jurisdiction: Bytes) -> Option<ComplianceRule> {
         env.storage().persistent().get(&CfKey::Rule(jurisdiction))
+    }
+
+    // ── Risk weight configuration ─────────────────────────────────────────
+
+    /// Configure risk assessment weights. Emits RiskWeightsConfigured event.
+    /// Only admin may call this.
+    pub fn configure_risk_weights(
+        env: Env,
+        admin: Address,
+        sanctions_weight: u32,
+        oracle_weight: u32,
+        high_risk_threshold: u32,
+    ) -> Result<(), ComplianceFilterError> {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin)?;
+
+        if high_risk_threshold == 0 || high_risk_threshold > MAX_RISK_SCORE {
+            return Err(ComplianceFilterError::InvalidRiskScore);
+        }
+
+        let weights = RiskWeights {
+            sanctions_weight,
+            oracle_weight,
+            high_risk_threshold,
+            last_updated: env.ledger().timestamp(),
+        };
+
+        Self::persist(&env, &CfKey::RiskWeights, &weights);
+
+        env.events().publish(
+            (Symbol::new(&env, "RiskWeightsConfigured"),),
+            (sanctions_weight, oracle_weight, high_risk_threshold),
+        );
+
+        Ok(())
+    }
+
+    pub fn get_risk_weights(env: Env) -> Option<RiskWeights> {
+        env.storage().persistent().get(&CfKey::RiskWeights)
     }
 
     // ── Regulatory reports & audit trail ──────────────────────────────────────
@@ -1675,5 +1723,119 @@ mod tests {
         let page = ComplianceFilter::get_sanctioned_addresses(env.clone(), 0, 10);
         // `shared` appears in both lists but should only show up once.
         assert_eq!(page.total, 1);
+    }
+
+    // ── Issue #41: Event emission tests ──────────────────────────────────
+
+    #[test]
+    fn test_address_sanctioned_event_emitted() {
+        let env = setup_env();
+        let admin = bootstrap(&env);
+        let source = create_list(&env, &admin, b"OFAC");
+        let target = Address::generate(&env);
+
+        ComplianceFilter::add_to_sanctions_list(
+            env.clone(),
+            admin,
+            source,
+            target,
+            Bytes::from_slice(&env, b"fraud"),
+            Bytes::from_slice(&env, b"US"),
+        )
+        .unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "AddressSanctioned",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_address_removed_from_sanctions_event_emitted() {
+        let env = setup_env();
+        let admin = bootstrap(&env);
+        let source = create_list(&env, &admin, b"OFAC");
+        let target = Address::generate(&env);
+
+        ComplianceFilter::add_to_sanctions_list(
+            env.clone(),
+            admin.clone(),
+            source.clone(),
+            target.clone(),
+            Bytes::from_slice(&env, b"fraud"),
+            Bytes::from_slice(&env, b"US"),
+        )
+        .unwrap();
+
+        ComplianceFilter::remove_from_sanctions_list(
+            env.clone(),
+            admin,
+            source,
+            target,
+        )
+        .unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "AddressRemovedFromSanctions",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_risk_weights_configured_event_emitted() {
+        let env = setup_env();
+        let admin = bootstrap(&env);
+
+        ComplianceFilter::configure_risk_weights(
+            env.clone(),
+            admin,
+            80,
+            20,
+            70,
+        )
+        .unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "RiskWeightsConfigured",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_risk_weights_configuration_boundary() {
+        let env = setup_env();
+        let admin = bootstrap(&env);
+
+        // High risk threshold 0 should fail
+        let result = ComplianceFilter::configure_risk_weights(
+            env.clone(),
+            admin.clone(),
+            80,
+            20,
+            0,
+        );
+        assert_eq!(result.unwrap_err(), ComplianceFilterError::InvalidRiskScore);
+
+        // High risk threshold above MAX should fail
+        let result = ComplianceFilter::configure_risk_weights(
+            env.clone(),
+            admin,
+            80,
+            20,
+            101,
+        );
+        assert_eq!(result.unwrap_err(), ComplianceFilterError::InvalidRiskScore);
     }
 }

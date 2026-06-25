@@ -343,7 +343,7 @@ impl ReputationScore {
         );
 
         env.events().publish(
-            (Symbol::new(&env, "rep_updated"), address),
+            (Symbol::new(&env, "ReputationScoreUpdated"), address),
             (profile.score, success),
         );
 
@@ -380,7 +380,12 @@ impl ReputationScore {
 
         profile.last_updated = env.ledger().timestamp();
         Self::save_profile(&env, &address, &profile);
-        Self::append_history(&env, &address, profile.score, credential_type);
+        Self::append_history(&env, &address, profile.score, credential_type.clone());
+
+        env.events().publish(
+            (Symbol::new(&env, "ReputationScoreUpdated"), address),
+            (profile.score, credential_type, valid),
+        );
 
         Ok(profile.score)
     }
@@ -502,6 +507,12 @@ impl ReputationScore {
         env.storage()
             .instance()
             .set(&Symbol::new(&env, KEY_CONFIG), &config);
+
+        env.events().publish(
+            (Symbol::new(&env, "TierThresholdsConfigured"),),
+            (config.max_score, config.transaction_success_weight, config.credential_valid_weight),
+        );
+
         Ok(())
     }
 
@@ -1076,5 +1087,69 @@ mod tests {
         let intruder = Address::generate(&env);
         let result = ReputationScore::update_config(env.clone(), intruder, default_config());
         assert_eq!(result.unwrap_err(), ReputationScoreError::NotAdmin);
+    }
+
+    // ── Issue #41: Event emission tests ──────────────────────────────────
+
+    #[test]
+    fn test_reputation_score_updated_event_on_txn() {
+        let env = setup_env();
+        let (_, user) = bootstrap(&env);
+
+        ReputationScore::update_transaction_reputation(env.clone(), user, true, 100).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "ReputationScoreUpdated",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_reputation_score_updated_event_on_credential() {
+        let env = setup_env();
+        let (_, user) = bootstrap(&env);
+        let cred_type = Bytes::from_slice(&env, b"KYC");
+
+        ReputationScore::update_credential_reputation(
+            env.clone(),
+            user,
+            true,
+            cred_type,
+        )
+        .unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "ReputationScoreUpdated",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_tier_thresholds_configured_event_emitted() {
+        let env = setup_env();
+        let (admin, _) = bootstrap(&env);
+        let new_config = Config {
+            max_score: MAX_SCORE / 2,
+            ..default_config()
+        };
+
+        ReputationScore::update_config(env.clone(), admin, new_config).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "TierThresholdsConfigured",
+            )))
+        }));
     }
 }
