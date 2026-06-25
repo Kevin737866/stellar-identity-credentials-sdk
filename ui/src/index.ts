@@ -40,6 +40,8 @@ export { ComplianceCheck } from './components/ComplianceCheck';
 // Pages
 export { Dashboard } from './pages/Dashboard';
 export type { DashboardProps } from './pages/Dashboard';
+export { ApiPlayground } from './pages/ApiPlayground';
+export type { ApiPlaygroundProps } from './pages/ApiPlayground';
 
 // Hooks
 export {

@@ -20,6 +20,8 @@ import { StellarIdentityError, ConfigurationError, ErrorCode, mapContractError }
 import { DIDClient } from './didClient';
 import { Logger } from './logger';
 import { DataMinimizationEngine, MinimalDisclosurePolicy } from './dataMinimization';
+import { CacheManager, DataType } from './cacheManager';
+import { compressPayload, decompressPayload } from './compression';
 
 /**
  * Client for issuing, verifying, and managing verifiable credentials on Stellar.
@@ -34,6 +36,7 @@ export class CredentialClient {
   private didClient: DIDClient;
   private logger: Logger;
   private dataMinimizationEngine: DataMinimizationEngine;
+  private cache: CacheManager;
 
   constructor(config: StellarIdentityConfig) {
     this.config = config;
@@ -42,6 +45,7 @@ export class CredentialClient {
     this.didClient = new DIDClient(config);
     this.logger = new Logger('CredentialClient');
     this.dataMinimizationEngine = new DataMinimizationEngine();
+    this.cache = new CacheManager();
     this.logger.debug('CredentialClient initialized', { rpcUrl: config.rpcUrl });
   }
 
@@ -75,6 +79,8 @@ export class CredentialClient {
       this.validateInput(dataStr.length <= 10240, 'Credential data too large (max 10KB)');
       const account = await this.rpc.getAccount(address);
 
+      const compressedData = await compressPayload(options.credentialData);
+
       const tx = new TransactionBuilder(account, {
         fee: String(txOptions?.fee ?? 100),
         networkPassphrase: this.getNetworkPassphrase(),
@@ -84,7 +90,7 @@ export class CredentialClient {
             'issue_credential',
             xdr.ScVal.scvAddress(new Address(options.subject).toScAddress()),
             nativeToScVal(options.credentialType.map(t => new TextEncoder().encode(t)), { type: 'vec' }),
-            nativeToScVal(new TextEncoder().encode(JSON.stringify(options.credentialData)), { type: 'bytes' }),
+            nativeToScVal(new TextEncoder().encode(compressedData), { type: 'bytes' }),
             options.expirationDate != null ? nativeToScVal(BigInt(options.expirationDate), { type: 'u64' }) : xdr.ScVal.scvVoid(),
             nativeToScVal(new TextEncoder().encode(options.proof), { type: 'bytes' })
           )
@@ -112,6 +118,8 @@ export class CredentialClient {
    */
   async verifyCredential(credentialId: string): Promise<CredentialVerificationResult> {
     this.logger.debug('verifyCredential called', { credentialId });
+    const cached = this.cache.get<CredentialVerificationResult>(DataType.CREDENTIAL_STATUS, credentialId);
+    if (cached) return cached;
     try {
       const credential = await this.getCredential(credentialId);
       const isValidVal = await this.simulateRead('verify_credential', [
@@ -121,7 +129,7 @@ export class CredentialClient {
         nativeToScVal(new TextEncoder().encode(credentialId), { type: 'bytes' }),
       ]);
 
-      return {
+      const result: CredentialVerificationResult = {
         valid: scValToNative(isValidVal) as boolean,
         revoked: scValToNative(statusVal) === 'revoked',
         expired: this.isCredentialExpired(credential),
@@ -130,6 +138,8 @@ export class CredentialClient {
         issuanceDate: credential.issuanceDate,
         expirationDate: credential.expirationDate,
       };
+      this.cache.set(DataType.CREDENTIAL_STATUS, credentialId, result);
+      return result;
     } catch (error) {
       throw this.handleError(error);
     }
@@ -162,6 +172,7 @@ export class CredentialClient {
       const prepared = await this.rpc.prepareTransaction(tx);
       prepared.sign(issuerKeypair);
       await this.rpc.sendTransaction(prepared);
+      this.cache.invalidate(DataType.CREDENTIAL_STATUS, credentialId);
     } catch (error) {
       throw this.handleError(error);
     }
@@ -173,7 +184,16 @@ export class CredentialClient {
       const retval = await this.simulateRead('get_credential', [
         nativeToScVal(new TextEncoder().encode(credentialId), { type: 'bytes' }),
       ]);
-      return this.parseCredential(scValToNative(retval));
+      const credential = this.parseCredential(scValToNative(retval));
+      // Decompress credential data if it was stored compressed
+      if (typeof credential.credentialData === 'string') {
+        try {
+          credential.credentialData = await decompressPayload(credential.credentialData as unknown as string);
+        } catch {
+          // Not compressed - already parsed object
+        }
+      }
+      return credential;
     } catch (error) {
       throw this.handleError(error);
     }
