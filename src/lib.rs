@@ -11,8 +11,7 @@ pub mod gas_benchmark;
 pub mod credential_offer;
 pub mod did_recovery;
 pub mod reputation_oracle;
-pub mod credential_encryption;
-pub mod audit_trail;
+pub mod dif_interop;
 
 #[cfg(test)]
 mod integration_tests;
