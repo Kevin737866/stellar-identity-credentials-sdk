@@ -10,6 +10,7 @@ use crate::{
     credential_issuer::CredentialIssuer,
     did_registry::{DIDRegistry, DIDRegistryError},
     reputation_score::{ReputationScore, ReputationScoreError, ReputationData, TrustAttestation},
+    schema_registry::{CredentialSchemaRegistry, SchemaRegistryError},
     zk_attestation::{CircuitType, ZKAttestation, ZKAttestationError},
     DIDDocument, Service, VerificationMethod, VerifiableCredential,
 };
@@ -446,4 +447,85 @@ fn test_deterministic_parallel_safe() {
 
     assert!(alice_after > bob_after);
     assert_eq!(bob_after, bob_score);
+}
+
+// =========================================================================
+// Test 8: Schema Registry lifecycle - register -> get -> update -> validate
+// =========================================================================
+
+#[test]
+fn test_schema_registry_lifecycle() {
+    let env = setup_env();
+    let issuer = new_address(&env);
+    let other_issuer = new_address(&env);
+
+    let schema_id = Bytes::from_slice(&env, b"schema-kyc-v1");
+    let definition_v1 = Bytes::from_slice(&env, b"{\"type\":\"KYC\",\"fields\":[\"name\",\"dob\"]}");
+    let definition_v2 = Bytes::from_slice(&env, b"{\"type\":\"KYC\",\"fields\":[\"name\",\"dob\",\"address\"]}");
+
+    // Register schema
+    assert!(CredentialSchemaRegistry::register_schema(
+        env.clone(),
+        issuer.clone(),
+        schema_id.clone(),
+        definition_v1.clone(),
+    )
+    .is_ok());
+
+    // Get latest schema
+    let schema = CredentialSchemaRegistry::get_schema(env.clone(), schema_id.clone(), None);
+    assert!(schema.is_ok());
+    let schema = schema.unwrap();
+    assert_eq!(schema.version, 1);
+    assert_eq!(schema.definition, definition_v1);
+    assert_eq!(schema.issuer, issuer);
+
+    // Try duplicate registration
+    let duplicate = CredentialSchemaRegistry::register_schema(
+        env.clone(),
+        issuer.clone(),
+        schema_id.clone(),
+        definition_v1.clone(),
+    );
+    assert!(duplicate.is_err());
+    assert_eq!(duplicate.unwrap_err(), SchemaRegistryError::AlreadyExists);
+
+    // Update schema
+    assert!(CredentialSchemaRegistry::update_schema(
+        env.clone(),
+        issuer.clone(),
+        schema_id.clone(),
+        definition_v2.clone(),
+    )
+    .is_ok());
+
+    // Get latest schema after update
+    let schema_updated = CredentialSchemaRegistry::get_schema(env.clone(), schema_id.clone(), None);
+    assert!(schema_updated.is_ok());
+    let schema_updated = schema_updated.unwrap();
+    assert_eq!(schema_updated.version, 2);
+    assert_eq!(schema_updated.definition, definition_v2);
+
+    // Get specific version
+    let schema_v1 = CredentialSchemaRegistry::get_schema(env.clone(), schema_id.clone(), Some(1));
+    assert!(schema_v1.is_ok());
+    assert_eq!(schema_v1.unwrap().version, 1);
+
+    // Unauthorized update
+    let unauthorized = CredentialSchemaRegistry::update_schema(
+        env.clone(),
+        other_issuer.clone(),
+        schema_id.clone(),
+        definition_v2.clone(),
+    );
+    assert!(unauthorized.is_err());
+    assert_eq!(unauthorized.unwrap_err(), SchemaRegistryError::Unauthorized);
+
+    // Validate schema exists
+    assert!(CredentialSchemaRegistry::validate_schema_exists(env.clone(), schema_id.clone()).unwrap());
+
+    // Validate non-existent schema
+    let non_existent_id = Bytes::from_slice(&env, b"non-existent");
+    let validate_non_existent = CredentialSchemaRegistry::validate_schema_exists(env.clone(), non_existent_id);
+    assert!(validate_non_existent.is_err());
 }

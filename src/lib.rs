@@ -1,5 +1,6 @@
 pub mod did_registry;
 pub mod credential_issuer;
+pub mod schema_registry;
 pub mod reputation_score;
 pub mod zk_attestation;
 pub mod compliance_filter;
@@ -9,6 +10,7 @@ use core::fmt::Write;
 
 pub use did_registry::DIDRegistry;
 pub use credential_issuer::CredentialIssuer;
+pub use schema_registry::CredentialSchemaRegistry;
 pub use reputation_score::ReputationScore;
 pub use zk_attestation::ZKAttestation;
 pub use compliance_filter::ComplianceFilter;
@@ -24,6 +26,17 @@ pub struct DIDDocument {
     pub created: u64,
     pub updated: u64,
     pub deactivated: bool,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct CredentialSchema {
+    pub id: Bytes,
+    pub issuer: Address,
+    pub version: u32,
+    pub definition: Bytes,
+    pub created: u64,
+    pub updated: u64,
 }
 
 #[contracttype]
@@ -68,12 +81,14 @@ impl StellarIdentity {
         env: Env,
         did_registry_address: Address,
         credential_issuer_address: Address,
+        schema_registry_address: Address,
         reputation_score_address: Address,
         zk_attestation_address: Address,
         compliance_filter_address: Address,
     ) {
         env.storage().instance().set(&Symbol::new(&env, "did_registry"), &did_registry_address);
         env.storage().instance().set(&Symbol::new(&env, "credential_issuer"), &credential_issuer_address);
+        env.storage().instance().set(&Symbol::new(&env, "schema_registry"), &schema_registry_address);
         env.storage().instance().set(&Symbol::new(&env, "reputation_score"), &reputation_score_address);
         env.storage().instance().set(&Symbol::new(&env, "zk_attestation"), &zk_attestation_address);
         env.storage().instance().set(&Symbol::new(&env, "compliance_filter"), &compliance_filter_address);
@@ -85,6 +100,10 @@ impl StellarIdentity {
 
     pub fn get_credential_issuer_address(env: Env) -> Option<Address> {
         env.storage().instance().get(&Symbol::new(&env, "credential_issuer"))
+    }
+
+    pub fn get_schema_registry_address(env: Env) -> Option<Address> {
+        env.storage().instance().get(&Symbol::new(&env, "schema_registry"))
     }
 
     pub fn get_reputation_score_address(env: Env) -> Option<Address> {
