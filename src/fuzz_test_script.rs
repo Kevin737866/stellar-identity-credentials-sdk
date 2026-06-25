@@ -1,16 +1,16 @@
 #![cfg(test)]
 
+use crate::{
+    compliance_filter::{ComplianceFilter, ComplianceFilterError},
+    credential_issuer::{CredentialIssuer, CredentialIssuerError},
+    did_registry::{DIDRegistry, DIDRegistryError},
+    reputation_score::{ReputationScore, ReputationScoreError},
+    zk_attestation::{CircuitType, ZKAttestation as ZKAttestationContract, ZKAttestationError},
+    VerificationMethod,
+};
 use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
     vec, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
-};
-use crate::{
-    did_registry::{DIDRegistry, DIDRegistryError},
-    credential_issuer::{CredentialIssuer, CredentialIssuerError},
-    reputation_score::{ReputationScore, ReputationScoreError},
-    zk_attestation::{CircuitType, ZKAttestation as ZKAttestationContract, ZKAttestationError},
-    compliance_filter::{ComplianceFilter, ComplianceFilterError},
-    VerificationMethod,
 };
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
@@ -66,10 +66,7 @@ fn register_circuit(env: &Env, id: &str) -> Symbol {
 /// Build a default metadata map used by ZK proof tests.
 fn make_metadata(env: &Env) -> Map<Symbol, Bytes> {
     let mut metadata = Map::new(env);
-    metadata.set(
-        Symbol::new(env, "context"),
-        Bytes::from_slice(env, b"test"),
-    );
+    metadata.set(Symbol::new(env, "context"), Bytes::from_slice(env, b"test"));
     metadata
 }
 
@@ -87,13 +84,8 @@ mod did_registry_tests {
         let did = Bytes::from_slice(&env, b"did:stellar:GABCDEFGHIJK");
         let vm = make_vm(&env, &controller);
 
-        let result = DIDRegistry::create_did(
-            env.clone(),
-            controller,
-            did,
-            vec![&env, vm],
-            Vec::new(&env),
-        );
+        let result =
+            DIDRegistry::create_did(env.clone(), controller, did, vec![&env, vm], Vec::new(&env));
         assert!(result.is_ok(), "valid DID creation should succeed");
     }
 
@@ -163,7 +155,10 @@ mod did_registry_tests {
             Vec::new(&env), // no VMs
             Vec::new(&env),
         );
-        assert!(result.is_err(), "DID with no verification methods should be rejected");
+        assert!(
+            result.is_err(),
+            "DID with no verification methods should be rejected"
+        );
     }
 
     #[test]
@@ -182,14 +177,12 @@ mod did_registry_tests {
         )
         .unwrap();
 
-        let result = DIDRegistry::create_did(
-            env.clone(),
-            controller,
-            did,
-            vec![&env, vm],
-            Vec::new(&env),
+        let result =
+            DIDRegistry::create_did(env.clone(), controller, did, vec![&env, vm], Vec::new(&env));
+        assert!(
+            result.is_err(),
+            "duplicate DID registration should be rejected"
         );
-        assert!(result.is_err(), "duplicate DID registration should be rejected");
     }
 
     /// Boundary: exactly at the max allowed DID length should succeed.
@@ -240,7 +233,10 @@ mod credential_issuer_tests {
             None,
             Bytes::from_slice(&env, b"valid_proof"),
         );
-        assert!(result.is_ok(), "registered issuer should be able to issue a credential");
+        assert!(
+            result.is_ok(),
+            "registered issuer should be able to issue a credential"
+        );
     }
 
     // ── Failure paths ─────────────────────────────────────────────────────────
@@ -260,7 +256,10 @@ mod credential_issuer_tests {
             None,
             Bytes::from_slice(&env, b"proof"),
         );
-        assert_eq!(result.unwrap_err(), CredentialIssuerError::InvalidCredential);
+        assert_eq!(
+            result.unwrap_err(),
+            CredentialIssuerError::InvalidCredential
+        );
     }
 
     #[test]
@@ -280,7 +279,10 @@ mod credential_issuer_tests {
             None,
             Bytes::from_slice(&env, b"proof"),
         );
-        assert_eq!(result.unwrap_err(), CredentialIssuerError::InvalidCredentialType);
+        assert_eq!(
+            result.unwrap_err(),
+            CredentialIssuerError::InvalidCredentialType
+        );
     }
 
     #[test]
@@ -319,7 +321,10 @@ mod credential_issuer_tests {
             None,
             Bytes::from_slice(&env, b"proof"),
         );
-        assert!(result.is_err(), "oversized credential type should be rejected");
+        assert!(
+            result.is_err(),
+            "oversized credential type should be rejected"
+        );
     }
 
     #[test]
@@ -329,7 +334,10 @@ mod credential_issuer_tests {
 
         CredentialIssuer::register_issuer(env.clone(), issuer.clone()).unwrap();
         let result = CredentialIssuer::register_issuer(env.clone(), issuer);
-        assert!(result.is_err(), "duplicate issuer registration should be rejected");
+        assert!(
+            result.is_err(),
+            "duplicate issuer registration should be rejected"
+        );
     }
 
     #[test]
@@ -352,7 +360,10 @@ mod credential_issuer_tests {
             past_timestamp,
             Bytes::from_slice(&env, b"proof"),
         );
-        assert!(result.is_err(), "credential with past expiry should be rejected");
+        assert!(
+            result.is_err(),
+            "credential with past expiry should be rejected"
+        );
     }
 }
 
@@ -462,7 +473,10 @@ mod reputation_score_tests {
             500,
             Bytes::from_slice(&env, b"test"),
         );
-        assert!(result.is_err(), "attestation from uninitialized user should fail");
+        assert!(
+            result.is_err(),
+            "attestation from uninitialized user should fail"
+        );
     }
 }
 
@@ -542,7 +556,10 @@ mod zk_attestation_tests {
             None,
             metadata,
         );
-        assert_eq!(result.unwrap_err(), ZKAttestationError::NullifierAlreadyUsed);
+        assert_eq!(
+            result.unwrap_err(),
+            ZKAttestationError::NullifierAlreadyUsed
+        );
     }
 
     #[test]
@@ -580,7 +597,10 @@ mod zk_attestation_tests {
             None,
             metadata,
         );
-        assert!(result.is_err(), "proof for unregistered circuit should be rejected");
+        assert!(
+            result.is_err(),
+            "proof for unregistered circuit should be rejected"
+        );
     }
 
     #[test]
@@ -609,7 +629,10 @@ mod zk_attestation_tests {
         let circuit_id = register_circuit(&env, "multi_null");
         let metadata = make_metadata(&env);
 
-        for (i, tag) in [b"null_one".as_ref(), b"null_two".as_ref()].iter().enumerate() {
+        for (i, tag) in [b"null_one".as_ref(), b"null_two".as_ref()]
+            .iter()
+            .enumerate()
+        {
             let result = ZKAttestationContract::submit_proof(
                 env.clone(),
                 circuit_id.clone(),
@@ -620,7 +643,10 @@ mod zk_attestation_tests {
                 None,
                 metadata.clone(),
             );
-            assert!(result.is_ok(), "proof {i} with unique nullifier should succeed");
+            assert!(
+                result.is_ok(),
+                "proof {i} with unique nullifier should succeed"
+            );
         }
     }
 }
@@ -698,7 +724,10 @@ mod compliance_filter_tests {
             50,
             Bytes::new(&env), // empty context
         );
-        assert!(result.is_err(), "risk update with empty context should be rejected");
+        assert!(
+            result.is_err(),
+            "risk update with empty context should be rejected"
+        );
     }
 
     /// u32::MAX is far above 100 — must be cleanly rejected, not panic.

@@ -224,10 +224,7 @@ impl ReputationOracle {
     }
 
     /// Get oracle record.
-    pub fn get_oracle(
-        env: Env,
-        oracle: Address,
-    ) -> Result<OracleRecord, ReputationOracleError> {
+    pub fn get_oracle(env: Env, oracle: Address) -> Result<OracleRecord, ReputationOracleError> {
         env.storage()
             .persistent()
             .get(&OracleKey::Oracle(oracle))
@@ -335,10 +332,7 @@ impl ReputationOracle {
     ///
     /// This is called after a feed is submitted to actually update the
     /// subject's reputation score based on the oracle's data.
-    pub fn process_data_feed(
-        env: Env,
-        feed_id: Bytes,
-    ) -> Result<(), ReputationOracleError> {
+    pub fn process_data_feed(env: Env, feed_id: Bytes) -> Result<(), ReputationOracleError> {
         let mut feed: OracleDataFeed = env
             .storage()
             .persistent()
@@ -367,10 +361,8 @@ impl ReputationOracle {
             Self::apply_reputation_impact(&env, &feed.subject, feed.reputation_impact);
 
             // Increase oracle reputation for successful feeds
-            oracle_record.reputation = core::cmp::min(
-                oracle_record.reputation + 10,
-                Self::MAX_ORACLE_REPUTATION,
-            );
+            oracle_record.reputation =
+                core::cmp::min(oracle_record.reputation + 10, Self::MAX_ORACLE_REPUTATION);
             oracle_record.successful_feeds += 1;
         } else if feed.reputation_impact < 0 {
             // Negative impact - decrease subject's reputation
@@ -383,10 +375,7 @@ impl ReputationOracle {
 
         // Mark feed as processed
         feed.processed = true;
-        feed.processing_result = Some(Bytes::from_slice(
-            &env,
-            b"Processed successfully",
-        ));
+        feed.processing_result = Some(Bytes::from_slice(&env, b"Processed successfully"));
         oracle_record.last_active_at = now;
 
         env.storage()
@@ -491,10 +480,8 @@ impl ReputationOracle {
             .persistent()
             .set(&OracleKey::Oracle(oracle_addr.clone()), &record);
 
-        env.events().publish(
-            (Symbol::new(&env, "OracleReactivated"),),
-            (oracle_addr,),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "OracleReactivated"),), (oracle_addr,));
 
         Ok(())
     }
@@ -518,10 +505,8 @@ impl ReputationOracle {
             .persistent()
             .set(&OracleKey::Oracle(oracle_addr.clone()), &record);
 
-        env.events().publish(
-            (Symbol::new(&env, "OracleDeactivated"),),
-            (oracle_addr,),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "OracleDeactivated"),), (oracle_addr,));
 
         Ok(())
     }
@@ -655,9 +640,7 @@ impl ReputationOracle {
             .get(&OracleKey::Dispute(dispute_id.clone()))
             .ok_or(ReputationOracleError::NotFound)?;
 
-        if dispute.status == DisputeStatus::Resolved
-            || dispute.status == DisputeStatus::Dismissed
-        {
+        if dispute.status == DisputeStatus::Resolved || dispute.status == DisputeStatus::Dismissed {
             return Err(ReputationOracleError::NotFound);
         }
 
@@ -765,10 +748,7 @@ impl ReputationOracle {
     fn generate_feed_id(env: &Env, _oracle: &Address, _subject: &Address) -> Bytes {
         let timestamp = env.ledger().timestamp();
         let mut id = Bytes::from_slice(env, b"feed:");
-        id.append(&Bytes::from_slice(
-            env,
-            timestamp.to_string().as_bytes(),
-        ));
+        id.append(&Bytes::from_slice(env, timestamp.to_string().as_bytes()));
         id.append(&Bytes::from_slice(env, b":"));
         id.append(&Bytes::from_slice(
             env,
@@ -816,24 +796,17 @@ impl ReputationOracle {
         message: &Bytes,
         signature: &BytesN<64>,
     ) -> Result<(), ReputationOracleError> {
-        env.crypto()
-            .ed25519_verify(public_key, message, signature);
+        env.crypto().ed25519_verify(public_key, message, signature);
         Ok(())
     }
 
     fn apply_reputation_impact(env: &Env, subject: &Address, impact: i32) {
         // Cache the reputation impact for the subject
         let cache_key = OracleKey::ReputationCache(subject.clone());
-        let current: i64 = env
-            .storage()
-            .persistent()
-            .get(&cache_key)
-            .unwrap_or(0i64);
+        let current: i64 = env.storage().persistent().get(&cache_key).unwrap_or(0i64);
 
         let updated = current + impact as i64;
-        env.storage()
-            .persistent()
-            .set(&cache_key, &updated);
+        env.storage().persistent().set(&cache_key, &updated);
 
         // Emit event for reputation update trigger
         env.events().publish(
@@ -842,12 +815,7 @@ impl ReputationOracle {
         );
     }
 
-    fn paginate_feeds(
-        env: &Env,
-        items: &Vec<Bytes>,
-        page: u32,
-        page_size: u32,
-    ) -> PaginatedFeeds {
+    fn paginate_feeds(env: &Env, items: &Vec<Bytes>, page: u32, page_size: u32) -> PaginatedFeeds {
         let size = clamp_page_size(page_size);
         let total = items.len() as u32;
         let start = page * size;
@@ -907,7 +875,11 @@ mod tests {
             oracle.clone(),
             Bytes::from_slice(&env, b"TrustedOracle"),
             BytesN::from_array(&env, &[1u8; 32]),
-            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"KYC"), Bytes::from_slice(&env, b"AML")],
+            soroban_sdk::vec![
+                &env,
+                Bytes::from_slice(&env, b"KYC"),
+                Bytes::from_slice(&env, b"AML")
+            ],
             1000,
         );
         assert!(result.is_ok());
@@ -1072,8 +1044,9 @@ mod tests {
         )
         .unwrap();
 
-        let initial_reputation =
-            ReputationOracle::get_oracle(env.clone(), oracle.clone()).unwrap().reputation;
+        let initial_reputation = ReputationOracle::get_oracle(env.clone(), oracle.clone())
+            .unwrap()
+            .reputation;
 
         ReputationOracle::slash_oracle(env.clone(), admin, oracle.clone(), None).unwrap();
 
@@ -1153,8 +1126,7 @@ mod tests {
         )
         .unwrap();
 
-        let dispute =
-            ReputationOracle::get_dispute(env.clone(), dispute_id.clone()).unwrap();
+        let dispute = ReputationOracle::get_dispute(env.clone(), dispute_id.clone()).unwrap();
         assert_eq!(dispute.status, DisputeStatus::Filed);
 
         // Resolve the dispute (uphold)
@@ -1167,8 +1139,7 @@ mod tests {
         )
         .unwrap();
 
-        let dispute =
-            ReputationOracle::get_dispute(env.clone(), dispute_id).unwrap();
+        let dispute = ReputationOracle::get_dispute(env.clone(), dispute_id).unwrap();
         assert_eq!(dispute.status, DisputeStatus::Resolved);
 
         // Oracle should have been slashed
@@ -1248,12 +1219,7 @@ mod tests {
             );
         }
 
-        let page = ReputationOracle::get_subject_feeds_paginated(
-            env.clone(),
-            subject,
-            0,
-            3,
-        );
+        let page = ReputationOracle::get_subject_feeds_paginated(env.clone(), subject, 0, 3);
         assert_eq!(page.data.len(), 3);
         assert_eq!(page.total, 5);
         assert!(page.has_more);

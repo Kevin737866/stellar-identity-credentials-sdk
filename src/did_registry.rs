@@ -95,11 +95,7 @@ impl DIDRegistry {
             }
         }
 
-        if env
-            .storage()
-            .persistent()
-            .has(&DidKey::Doc(did_id.clone()))
-        {
+        if env.storage().persistent().has(&DidKey::Doc(did_id.clone())) {
             return Err(DIDRegistryError::AlreadyExists);
         }
 
@@ -122,10 +118,8 @@ impl DIDRegistry {
             .persistent()
             .set(&DidKey::Controller(controller), &did_id);
 
-        env.events().publish(
-            (Symbol::new(&env, "DIDCreated"),),
-            (did_id, controller),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "DIDCreated"),), (did_id, controller));
 
         Ok(())
     }
@@ -169,14 +163,10 @@ impl DIDRegistry {
         }
 
         doc.updated = env.ledger().timestamp();
-        env.storage()
-            .persistent()
-            .set(&DidKey::Doc(did), &doc);
+        env.storage().persistent().set(&DidKey::Doc(did), &doc);
 
-        env.events().publish(
-            (Symbol::new(&env, "DIDUpdated"),),
-            (did, controller),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "DIDUpdated"),), (did, controller));
 
         Ok(())
     }
@@ -202,14 +192,10 @@ impl DIDRegistry {
 
         doc.deactivated = true;
         doc.updated = env.ledger().timestamp();
-        env.storage()
-            .persistent()
-            .set(&DidKey::Doc(did), &doc);
+        env.storage().persistent().set(&DidKey::Doc(did), &doc);
 
-        env.events().publish(
-            (Symbol::new(&env, "DIDDeactivated"),),
-            (did, controller),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "DIDDeactivated"),), (did, controller));
 
         Ok(())
     }
@@ -239,9 +225,7 @@ impl DIDRegistry {
 
         doc.authentication.push_back(authentication_method);
         doc.updated = env.ledger().timestamp();
-        env.storage()
-            .persistent()
-            .set(&DidKey::Doc(did), &doc);
+        env.storage().persistent().set(&DidKey::Doc(did), &doc);
 
         Ok(())
     }
@@ -285,9 +269,7 @@ impl DIDRegistry {
 
         doc.authentication = new_auth;
         doc.updated = env.ledger().timestamp();
-        env.storage()
-            .persistent()
-            .set(&DidKey::Doc(did), &doc);
+        env.storage().persistent().set(&DidKey::Doc(did), &doc);
 
         Ok(())
     }
@@ -348,9 +330,7 @@ impl DIDRegistry {
     }
 
     pub fn did_exists(env: Env, did: Bytes) -> bool {
-        env.storage()
-            .persistent()
-            .has(&DidKey::Doc(did))
+        env.storage().persistent().has(&DidKey::Doc(did))
     }
 
     pub fn get_controller_did(env: Env, controller: Address) -> Option<Bytes> {
@@ -433,13 +413,8 @@ impl DIDRegistry {
         Ok(())
     }
 
-    pub fn get_multisig_config(
-        env: Env,
-        did: Bytes,
-    ) -> Option<MultiSigConfig> {
-        env.storage()
-            .persistent()
-            .get(&DidKey::MultiSig(did))
+    pub fn get_multisig_config(env: Env, did: Bytes) -> Option<MultiSigConfig> {
+        env.storage().persistent().get(&DidKey::MultiSig(did))
     }
 
     pub fn add_multisig_signer(
@@ -673,7 +648,7 @@ impl DIDRegistry {
             .get(&DidKey::MultiSig(operation.did.clone()))
             .ok_or(DIDRegistryError::NotFound)?;
 
-        if operation.approvals.len() as u32 < config.threshold {
+        if (operation.approvals.len() as u32) < config.threshold {
             return Err(DIDRegistryError::Unauthorized);
         }
 
@@ -684,7 +659,11 @@ impl DIDRegistry {
 
         env.events().publish(
             (Symbol::new(&env, "MultiSigOperationExecuted"),),
-            (operation_id.clone(), executor, operation.operation_data.clone()),
+            (
+                operation_id.clone(),
+                executor,
+                operation.operation_data.clone(),
+            ),
         );
 
         Ok(operation.operation_data)
@@ -701,9 +680,15 @@ impl DIDRegistry {
 
     fn generate_operation_id(env: &Env, did: &Bytes) -> Bytes {
         let mut id = Bytes::from_slice(env, b"op:");
-        id.append(&Bytes::from_slice(env, env.ledger().timestamp().to_string().as_bytes()));
+        id.append(&Bytes::from_slice(
+            env,
+            env.ledger().timestamp().to_string().as_bytes(),
+        ));
         id.append(&Bytes::from_slice(env, b":"));
-        id.append(&Bytes::from_slice(env, env.ledger().sequence().to_string().as_bytes()));
+        id.append(&Bytes::from_slice(
+            env,
+            env.ledger().sequence().to_string().as_bytes(),
+        ));
         id
     }
 }
@@ -847,13 +832,7 @@ mod tests {
         .unwrap();
 
         let new_services: Vec<Service> = Vec::new(&env);
-        DIDRegistry::update_did(
-            env.clone(),
-            controller.clone(),
-            None,
-            Some(new_services),
-        )
-        .unwrap();
+        DIDRegistry::update_did(env.clone(), controller.clone(), None, Some(new_services)).unwrap();
 
         let doc = DIDRegistry::resolve_did(env.clone(), did).unwrap();
         assert_eq!(doc.service.len(), 0);

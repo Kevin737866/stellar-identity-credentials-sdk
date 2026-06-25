@@ -1,6 +1,4 @@
-use soroban_sdk::{
-    contract, contracterror, contractimpl, Address, Bytes, Env, Symbol, Vec,
-};
+use soroban_sdk::{contract, contracterror, contractimpl, Address, Bytes, Env, Symbol, Vec};
 
 use crate::CredentialSchema;
 
@@ -55,11 +53,11 @@ impl CredentialSchemaRegistry {
         };
 
         env.storage().persistent().set(&version_key, &schema);
-        
+
         // Store current version
         env.storage().persistent().set(
             &Symbol::new(&env, &format!("version:{}", schema_id.to_string())),
-            &1u32
+            &1u32,
         );
 
         Ok(())
@@ -77,7 +75,10 @@ impl CredentialSchemaRegistry {
         let current_version: u32 = env
             .storage()
             .persistent()
-            .get(&Symbol::new(&env, &format!("version:{}", schema_id.to_string())))
+            .get(&Symbol::new(
+                &env,
+                &format!("version:{}", schema_id.to_string()),
+            ))
             .ok_or(SchemaRegistryError::NotFound)?;
 
         let last_version_key = Self::get_version_key(&env, &schema_id, current_version);
@@ -97,7 +98,7 @@ impl CredentialSchemaRegistry {
 
         let new_version = current_version + 1;
         let new_version_key = Self::get_version_key(&env, &schema_id, new_version);
-        
+
         let now = env.ledger().timestamp();
         let schema = CredentialSchema {
             id: schema_id.clone(),
@@ -111,7 +112,7 @@ impl CredentialSchemaRegistry {
         env.storage().persistent().set(&new_version_key, &schema);
         env.storage().persistent().set(
             &Symbol::new(&env, &format!("version:{}", schema_id.to_string())),
-            &new_version
+            &new_version,
         );
 
         Ok(())
@@ -125,12 +126,14 @@ impl CredentialSchemaRegistry {
     ) -> Result<CredentialSchema, SchemaRegistryError> {
         let target_version = match version {
             Some(v) => v,
-            None => {
-                env.storage()
-                    .persistent()
-                    .get(&Symbol::new(&env, &format!("version:{}", schema_id.to_string())))
-                    .ok_or(SchemaRegistryError::NotFound)?
-            }
+            None => env
+                .storage()
+                .persistent()
+                .get(&Symbol::new(
+                    &env,
+                    &format!("version:{}", schema_id.to_string()),
+                ))
+                .ok_or(SchemaRegistryError::NotFound)?,
         };
 
         let version_key = Self::get_version_key(&env, &schema_id, target_version);
@@ -142,14 +145,14 @@ impl CredentialSchemaRegistry {
 
     /// Basic validation logic: check if a credential's schema exists and is active.
     /// In a real world scenario, this would parse the definition and validate claims.
-    pub fn validate_schema_exists(
-        env: Env,
-        schema_id: Bytes,
-    ) -> Result<bool, SchemaRegistryError> {
+    pub fn validate_schema_exists(env: Env, schema_id: Bytes) -> Result<bool, SchemaRegistryError> {
         Self::get_schema(env, schema_id, None).map(|_| true)
     }
 
     fn get_version_key(env: &Env, schema_id: &Bytes, version: u32) -> Symbol {
-        Symbol::new(env, &format!("schema:{}:v{}", schema_id.to_string(), version))
+        Symbol::new(
+            env,
+            &format!("schema:{}:v{}", schema_id.to_string(), version),
+        )
     }
 }

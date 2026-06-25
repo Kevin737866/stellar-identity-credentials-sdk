@@ -10,7 +10,7 @@ use crate::{
     credential_issuer::CredentialIssuer,
     credential_schema::{CredentialSchema, FieldValidation},
     did_registry::DIDRegistry,
-    reputation_score::{ReputationScore, Config},
+    reputation_score::{Config, ReputationScore},
     zk_attestation::{CircuitType, ZKAttestation},
     Service, VerificationMethod,
 };
@@ -59,13 +59,7 @@ fn bench_create_did() {
         },
     ];
 
-    let result = DIDRegistry::create_did(
-        env.clone(),
-        controller,
-        did,
-        vec![&env, vm],
-        services,
-    );
+    let result = DIDRegistry::create_did(env.clone(), controller, did, vec![&env, vm], services);
     assert!(result.is_ok());
     std::println!("[BENCH] create_did            OK");
 }
@@ -194,9 +188,20 @@ fn bench_screen_address() {
     let admin = Address::generate(&env);
     let source = Bytes::from_slice(&env, b"OFAC_SDN");
     let hash = BytesN::from_array(&env, &[2u8; 32]);
-    let _ = ComplianceFilter::update_sanctions_list(env.clone(), admin.clone(), source.clone(), hash, 1);
+    let _ = ComplianceFilter::update_sanctions_list(
+        env.clone(),
+        admin.clone(),
+        source.clone(),
+        hash,
+        1,
+    );
     let sanctioned = Address::generate(&env);
-    let _ = ComplianceFilter::load_list_entries(env.clone(), admin, source, vec![&env, sanctioned.clone()]);
+    let _ = ComplianceFilter::load_list_entries(
+        env.clone(),
+        admin,
+        source,
+        vec![&env, sanctioned.clone()],
+    );
 
     let clean = Address::generate(&env);
     let result = ComplianceFilter::screen_address(env.clone(), clean);

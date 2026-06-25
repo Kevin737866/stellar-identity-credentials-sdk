@@ -225,10 +225,7 @@ impl DIDRecovery {
     }
 
     /// Get the recovery configuration for a DID.
-    pub fn get_recovery_config(
-        env: Env,
-        did: Bytes,
-    ) -> Result<RecoveryConfig, DIDRecoveryError> {
+    pub fn get_recovery_config(env: Env, did: Bytes) -> Result<RecoveryConfig, DIDRecoveryError> {
         env.storage()
             .persistent()
             .get(&RecoveryKey::RecoveryConfig(did))
@@ -277,9 +274,10 @@ impl DIDRecovery {
             active: true,
         };
 
-        env.storage()
-            .persistent()
-            .set(&RecoveryKey::Guardian(did.clone(), guardian.clone()), &record);
+        env.storage().persistent().set(
+            &RecoveryKey::Guardian(did.clone(), guardian.clone()),
+            &record,
+        );
 
         config.total_guardians += 1;
         config.updated_at = env.ledger().timestamp();
@@ -287,10 +285,8 @@ impl DIDRecovery {
             .persistent()
             .set(&RecoveryKey::RecoveryConfig(did.clone()), &config);
 
-        env.events().publish(
-            (Symbol::new(&env, "GuardianAdded"),),
-            (did, guardian),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "GuardianAdded"),), (did, guardian));
 
         Ok(())
     }
@@ -329,10 +325,8 @@ impl DIDRecovery {
             .persistent()
             .set(&RecoveryKey::RecoveryConfig(did), &config);
 
-        env.events().publish(
-            (Symbol::new(&env, "GuardianRemoved"),),
-            (did, guardian),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "GuardianRemoved"),), (did, guardian));
 
         Ok(())
     }
@@ -478,7 +472,10 @@ impl DIDRecovery {
         let guardian_record: GuardianRecord = env
             .storage()
             .persistent()
-            .get(&RecoveryKey::Guardian(request.did.clone(), guardian.clone()))
+            .get(&RecoveryKey::Guardian(
+                request.did.clone(),
+                guardian.clone(),
+            ))
             .ok_or(DIDRecoveryError::GuardianNotAuthorized)?;
 
         if !guardian_record.active {
@@ -773,10 +770,7 @@ impl DIDRecovery {
     fn generate_request_id(env: &Env, _did: &Bytes) -> Bytes {
         let timestamp = env.ledger().timestamp();
         let mut id = Bytes::from_slice(env, b"rec:");
-        id.append(&Bytes::from_slice(
-            env,
-            timestamp.to_string().as_bytes(),
-        ));
+        id.append(&Bytes::from_slice(env, timestamp.to_string().as_bytes()));
         id.append(&Bytes::from_slice(env, b":"));
         id.append(&Bytes::from_slice(
             env,
@@ -886,8 +880,14 @@ mod tests {
         .unwrap();
 
         // Add guardian
-        DIDRecovery::add_guardian(env.clone(), controller.clone(), did.clone(), guardian.clone(), 1)
-            .unwrap();
+        DIDRecovery::add_guardian(
+            env.clone(),
+            controller.clone(),
+            did.clone(),
+            guardian.clone(),
+            1,
+        )
+        .unwrap();
 
         let record = DIDRecovery::get_guardian(env.clone(), did.clone(), guardian.clone()).unwrap();
         assert!(record.active);
@@ -927,12 +927,30 @@ mod tests {
         .unwrap();
 
         // Add guardians
-        DIDRecovery::add_guardian(env.clone(), controller.clone(), did.clone(), guardian1.clone(), 1)
-            .unwrap();
-        DIDRecovery::add_guardian(env.clone(), controller.clone(), did.clone(), guardian2.clone(), 1)
-            .unwrap();
-        DIDRecovery::add_guardian(env.clone(), controller.clone(), did.clone(), guardian3.clone(), 1)
-            .unwrap();
+        DIDRecovery::add_guardian(
+            env.clone(),
+            controller.clone(),
+            did.clone(),
+            guardian1.clone(),
+            1,
+        )
+        .unwrap();
+        DIDRecovery::add_guardian(
+            env.clone(),
+            controller.clone(),
+            did.clone(),
+            guardian2.clone(),
+            1,
+        )
+        .unwrap();
+        DIDRecovery::add_guardian(
+            env.clone(),
+            controller.clone(),
+            did.clone(),
+            guardian3.clone(),
+            1,
+        )
+        .unwrap();
 
         // Guardian1 initiates recovery
         let request_id = DIDRecovery::initiate_recovery(
@@ -951,17 +969,13 @@ mod tests {
         DIDRecovery::approve_recovery(env.clone(), guardian2, request_id.clone()).unwrap();
 
         // Execute recovery
-        let result = DIDRecovery::execute_recovery(
-            env.clone(),
-            guardian1.clone(),
-            request_id.clone(),
-        )
-        .unwrap();
+        let result =
+            DIDRecovery::execute_recovery(env.clone(), guardian1.clone(), request_id.clone())
+                .unwrap();
         assert_eq!(result, new_controller);
 
         // Request should now be executed
-        let request =
-            DIDRecovery::get_recovery_request(env.clone(), request_id).unwrap();
+        let request = DIDRecovery::get_recovery_request(env.clone(), request_id).unwrap();
         assert_eq!(request.status, RecoveryRequestStatus::Executed);
     }
 
@@ -985,10 +999,22 @@ mod tests {
         )
         .unwrap();
 
-        DIDRecovery::add_guardian(env.clone(), controller.clone(), did.clone(), guardian1.clone(), 1)
-            .unwrap();
-        DIDRecovery::add_guardian(env.clone(), controller.clone(), did.clone(), guardian2.clone(), 1)
-            .unwrap();
+        DIDRecovery::add_guardian(
+            env.clone(),
+            controller.clone(),
+            did.clone(),
+            guardian1.clone(),
+            1,
+        )
+        .unwrap();
+        DIDRecovery::add_guardian(
+            env.clone(),
+            controller.clone(),
+            did.clone(),
+            guardian2.clone(),
+            1,
+        )
+        .unwrap();
 
         let request_id = DIDRecovery::initiate_recovery(
             env.clone(),
@@ -1002,8 +1028,7 @@ mod tests {
         // Only 1 approval - should be pending
         DIDRecovery::approve_recovery(env.clone(), guardian1, request_id.clone()).unwrap();
 
-        let request =
-            DIDRecovery::get_recovery_request(env.clone(), request_id.clone()).unwrap();
+        let request = DIDRecovery::get_recovery_request(env.clone(), request_id.clone()).unwrap();
         assert_eq!(request.status, RecoveryRequestStatus::Pending);
 
         // Execute without enough approvals
@@ -1048,10 +1073,7 @@ mod tests {
         let result =
             DIDRecovery::execute_recovery(env.clone(), controller.clone(), request_id.clone());
         assert!(result.is_err());
-        assert_eq!(
-            result.err().unwrap(),
-            DIDRecoveryError::TimeLockNotElapsed
-        );
+        assert_eq!(result.err().unwrap(), DIDRecoveryError::TimeLockNotElapsed);
 
         // Advance time past the lock
         env.ledger().set(LedgerInfo {
@@ -1066,8 +1088,7 @@ mod tests {
         });
 
         // Now execution should succeed
-        let result =
-            DIDRecovery::execute_recovery(env.clone(), controller, request_id).unwrap();
+        let result = DIDRecovery::execute_recovery(env.clone(), controller, request_id).unwrap();
         assert_eq!(result, new_controller);
     }
 
@@ -1090,8 +1111,14 @@ mod tests {
         )
         .unwrap();
 
-        DIDRecovery::add_guardian(env.clone(), controller.clone(), did.clone(), guardian.clone(), 1)
-            .unwrap();
+        DIDRecovery::add_guardian(
+            env.clone(),
+            controller.clone(),
+            did.clone(),
+            guardian.clone(),
+            1,
+        )
+        .unwrap();
 
         let request_id = DIDRecovery::initiate_recovery(
             env.clone(),
@@ -1111,8 +1138,7 @@ mod tests {
         )
         .unwrap();
 
-        let request =
-            DIDRecovery::get_recovery_request(env.clone(), request_id).unwrap();
+        let request = DIDRecovery::get_recovery_request(env.clone(), request_id).unwrap();
         assert_eq!(request.status, RecoveryRequestStatus::Cancelled);
     }
 
@@ -1146,8 +1172,7 @@ mod tests {
         .unwrap();
 
         // TTP executes recovery
-        let result =
-            DIDRecovery::execute_recovery(env.clone(), ttp, request_id).unwrap();
+        let result = DIDRecovery::execute_recovery(env.clone(), ttp, request_id).unwrap();
         assert_eq!(result, new_controller);
     }
 
@@ -1171,14 +1196,9 @@ mod tests {
         )
         .unwrap();
 
-        let request_id = DIDRecovery::initiate_recovery(
-            env.clone(),
-            ttp,
-            did.clone(),
-            new_controller,
-            None,
-        )
-        .unwrap();
+        let request_id =
+            DIDRecovery::initiate_recovery(env.clone(), ttp, did.clone(), new_controller, None)
+                .unwrap();
 
         // Attacker tries to execute
         let result = DIDRecovery::execute_recovery(env.clone(), attacker, request_id);
@@ -1205,8 +1225,14 @@ mod tests {
         )
         .unwrap();
 
-        DIDRecovery::add_guardian(env.clone(), controller.clone(), did.clone(), guardian.clone(), 1)
-            .unwrap();
+        DIDRecovery::add_guardian(
+            env.clone(),
+            controller.clone(),
+            did.clone(),
+            guardian.clone(),
+            1,
+        )
+        .unwrap();
 
         let request_id = DIDRecovery::initiate_recovery(
             env.clone(),
@@ -1242,7 +1268,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(DIDRecovery::has_recovery_configured(env.clone(), did.clone()));
+        assert!(DIDRecovery::has_recovery_configured(
+            env.clone(),
+            did.clone()
+        ));
 
         DIDRecovery::deactivate_recovery(env.clone(), controller, did.clone()).unwrap();
 

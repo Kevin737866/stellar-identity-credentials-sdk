@@ -10,7 +10,7 @@ use crate::{
     credential_issuer::CredentialIssuer,
     credential_schema::{CredentialSchema, FieldValidation},
     did_registry::{DIDRegistry, DIDRegistryError},
-    reputation_score::{ReputationScore, ReputationScoreError, ReputationData, TrustAttestation},
+    reputation_score::{ReputationData, ReputationScore, ReputationScoreError, TrustAttestation},
     schema_registry::{CredentialSchemaRegistry, SchemaRegistryError},
     zk_attestation::{CircuitType, ZKAttestation, ZKAttestationError},
     DIDDocument, Service, VerifiableCredential, VerificationMethod,
@@ -164,12 +164,8 @@ fn test_reputation_evolution() {
     let initial_score = init.unwrap().score;
 
     for _ in 0..5 {
-        let _ = ReputationScore::update_transaction_reputation(
-            env.clone(),
-            user.clone(),
-            true,
-            1000,
-        );
+        let _ =
+            ReputationScore::update_transaction_reputation(env.clone(), user.clone(), true, 1000);
     }
 
     let score_after_txns = ReputationScore::get_reputation_score(env.clone(), user.clone());
@@ -214,12 +210,8 @@ fn test_compliance_enforcement() {
     );
 
     let entries = vec![&env, sanctioned.clone()];
-    let _ = ComplianceFilter::load_list_entries(
-        env.clone(),
-        admin.clone(),
-        source.clone(),
-        entries,
-    );
+    let _ =
+        ComplianceFilter::load_list_entries(env.clone(), admin.clone(), source.clone(), entries);
 
     let screening = ComplianceFilter::screen_address(env.clone(), sanctioned.clone());
     assert!(screening.is_err());
@@ -241,16 +233,13 @@ fn test_sanctions_list_admin_management() {
     let source = Bytes::from_slice(&env, b"UN_LIST");
     let hash = BytesN::from_array(&env, &[3u8; 32]);
 
-    ComplianceFilter::update_sanctions_list(
-        env.clone(),
-        admin.clone(),
-        source.clone(),
-        hash,
-        0,
-    )
-    .unwrap();
+    ComplianceFilter::update_sanctions_list(env.clone(), admin.clone(), source.clone(), hash, 0)
+        .unwrap();
 
-    assert!(!ComplianceFilter::is_sanctioned(env.clone(), offender.clone()));
+    assert!(!ComplianceFilter::is_sanctioned(
+        env.clone(),
+        offender.clone()
+    ));
 
     ComplianceFilter::add_to_sanctions_list(
         env.clone(),
@@ -262,7 +251,10 @@ fn test_sanctions_list_admin_management() {
     )
     .unwrap();
 
-    assert!(ComplianceFilter::is_sanctioned(env.clone(), offender.clone()));
+    assert!(ComplianceFilter::is_sanctioned(
+        env.clone(),
+        offender.clone()
+    ));
     let screening = ComplianceFilter::screen_address(env.clone(), offender.clone());
     assert!(screening.is_err());
 
@@ -274,7 +266,10 @@ fn test_sanctions_list_admin_management() {
     )
     .unwrap();
 
-    assert!(!ComplianceFilter::is_sanctioned(env.clone(), offender.clone()));
+    assert!(!ComplianceFilter::is_sanctioned(
+        env.clone(),
+        offender.clone()
+    ));
 }
 
 // =========================================================================
@@ -370,11 +365,8 @@ fn test_admin_operations() {
     assert!(list.is_some());
     assert!(list.unwrap().active);
 
-    let deactivate = ComplianceFilter::deactivate_sanctions_list(
-        env.clone(),
-        admin.clone(),
-        source.clone(),
-    );
+    let deactivate =
+        ComplianceFilter::deactivate_sanctions_list(env.clone(), admin.clone(), source.clone());
     assert!(deactivate.is_ok());
 
     let list_after = ComplianceFilter::get_sanctions_list(env.clone(), source.clone());
@@ -432,12 +424,8 @@ fn test_multi_user_scenario() {
 
     for user in [&user1, &user2, &user3] {
         let _ = ReputationScore::initialize_reputation(env.clone(), (*user).clone());
-        let _ = ReputationScore::update_transaction_reputation(
-            env.clone(),
-            (*user).clone(),
-            true,
-            500,
-        );
+        let _ =
+            ReputationScore::update_transaction_reputation(env.clone(), (*user).clone(), true, 500);
     }
 
     // Register issuer, then issue credential
@@ -487,12 +475,8 @@ fn test_deterministic_parallel_safe() {
     assert_eq!(alice_score, bob_score);
 
     for _ in 0..3 {
-        let _ = ReputationScore::update_transaction_reputation(
-            env.clone(),
-            alice.clone(),
-            true,
-            100,
-        );
+        let _ =
+            ReputationScore::update_transaction_reputation(env.clone(), alice.clone(), true, 100);
     }
 
     let alice_after = ReputationScore::get_reputation_score(env.clone(), alice.clone()).unwrap();
@@ -513,8 +497,12 @@ fn test_schema_registry_lifecycle() {
     let other_issuer = new_address(&env);
 
     let schema_id = Bytes::from_slice(&env, b"schema-kyc-v1");
-    let definition_v1 = Bytes::from_slice(&env, b"{\"type\":\"KYC\",\"fields\":[\"name\",\"dob\"]}");
-    let definition_v2 = Bytes::from_slice(&env, b"{\"type\":\"KYC\",\"fields\":[\"name\",\"dob\",\"address\"]}");
+    let definition_v1 =
+        Bytes::from_slice(&env, b"{\"type\":\"KYC\",\"fields\":[\"name\",\"dob\"]}");
+    let definition_v2 = Bytes::from_slice(
+        &env,
+        b"{\"type\":\"KYC\",\"fields\":[\"name\",\"dob\",\"address\"]}",
+    );
 
     // Register schema
     assert!(CredentialSchemaRegistry::register_schema(
@@ -575,10 +563,13 @@ fn test_schema_registry_lifecycle() {
     assert_eq!(unauthorized.unwrap_err(), SchemaRegistryError::Unauthorized);
 
     // Validate schema exists
-    assert!(CredentialSchemaRegistry::validate_schema_exists(env.clone(), schema_id.clone()).unwrap());
+    assert!(
+        CredentialSchemaRegistry::validate_schema_exists(env.clone(), schema_id.clone()).unwrap()
+    );
 
     // Validate non-existent schema
     let non_existent_id = Bytes::from_slice(&env, b"non-existent");
-    let validate_non_existent = CredentialSchemaRegistry::validate_schema_exists(env.clone(), non_existent_id);
+    let validate_non_existent =
+        CredentialSchemaRegistry::validate_schema_exists(env.clone(), non_existent_id);
     assert!(validate_non_existent.is_err());
 }
