@@ -356,8 +356,6 @@ impl CredentialOfferContract {
             OfferStatusCode::Pending => {}
         }
 
-        let now = env.ledger().timestamp();
-
         offer.status = OfferStatusCode::Rejected;
         offer.rejection_reason = reason.clone();
 
@@ -406,8 +404,6 @@ impl CredentialOfferContract {
             OfferStatusCode::Expired => return Err(CredentialOfferError::OfferExpired),
             OfferStatusCode::Pending => {}
         }
-
-        let now = env.ledger().timestamp();
 
         offer.status = OfferStatusCode::Cancelled;
 

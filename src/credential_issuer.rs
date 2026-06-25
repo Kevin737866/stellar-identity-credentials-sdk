@@ -172,7 +172,7 @@ impl CredentialIssuer {
         issuer_creds.push_back(credential_id.clone());
         env.storage()
             .persistent()
-            .set(&CredKey::IssuerCreds(issuer), &issuer_creds);
+            .set(&CredKey::IssuerCreds(issuer.clone()), &issuer_creds);
 
         let mut subject_creds: Vec<Bytes> = env
             .storage()
@@ -257,7 +257,7 @@ impl CredentialIssuer {
         issuer_creds.push_back(credential_id.clone());
         env.storage()
             .persistent()
-            .set(&CredKey::IssuerCreds(issuer), &issuer_creds);
+            .set(&CredKey::IssuerCreds(issuer.clone()), &issuer_creds);
 
         let mut subject_creds: Vec<Bytes> = env
             .storage()
@@ -345,7 +345,7 @@ impl CredentialIssuer {
         if let Some(reason_bytes) = reason {
             env.storage()
                 .persistent()
-                .set(&CredKey::Reason(credential_id), &reason_bytes);
+                .set(&CredKey::Reason(credential_id.clone()), &reason_bytes);
         }
 
         env.events().publish(
@@ -504,7 +504,7 @@ impl CredentialIssuer {
         delegator_auths.push_back(auth_id.clone());
         env.storage()
             .persistent()
-            .set(&CredKey::DelegatorAuths(delegator), &delegator_auths);
+            .set(&CredKey::DelegatorAuths(delegator.clone()), &delegator_auths);
 
         env.events().publish(
             (Symbol::new(&env, "DelegationAuthorized"),),
@@ -644,7 +644,7 @@ impl CredentialIssuer {
         issuer_creds.push_back(credential_id.clone());
         env.storage()
             .persistent()
-            .set(&CredKey::IssuerCreds(auth.delegator), &issuer_creds);
+            .set(&CredKey::IssuerCreds(auth.delegator.clone()), &issuer_creds);
 
         let mut subject_creds: Vec<Bytes> = env
             .storage()
@@ -659,7 +659,7 @@ impl CredentialIssuer {
         auth.issued_count += 1;
         env.storage()
             .persistent()
-            .set(&CredKey::Delegation(auth_id), &auth);
+            .set(&CredKey::Delegation(auth_id.clone()), &auth);
 
         env.events().publish(
             (Symbol::new(&env, "DelegatedCredentialIssued"),),
