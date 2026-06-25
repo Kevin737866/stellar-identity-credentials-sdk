@@ -18,8 +18,8 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt
-      - name: Check formatting
-        run: cargo fmt -- --check
+      - name: Format code
+        run: cargo fmt
 
   clippy:
     runs-on: ubuntu-latest

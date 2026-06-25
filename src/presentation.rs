@@ -350,22 +350,22 @@ impl PresentationManager {
     }
 
     /// Generate a unique presentation ID.
-    fn generate_presentation_id(env: &Env, holder: &Address) -> Bytes {
+    fn generate_presentation_id(env: &Env, _holder: &Address) -> Bytes {
         let timestamp = env.ledger().timestamp();
         let mut id = Bytes::from_slice(env, b"vp:");
-        id.append(&holder.to_string().to_bytes());
+        id.append(&Bytes::from_slice(env, timestamp.to_string().as_bytes()));
         id.append(&Bytes::from_slice(env, b":"));
-        id.append(&Bytes::from_slice(env, &timestamp.to_string().as_bytes()));
+        id.append(&Bytes::from_slice(env, env.ledger().sequence().to_string().as_bytes()));
         id
     }
 
     /// Generate a unique request ID.
-    fn generate_request_id(env: &Env, verifier: &Address) -> Bytes {
+    fn generate_request_id(env: &Env, _verifier: &Address) -> Bytes {
         let timestamp = env.ledger().timestamp();
         let mut id = Bytes::from_slice(env, b"req:");
-        id.append(&verifier.to_string().to_bytes());
+        id.append(&Bytes::from_slice(env, timestamp.to_string().as_bytes()));
         id.append(&Bytes::from_slice(env, b":"));
-        id.append(&Bytes::from_slice(env, &timestamp.to_string().as_bytes()));
+        id.append(&Bytes::from_slice(env, env.ledger().sequence().to_string().as_bytes()));
         id
     }
 }
