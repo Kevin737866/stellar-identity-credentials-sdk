@@ -14,6 +14,8 @@ pub mod credential_offer;
 pub mod did_recovery;
 pub mod reputation_oracle;
 pub mod dif_interop;
+pub mod regulatory_reporting;
+pub mod audit_trail;
 
 #[cfg(test)]
 mod integration_tests;
@@ -56,6 +58,19 @@ pub use reputation_oracle::OracleDispute;
 pub use reputation_oracle::DisputeStatus;
 pub use reputation_oracle::ReputationOracleError;
 pub use reputation_oracle::PaginatedFeeds;
+pub use regulatory_reporting::RegulatoryReporting;
+pub use regulatory_reporting::ReportTemplate;
+pub use regulatory_reporting::TemplateSection;
+pub use regulatory_reporting::ReportSection;
+pub use regulatory_reporting::ReportField;
+pub use regulatory_reporting::RegulatoryReport;
+pub use regulatory_reporting::SARReport;
+pub use regulatory_reporting::ReportSchedule;
+pub use regulatory_reporting::TransactionReport;
+pub use regulatory_reporting::ExportSnapshot;
+pub use regulatory_reporting::PaginatedReports;
+pub use regulatory_reporting::PaginatedSARs;
+pub use regulatory_reporting::RegulatoryReportingError;
 
 // ---------------------------------------------------------------------------
 // Shared types

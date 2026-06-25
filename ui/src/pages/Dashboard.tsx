@@ -15,6 +15,7 @@ import { ReputationBadge } from '@/components/ReputationBadge';
 import { CredentialWallet } from '@/components/CredentialWallet';
 import { ProofRequest } from '@/components/ProofRequest';
 import { ComplianceCheck } from '@/components/ComplianceCheck';
+import { RegulatoryDashboard } from '@/components/RegulatoryDashboard';
 import { useStellarIdentity } from '@/hooks/useStellarIdentity';
 import { StellarIdentityConfig } from '@stellar-identity/sdk';
 import { Keypair } from 'stellar-sdk';
@@ -42,6 +43,7 @@ import {
   Moon,
   Globe,
   Info,
+  FileText,
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -356,6 +358,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ config, autoConnect = fals
             { id: 'credentials', label: 'Credentials', icon: <Shield className="h-4 w-4" /> },
             { id: 'proofs', label: 'Proofs', icon: <Zap className="h-4 w-4" /> },
             { id: 'compliance', label: 'Compliance', icon: <CheckSquare className="h-4 w-4" /> },
+            { id: 'reporting', label: 'Reporting', icon: <FileText className="h-4 w-4" /> },
             { id: 'reputation', label: 'Reputation', icon: <TrendingUp className="h-4 w-4" /> },
           ].map((item) => {
             const isActive = activeTab === item.id;
@@ -594,6 +597,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ config, autoConnect = fals
                 <CheckSquare className="h-4 w-4 mr-2" />
                 Compliance
               </TabsTrigger>
+              <TabsTrigger value="reporting">
+                <FileText className="h-4 w-4 mr-2" />
+                Reporting
+              </TabsTrigger>
               <TabsTrigger value="reputation">
                 <TrendingUp className="h-4 w-4 mr-2" />
                 Reputation
@@ -610,6 +617,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ config, autoConnect = fals
 
             <TabsContent value="compliance">
               <ComplianceCheck sdk={sdk} address={address} keypair={keypair} />
+            </TabsContent>
+
+            <TabsContent value="reporting">
+              <RegulatoryDashboard sdk={sdk} address={address} keypair={keypair} />
             </TabsContent>
 
             <TabsContent value="reputation">

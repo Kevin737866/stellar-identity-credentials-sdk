@@ -36,6 +36,7 @@ export { CredentialWallet } from './components/CredentialWallet';
 export { ReputationBadge } from './components/ReputationBadge';
 export { ProofRequest } from './components/ProofRequest';
 export { ComplianceCheck } from './components/ComplianceCheck';
+export { RegulatoryDashboard } from './components/RegulatoryDashboard';
 
 // Pages
 export { Dashboard } from './pages/Dashboard';
