@@ -199,7 +199,7 @@ fn fuzz_signature_large_message() {
 fn fuzz_signature_no_verification_methods() {
     let env = make_env();
     let controller = Address::generate(&env);
-    let mut did = Bytes::from_slice(&env, b"did:stellar:GEMPTYVM");
+    let did = Bytes::from_slice(&env, b"did:stellar:GEMPTYVM");
 
     // Register a DID with the allowed VM, then clear it by re-creating with
     // zero VMs (or use a DID that has no VMs). We'll test via method_index.
@@ -481,10 +481,10 @@ fn fuzz_deactivated_did_rejects_signatures() {
     assert_eq!(result.err().unwrap(), DIDRegistryError::Deactivated);
 }
 
-/// Verify that a valid-but-stale DID still rejects when deactivated,
-/// and that re-activation (if supported) is handled correctly.
+/// Verify that a valid-but-stale DID rejects operations after deactivation
+/// and that a subsequent update attempt on a deactivated DID fails.
 #[test]
-fn fuzz_stale_did_rejected_then_restored() {
+fn fuzz_stale_did_update_rejected_after_deactivation() {
     let (env, did, controller, pk) = setup_did_with_key().expect("setup failed");
 
     // 1. Deactivate
@@ -516,8 +516,6 @@ fn fuzz_stale_did_rejected_then_restored() {
 /// Adversary tries to verify with a DID that was never created.
 #[test]
 fn fuzz_nonexistent_did_every_variant() {
-    use crate::did_registry::DIDRegistryError;
-
     let env = make_env();
     let fake = Bytes::from_slice(&env, b"did:stellar:G0000NOTEXIST001");
     let sig = BytesN::from_array(&env, &[1u8; 64]);
