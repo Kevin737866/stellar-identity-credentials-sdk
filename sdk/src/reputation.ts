@@ -6,6 +6,7 @@ import {
   Keypair,
   Contract,
   Address,
+  Account,
   xdr,
   nativeToScVal,
   scValToNative,
@@ -316,7 +317,7 @@ export class ReputationClient {
 
       const hash = 'hash' in result ? result.hash : prepared.hash().toString('hex');
       const response = await this.rpc.getTransaction(hash);
-      if ('resultMetaXdr' in response && response.returnValue) {
+      if (response.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS && response.returnValue) {
         return response.returnValue;
       }
 
@@ -334,11 +335,7 @@ export class ReputationClient {
 
   private async simulateRead(method: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
     const dummy = Keypair.random();
-    const account = {
-      accountId: () => dummy.publicKey(),
-      sequenceNumber: () => '0',
-      incrementSequenceNumber: () => undefined,
-    } as SorobanRpc.Account;
+    const account = new Account(dummy.publicKey(), '0');
 
     const tx = new TransactionBuilder(account, {
       fee: '100',

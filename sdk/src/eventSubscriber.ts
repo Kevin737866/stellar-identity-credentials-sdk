@@ -249,4 +249,4 @@ export class EventSubscriber {
   }
 }
 
-export { EventType, Subscription, EventFilter, SDKEvent };
+export type { EventType, Subscription, EventFilter, SDKEvent };
