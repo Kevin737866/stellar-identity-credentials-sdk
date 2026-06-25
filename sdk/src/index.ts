@@ -28,6 +28,7 @@ export { CredentialClient } from './credentialClient';
 export { ReputationClient } from './reputation';
 export { ZKProofsClient } from './zkProofs';
 export { CacheManager, DataType } from './cacheManager';
+export { compressPayload, decompressPayload, compressionRatio } from './compression';
 export { EventSubscriber } from './eventSubscriber';
 export { Logger, LogLevel } from './logger';
 export { DataMinimizationEngine } from './dataMinimization';
