@@ -5,7 +5,7 @@ use crate::{
     credential_issuer::{CredentialIssuer, CredentialIssuerError},
     did_registry::{DIDRegistry, DIDRegistryError},
     reputation_score::{ReputationScore, ReputationScoreError},
-    zk_attestation::{CircuitType, ZKAttestation as ZKAttestationContract, ZKAttestationError},
+    zk_attestation::{CircuitType, ZKAttestationContract, ZKAttestationError},
     VerificationMethod,
 };
 use soroban_sdk::{
@@ -48,7 +48,7 @@ fn make_vm(env: &Env, controller: &Address) -> VerificationMethod {
 /// Register a ZK circuit and return its Symbol id.
 fn register_circuit(env: &Env, id: &str) -> Symbol {
     let circuit_id = Symbol::new(env, id);
-    ZKAttestationContract::register_circuit(
+    ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).register_circuit(
         env.clone(),
         circuit_id.clone(),
         Bytes::from_slice(env, b"Test Circuit"),
@@ -85,7 +85,7 @@ mod did_registry_tests {
         let vm = make_vm(&env, &controller);
 
         let result =
-            DIDRegistry::create_did(env.clone(), controller, did, vec![&env, vm], Vec::new(&env));
+            DIDRegistry::create_did(env.clone(), controller, did, soroban_sdk::vec![&env, vm], Vec::new(&env));
         assert!(result.is_ok(), "valid DID creation should succeed");
     }
 
@@ -102,7 +102,7 @@ mod did_registry_tests {
             env.clone(),
             controller,
             long_did,
-            vec![&env, vm],
+            soroban_sdk::vec![&env, vm],
             Vec::new(&env),
         );
         assert_eq!(result.unwrap_err(), DIDRegistryError::InvalidFormat);
@@ -119,7 +119,7 @@ mod did_registry_tests {
             env.clone(),
             controller,
             bad_did,
-            vec![&env, vm],
+            soroban_sdk::vec![&env, vm],
             Vec::new(&env),
         );
         assert_eq!(result.unwrap_err(), DIDRegistryError::InvalidFormat);
@@ -136,7 +136,7 @@ mod did_registry_tests {
             env.clone(),
             controller,
             empty_did,
-            vec![&env, vm],
+            soroban_sdk::vec![&env, vm],
             Vec::new(&env),
         );
         assert!(result.is_err(), "empty DID should be rejected");
@@ -172,13 +172,13 @@ mod did_registry_tests {
             env.clone(),
             controller.clone(),
             did.clone(),
-            vec![&env, vm.clone()],
+            soroban_sdk::vec![&env, vm.clone()],
             Vec::new(&env),
         )
         .unwrap();
 
         let result =
-            DIDRegistry::create_did(env.clone(), controller, did, vec![&env, vm], Vec::new(&env));
+            DIDRegistry::create_did(env.clone(), controller, did, soroban_sdk::vec![&env, vm], Vec::new(&env));
         assert!(
             result.is_err(),
             "duplicate DID registration should be rejected"
@@ -199,7 +199,7 @@ mod did_registry_tests {
             env.clone(),
             controller,
             max_did,
-            vec![&env, vm],
+            soroban_sdk::vec![&env, vm],
             Vec::new(&env),
         );
         assert!(
@@ -228,7 +228,7 @@ mod credential_issuer_tests {
             env.clone(),
             issuer,
             subject,
-            vec![&env, Bytes::from_slice(&env, b"IdentityCredential")],
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"IdentityCredential")],
             Bytes::from_slice(&env, b"claim_data"),
             None,
             Bytes::from_slice(&env, b"valid_proof"),
@@ -251,7 +251,7 @@ mod credential_issuer_tests {
             env.clone(),
             issuer,
             subject,
-            vec![&env, Bytes::from_slice(&env, b"Test")],
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"Test")],
             Bytes::new(&env), // empty claims
             None,
             Bytes::from_slice(&env, b"proof"),
@@ -281,7 +281,7 @@ mod credential_issuer_tests {
         );
         assert_eq!(
             result.unwrap_err(),
-            CredentialIssuerError::InvalidCredentialType
+            CredentialIssuerError::InvalidCredential
         );
     }
 
@@ -295,7 +295,7 @@ mod credential_issuer_tests {
             env.clone(),
             issuer, // never registered
             subject,
-            vec![&env, Bytes::from_slice(&env, b"IdentityCredential")],
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"IdentityCredential")],
             Bytes::from_slice(&env, b"data"),
             None,
             Bytes::from_slice(&env, b"proof"),
@@ -310,7 +310,7 @@ mod credential_issuer_tests {
         let subject = generate_address(&env);
 
         // 5 000 bytes > MAX_CREDENTIAL_TYPE_LENGTH (128)
-        let oversized_type = vec![&env, Bytes::from_slice(&env, &[b'X'; 5_000])];
+        let oversized_type = soroban_sdk::vec![&env, Bytes::from_slice(&env, &[b'X'; 5_000])];
 
         let result = CredentialIssuer::issue_credential(
             env.clone(),
@@ -355,7 +355,7 @@ mod credential_issuer_tests {
             env.clone(),
             issuer,
             subject,
-            vec![&env, Bytes::from_slice(&env, b"IdentityCredential")],
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"IdentityCredential")],
             Bytes::from_slice(&env, b"data"),
             past_timestamp,
             Bytes::from_slice(&env, b"proof"),
@@ -493,10 +493,10 @@ mod zk_attestation_tests {
         let circuit_id = register_circuit(&env, "valid_proof");
         let metadata = make_metadata(&env);
 
-        let result = ZKAttestationContract::submit_proof(
+        let result = ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).submit_proof(
             env.clone(),
             circuit_id,
-            vec![&env, Bytes::from_slice(&env, b"input")],
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"input")],
             Bytes::from_slice(&env, b"valid_proof_bytes"),
             Bytes::from_slice(&env, b"unique_nullifier"),
             Vec::new(&env),
@@ -513,7 +513,7 @@ mod zk_attestation_tests {
         let env = setup_env();
         let circuit_id = register_circuit(&env, "dup_test");
 
-        let result = ZKAttestationContract::register_circuit(
+        let result = ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).register_circuit(
             env.clone(),
             circuit_id,
             Bytes::from_slice(&env, b"Test"),
@@ -534,10 +534,10 @@ mod zk_attestation_tests {
         let metadata = make_metadata(&env);
         let nullifier = Bytes::from_slice(&env, b"same_nullifier");
 
-        ZKAttestationContract::submit_proof(
+        ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).submit_proof(
             env.clone(),
             circuit_id.clone(),
-            vec![&env, Bytes::from_slice(&env, b"input1")],
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"input1")],
             Bytes::from_slice(&env, b"proof1"),
             nullifier.clone(),
             Vec::new(&env),
@@ -546,10 +546,10 @@ mod zk_attestation_tests {
         )
         .unwrap();
 
-        let result = ZKAttestationContract::submit_proof(
+        let result = ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).submit_proof(
             env.clone(),
             circuit_id,
-            vec![&env, Bytes::from_slice(&env, b"input2")],
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"input2")],
             Bytes::from_slice(&env, b"proof2"),
             nullifier, // reused
             Vec::new(&env),
@@ -568,10 +568,10 @@ mod zk_attestation_tests {
         let circuit_id = register_circuit(&env, "empty_proof");
         let metadata = make_metadata(&env);
 
-        let result = ZKAttestationContract::submit_proof(
+        let result = ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).submit_proof(
             env.clone(),
             circuit_id,
-            vec![&env, Bytes::from_slice(&env, b"input")],
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"input")],
             Bytes::new(&env), // empty proof
             Bytes::from_slice(&env, b"unique_null"),
             Vec::new(&env),
@@ -587,10 +587,10 @@ mod zk_attestation_tests {
         let unknown_circuit = Symbol::new(&env, "ghost_circuit");
         let metadata = make_metadata(&env);
 
-        let result = ZKAttestationContract::submit_proof(
+        let result = ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).submit_proof(
             env.clone(),
             unknown_circuit,
-            vec![&env, Bytes::from_slice(&env, b"input")],
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"input")],
             Bytes::from_slice(&env, b"proof"),
             Bytes::from_slice(&env, b"nullifier"),
             Vec::new(&env),
@@ -609,7 +609,7 @@ mod zk_attestation_tests {
         let circuit_id = register_circuit(&env, "empty_inputs");
         let metadata = make_metadata(&env);
 
-        let result = ZKAttestationContract::submit_proof(
+        let result = ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).submit_proof(
             env.clone(),
             circuit_id,
             Vec::new(&env), // no inputs
@@ -633,10 +633,10 @@ mod zk_attestation_tests {
             .iter()
             .enumerate()
         {
-            let result = ZKAttestationContract::submit_proof(
+            let result = ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).submit_proof(
                 env.clone(),
                 circuit_id.clone(),
-                vec![&env, Bytes::from_slice(&env, b"input")],
+                soroban_sdk::vec![&env, Bytes::from_slice(&env, b"input")],
                 Bytes::from_slice(&env, b"proof"),
                 Bytes::from_slice(&env, tag),
                 Vec::new(&env),

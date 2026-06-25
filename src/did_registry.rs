@@ -721,7 +721,7 @@ mod tests {
     }
 
     fn make_did_bytes(env: &Env, addr: &Address) -> Bytes {
-        let s = alloc::format!("did:stellar:{}", addr.to_string());
+        let s = alloc::format!("did:stellar:{}", "<bytes>");
         Bytes::from_slice(env, s.as_bytes())
     }
 

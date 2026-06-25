@@ -14,6 +14,14 @@ pub enum SchemaRegistryError {
 #[contract]
 pub struct CredentialSchemaRegistry;
 
+#[contracttype]
+#[derive(Clone)]
+pub enum SchemaKey {
+    Version(Bytes),
+    Schema(Bytes, u32),
+}
+
+
 #[contractimpl]
 impl CredentialSchemaRegistry {
     const MAX_SCHEMA_ID_LENGTH: u32 = 128;
@@ -56,7 +64,7 @@ impl CredentialSchemaRegistry {
 
         // Store current version
         env.storage().persistent().set(
-            &Symbol::new(&env, &format!("version:{}", schema_id.to_string())),
+            &Symbol::new(&env, &format!("version:{}", "<bytes>")),
             &1u32,
         );
 
@@ -75,10 +83,7 @@ impl CredentialSchemaRegistry {
         let current_version: u32 = env
             .storage()
             .persistent()
-            .get(&Symbol::new(
-                &env,
-                &format!("version:{}", schema_id.to_string()),
-            ))
+            .get(&SchemaKey::Version(schema_id.clone()))
             .ok_or(SchemaRegistryError::NotFound)?;
 
         let last_version_key = Self::get_version_key(&env, &schema_id, current_version);
@@ -111,7 +116,7 @@ impl CredentialSchemaRegistry {
 
         env.storage().persistent().set(&new_version_key, &schema);
         env.storage().persistent().set(
-            &Symbol::new(&env, &format!("version:{}", schema_id.to_string())),
+            &Symbol::new(&env, &format!("version:{}", "<bytes>")),
             &new_version,
         );
 
@@ -129,10 +134,7 @@ impl CredentialSchemaRegistry {
             None => env
                 .storage()
                 .persistent()
-                .get(&Symbol::new(
-                    &env,
-                    &format!("version:{}", schema_id.to_string()),
-                ))
+                .get(&SchemaKey::Version(schema_id.clone()))
                 .ok_or(SchemaRegistryError::NotFound)?,
         };
 
@@ -150,9 +152,6 @@ impl CredentialSchemaRegistry {
     }
 
     fn get_version_key(env: &Env, schema_id: &Bytes, version: u32) -> Symbol {
-        Symbol::new(
-            env,
-            &format!("schema:{}:v{}", schema_id.to_string(), version),
-        )
+        SchemaKey::Schema(schema_id.clone(), version)
     }
 }

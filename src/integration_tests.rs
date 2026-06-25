@@ -73,7 +73,7 @@ fn make_vm_vec(_env: &Env, vms: Vec<VerificationMethod>) -> Vec<VerificationMeth
 }
 
 fn make_services(env: &Env) -> Vec<Service> {
-    vec![
+    soroban_sdk::vec![
         env,
         Service {
             id: Bytes::from_slice(env, b"#hub"),
@@ -105,7 +105,7 @@ fn test_full_kyc_flow() {
         env.clone(),
         controller.clone(),
         did.clone(),
-        make_vm_vec(&env, vec![&env, vm]),
+        make_vm_vec(&env, soroban_sdk::vec![&env, vm]),
         services,
     )
     .is_ok());
@@ -120,7 +120,7 @@ fn test_full_kyc_flow() {
         env.clone(),
         issuer.clone(),
         subject.clone(),
-        vec![&env, Bytes::from_slice(&env, b"KYCCredential")],
+        soroban_sdk::vec![&env, Bytes::from_slice(&env, b"KYCCredential")],
         make_claims(&env),
         None,
         Bytes::from_slice(&env, b"proof"),
@@ -208,7 +208,7 @@ fn test_compliance_enforcement() {
         1,
     );
 
-    let entries = vec![&env, sanctioned.clone()];
+    let entries = soroban_sdk::vec![&env, sanctioned.clone()];
     let _ = ComplianceFilter::load_list_entries(
         env.clone(),
         admin.clone(),
@@ -291,9 +291,9 @@ fn test_zk_proof_lifecycle() {
     let public_input_count = 2;
     let private_input_count = 3;
     let circuit_type = CircuitType::RangeProof;
-    let supported_attributes = vec![&env, Symbol::new(&env, "age_commitment")];
+    let supported_attributes = soroban_sdk::vec![&env, Symbol::new(&env, "age_commitment")];
 
-    let register_result = ZKAttestationContract::register_circuit(
+    let register_result = ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).register_circuit(
         env.clone(),
         circuit_id.clone(),
         name,
@@ -306,21 +306,21 @@ fn test_zk_proof_lifecycle() {
     );
     assert!(register_result.is_ok());
 
-    let public_inputs = vec![
+    let public_inputs = soroban_sdk::vec![
         &env,
         Bytes::from_slice(&env, b"commitment_value_1"),
         Bytes::from_slice(&env, b"18"),
     ];
     let proof_bytes = Bytes::from_slice(&env, b"valid_zk_proof_data");
     let nullifier = Bytes::from_slice(&env, b"unique_nullifier_123");
-    let revealed_attributes = vec![&env, Symbol::new(&env, "age_commitment")];
+    let revealed_attributes = soroban_sdk::vec![&env, Symbol::new(&env, "age_commitment")];
     let mut metadata = soroban_sdk::Map::new(&env);
     metadata.set(
         Symbol::new(&env, "context"),
         Bytes::from_slice(&env, b"age_verification"),
     );
 
-    let proof_id = ZKAttestationContract::submit_proof(
+    let proof_id = ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).submit_proof(
         env.clone(),
         circuit_id.clone(),
         public_inputs,
@@ -403,7 +403,7 @@ fn test_multi_user_scenario() {
         env.clone(),
         user1.clone(),
         did1.clone(),
-        make_vm_vec(&env, vec![&env, make_vm(&env, "#key-1", key1)]),
+        make_vm_vec(&env, soroban_sdk::vec![&env, make_vm(&env, "#key-1", key1)]),
         make_services(&env),
     )
     .is_ok());
@@ -412,7 +412,7 @@ fn test_multi_user_scenario() {
         env.clone(),
         user2.clone(),
         did2.clone(),
-        make_vm_vec(&env, vec![&env, make_vm(&env, "#key-1", key2)]),
+        make_vm_vec(&env, soroban_sdk::vec![&env, make_vm(&env, "#key-1", key2)]),
         make_services(&env),
     )
     .is_ok());
@@ -421,7 +421,7 @@ fn test_multi_user_scenario() {
         env.clone(),
         user3.clone(),
         did3.clone(),
-        make_vm_vec(&env, vec![&env, make_vm(&env, "#key-1", key3)]),
+        make_vm_vec(&env, soroban_sdk::vec![&env, make_vm(&env, "#key-1", key3)]),
         make_services(&env),
     )
     .is_ok());
@@ -438,7 +438,7 @@ fn test_multi_user_scenario() {
         env.clone(),
         user1.clone(),
         user2.clone(),
-        vec![&env, Bytes::from_slice(&env, b"KYCCredential")],
+        soroban_sdk::vec![&env, Bytes::from_slice(&env, b"KYCCredential")],
         make_claims(&env),
         None,
         Bytes::from_slice(&env, b"proof"),

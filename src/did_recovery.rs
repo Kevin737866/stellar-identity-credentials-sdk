@@ -964,7 +964,7 @@ mod tests {
         .unwrap();
 
         // Guardian1 approves
-        DIDRecovery::approve_recovery(env.clone(), guardian1, request_id.clone()).unwrap();
+        DIDRecovery::approve_recovery(env.clone(), guardian1.clone(), request_id.clone()).unwrap();
 
         // Guardian2 approves (meets threshold of 2)
         DIDRecovery::approve_recovery(env.clone(), guardian2, request_id.clone()).unwrap();
@@ -1027,7 +1027,7 @@ mod tests {
         .unwrap();
 
         // Only 1 approval - should be pending
-        DIDRecovery::approve_recovery(env.clone(), guardian1, request_id.clone()).unwrap();
+        DIDRecovery::approve_recovery(env.clone(), guardian1.clone(), request_id.clone()).unwrap();
 
         let request = DIDRecovery::get_recovery_request(env.clone(), request_id.clone()).unwrap();
         assert_eq!(request.status, RecoveryRequestStatus::Pending);

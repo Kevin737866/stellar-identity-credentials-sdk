@@ -48,7 +48,8 @@ pub use reputation_oracle::ReputationOracle;
 pub use reputation_oracle::ReputationOracleError;
 pub use reputation_score::ReputationScore;
 pub use schema_registry::CredentialSchemaRegistry;
-pub use zk_attestation::ZKAttestation;
+pub use zk_attestation::ZKAttestationContract;
+pub use zk_attestation::ZKAttestationContractClient;
 pub use zk_attestation::ZKAttestationRecord;
 
 // ---------------------------------------------------------------------------

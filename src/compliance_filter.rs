@@ -182,7 +182,7 @@ impl ComplianceFilter {
             .instance()
             .set(&Symbol::new(&env, KEY_ORACLES), &oracles);
         env.events()
-            .publish(Symbol::new(&env, "oracle_reg"), oracle);
+            .publish((Symbol::new(&env, "oracle_reg"),), oracle);
         Ok(())
     }
 
@@ -667,7 +667,7 @@ impl ComplianceFilter {
         Self::persist(&env, &k, &rule);
 
         env.events()
-            .publish(Symbol::new(&env, "rule_reg"), jurisdiction);
+            .publish((Symbol::new(&env, "rule_reg"),), jurisdiction);
         Ok(())
     }
 

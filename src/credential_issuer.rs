@@ -204,8 +204,8 @@ impl CredentialIssuer {
     ) -> Result<Bytes, CredentialIssuerError> {
         issuer.require_auth();
 
-        use crate::credential_schema::CredentialSchema;
-        let _schema = CredentialSchema::get_schema(env.clone(), schema_id.clone())
+        use crate::schema_registry::CredentialSchemaRegistry;
+        let _schema = CredentialSchemaRegistry::get_schema(env.clone(), schema_id.clone())
             .ok_or(CredentialIssuerError::SchemaNotFound)?;
 
         CredentialSchema::validate_credential_data(
