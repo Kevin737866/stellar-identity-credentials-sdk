@@ -8,6 +8,9 @@ pub mod zk_attestation;
 pub mod compliance_filter;
 pub mod storage_optimization;
 pub mod gas_benchmark;
+pub mod credential_offer;
+pub mod did_recovery;
+pub mod reputation_oracle;
 
 #[cfg(test)]
 mod integration_tests;
@@ -31,6 +34,27 @@ pub use reputation_score::ReputationScore;
 pub use zk_attestation::ZKAttestation;
 pub use zk_attestation::ZKAttestationRecord;
 pub use compliance_filter::ComplianceFilter;
+pub use credential_offer::CredentialOfferContract;
+pub use credential_offer::CredentialOffer;
+pub use credential_offer::OfferStatus;
+pub use credential_offer::OfferStatusCode;
+pub use credential_offer::CredentialOfferError;
+pub use credential_offer::PaginatedOffers;
+pub use did_recovery::DIDRecovery;
+pub use did_recovery::RecoveryConfig;
+pub use did_recovery::RecoveryMethod;
+pub use did_recovery::RecoveryRequest;
+pub use did_recovery::RecoveryRequestStatus;
+pub use did_recovery::GuardianRecord;
+pub use did_recovery::DIDRecoveryError;
+pub use reputation_oracle::ReputationOracle;
+pub use reputation_oracle::OracleRecord;
+pub use reputation_oracle::OracleStatus;
+pub use reputation_oracle::OracleDataFeed;
+pub use reputation_oracle::OracleDispute;
+pub use reputation_oracle::DisputeStatus;
+pub use reputation_oracle::ReputationOracleError;
+pub use reputation_oracle::PaginatedFeeds;
 
 // ---------------------------------------------------------------------------
 // Shared types
