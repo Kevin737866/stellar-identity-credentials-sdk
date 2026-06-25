@@ -37,6 +37,10 @@ export { ReputationBadge } from './components/ReputationBadge';
 export { ProofRequest } from './components/ProofRequest';
 export { ComplianceCheck } from './components/ComplianceCheck';
 
+// Pages
+export { Dashboard } from './pages/Dashboard';
+export type { DashboardProps } from './pages/Dashboard';
+
 // Hooks
 export {
   useStellarIdentity,
