@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Map, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
 };
 
 use crate::{VerifiablePresentation, PresentationRequest, PresentationResponse};
@@ -26,6 +26,20 @@ pub struct SelectiveDisclosureEntry {
     pub revealed_attributes: Vec<Symbol>,
 }
 
+fn make_disclosure_key(env: &Env, presentation_id: &Bytes) -> Bytes {
+    let prefix = Bytes::from_slice(env, b"disclosure:");
+    let mut key = prefix;
+    key.append(presentation_id.clone());
+    key
+}
+
+fn make_fulfillment_key(env: &Env, request_id: &Bytes) -> Bytes {
+    let prefix = Bytes::from_slice(env, b"fulfillment:");
+    let mut key = prefix;
+    key.append(request_id.clone());
+    key
+}
+
 #[contract]
 pub struct PresentationManager;
 
@@ -44,21 +58,17 @@ impl PresentationManager {
     ) -> Result<Bytes, PresentationError> {
         holder.require_auth();
 
-        // Validate presentation types
         for pt in presentation_type.iter() {
             if pt.len() > Self::MAX_PRESENTATION_TYPE_LENGTH {
                 return Err(PresentationError::InvalidFormat);
             }
         }
 
-        // Validate credentials list is not empty
         if credential_ids.is_empty() {
             return Err(PresentationError::InvalidCredential);
         }
 
-        // Generate presentation ID
         let presentation_id = Self::generate_presentation_id(&env, &holder);
-
         let now = env.ledger().timestamp();
 
         let presentation = VerifiablePresentation {
@@ -71,10 +81,8 @@ impl PresentationManager {
             expires_at,
         };
 
-        // Store presentation
         env.storage().persistent().set(&presentation_id, &presentation);
 
-        // Add to holder's presentations list
         let mut holder_presentations: Vec<Bytes> = env
             .storage()
             .persistent()
@@ -87,7 +95,7 @@ impl PresentationManager {
     }
 
     /// Create a verifiable presentation with selective disclosure using ZK proofs.
-    pub fn create_selective_disclosure_presentation(
+    pub fn create_sd_presentation(
         env: Env,
         holder: Address,
         presentation_type: Vec<Bytes>,
@@ -97,7 +105,6 @@ impl PresentationManager {
     ) -> Result<Bytes, PresentationError> {
         holder.require_auth();
 
-        // Validate presentation types
         for pt in presentation_type.iter() {
             if pt.len() > Self::MAX_PRESENTATION_TYPE_LENGTH {
                 return Err(PresentationError::InvalidFormat);
@@ -108,7 +115,6 @@ impl PresentationManager {
             return Err(PresentationError::InvalidCredential);
         }
 
-        // Collect credential IDs from disclosures
         let mut credential_ids: Vec<Bytes> = Vec::new(&env);
         for entry in disclosures.iter() {
             credential_ids.push_back(entry.credential_id.clone());
@@ -129,11 +135,9 @@ impl PresentationManager {
 
         env.storage().persistent().set(&presentation_id, &presentation);
 
-        // Store selective disclosure entries keyed by presentation_id
-        let disclosure_key = Symbol::new(&env, &format!("disclosure:{}", presentation_id.to_string()));
+        let disclosure_key = make_disclosure_key(&env, &presentation_id);
         env.storage().persistent().set(&disclosure_key, &disclosures);
 
-        // Add to holder's presentations list
         let mut holder_presentations: Vec<Bytes> = env
             .storage()
             .persistent()
@@ -150,7 +154,7 @@ impl PresentationManager {
         env: Env,
         presentation_id: Bytes,
     ) -> Vec<SelectiveDisclosureEntry> {
-        let disclosure_key = Symbol::new(&env, &format!("disclosure:{}", presentation_id.to_string()));
+        let disclosure_key = make_disclosure_key(&env, &presentation_id);
         env.storage()
             .persistent()
             .get(&disclosure_key)
@@ -168,14 +172,12 @@ impl PresentationManager {
             .get(&presentation_id)
             .ok_or(PresentationError::NotFound)?;
 
-        // Check expiration
         if let Some(expires_at) = presentation.expires_at {
             if env.ledger().timestamp() > expires_at {
                 return Ok(false);
             }
         }
 
-        // Verify proof if present (simplified)
         if let Some(proof) = presentation.proof {
             if proof.is_empty() {
                 return Err(PresentationError::InvalidProof);
@@ -259,7 +261,6 @@ impl PresentationManager {
 
         env.storage().persistent().set(&request_id, &request);
 
-        // Add to verifier's requests list
         let mut verifier_requests: Vec<Bytes> = env
             .storage()
             .persistent()
@@ -291,21 +292,18 @@ impl PresentationManager {
     ) -> Result<(), PresentationError> {
         responder.require_auth();
 
-        // Verify request exists
         let request: PresentationRequest = env
             .storage()
             .persistent()
             .get(&request_id)
             .ok_or(PresentationError::NotFound)?;
 
-        // Check request expiration
         if let Some(expires_at) = request.expires_at {
             if env.ledger().timestamp() > expires_at {
                 return Err(PresentationError::RequestExpired);
             }
         }
 
-        // Verify presentation exists
         let presentation: VerifiablePresentation = env
             .storage()
             .persistent()
@@ -316,8 +314,7 @@ impl PresentationManager {
             return Err(PresentationError::Unauthorized);
         }
 
-        // Check if already fulfilled
-        let fulfillment_key = Symbol::new(&env, &format!("fulfillment:{}", request_id.to_string()));
+        let fulfillment_key = make_fulfillment_key(&env, &request_id);
         if env.storage().persistent().has(&fulfillment_key) {
             return Err(PresentationError::RequestAlreadyFulfilled);
         }
@@ -330,10 +327,8 @@ impl PresentationManager {
             created: now,
         };
 
-        // Mark request as fulfilled
         env.storage().persistent().set(&fulfillment_key, &response);
 
-        // Add to responder's fulfilled requests
         let mut responder_responses: Vec<Bytes> = env
             .storage()
             .persistent()
@@ -350,7 +345,7 @@ impl PresentationManager {
         env: Env,
         request_id: Bytes,
     ) -> Option<PresentationResponse> {
-        let fulfillment_key = Symbol::new(&env, &format!("fulfillment:{}", request_id.to_string()));
+        let fulfillment_key = make_fulfillment_key(&env, &request_id);
         env.storage().persistent().get(&fulfillment_key)
     }
 

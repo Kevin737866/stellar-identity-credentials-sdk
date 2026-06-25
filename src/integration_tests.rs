@@ -69,7 +69,7 @@ fn new_address(env: &Env) -> Address {
     Address::generate(env)
 }
 
-fn make_vm_vec(env: &Env, vms: Vec<VerificationMethod>) -> Vec<VerificationMethod> {
+fn make_vm_vec(vms: Vec<VerificationMethod>) -> Vec<VerificationMethod> {
     vms
 }
 
@@ -106,7 +106,7 @@ fn test_full_kyc_flow() {
         env.clone(),
         controller.clone(),
         did.clone(),
-        make_vm_vec(&env, vec![&env, vm]),
+        make_vm_vec(vec![&env, vm]),
         services,
     )
     .is_ok());
@@ -408,7 +408,7 @@ fn test_multi_user_scenario() {
         env.clone(),
         user1.clone(),
         did1.clone(),
-        make_vm_vec(&env, vec![&env, make_vm(&env, "#key-1", key1)]),
+        make_vm_vec(vec![&env, make_vm(&env, "#key-1", key1)]),
         make_services(&env),
     )
     .is_ok());
@@ -417,7 +417,7 @@ fn test_multi_user_scenario() {
         env.clone(),
         user2.clone(),
         did2.clone(),
-        make_vm_vec(&env, vec![&env, make_vm(&env, "#key-1", key2)]),
+        make_vm_vec(vec![&env, make_vm(&env, "#key-1", key2)]),
         make_services(&env),
     )
     .is_ok());
@@ -426,7 +426,7 @@ fn test_multi_user_scenario() {
         env.clone(),
         user3.clone(),
         did3.clone(),
-        make_vm_vec(&env, vec![&env, make_vm(&env, "#key-1", key3)]),
+        make_vm_vec(vec![&env, make_vm(&env, "#key-1", key3)]),
         make_services(&env),
     )
     .is_ok());
@@ -673,7 +673,7 @@ fn test_verifiable_presentation_lifecycle() {
     };
     let disclosures = vec![&env, disclosure_entry];
 
-    let sd_pres_id = PresentationManager::create_selective_disclosure_presentation(
+    let sd_pres_id = PresentationManager::create_sd_presentation(
         env.clone(),
         holder.clone(),
         pres_type.clone(),
