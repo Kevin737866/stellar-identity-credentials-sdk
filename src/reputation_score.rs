@@ -385,6 +385,25 @@ impl ReputationScore {
         Ok(profile.score)
     }
 
+    /// Batch update transaction reputation for multiple addresses (#84).
+    /// More gas-efficient than individual calls: one ledger read/write per address.
+    pub fn batch_update_transaction_reputation(
+        env: Env,
+        updates: Vec<(Address, bool, i128)>,
+    ) -> Result<Vec<u32>, ReputationScoreError> {
+        let mut scores = Vec::new(&env);
+        for (address, success, amount) in updates.iter() {
+            let score = Self::update_transaction_reputation(
+                env.clone(),
+                address.clone(),
+                success,
+                amount,
+            )?;
+            scores.push_back(score);
+        }
+        Ok(scores)
+    }
+
     // ── Trust graph ───────────────────────────────────────────────────────────
 
     /// Record a directional trust attestation from `truster` → `subject`.

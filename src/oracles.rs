@@ -605,7 +605,7 @@ fn fuzz_corrupted_public_key_zeroes() {
 fn fuzz_max_length_did() {
     let env = make_env();
     let controller = Address::generate(&env);
-    let mut raw = vec![b'a'; 256];
+    let mut raw = alloc::vec![b'a'; 256];
     // Prefix must be "did:stellar:"
     let prefix = b"did:stellar:";
     for (i, b) in prefix.iter().enumerate() {

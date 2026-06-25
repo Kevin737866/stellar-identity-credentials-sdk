@@ -301,9 +301,27 @@ mod tests {
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
 
-        emit_audit_event(&env, alice.clone(), AuditEventType::CredentialIssued, None, Bytes::from_slice(&env, b"c1"));
-        emit_audit_event(&env, bob.clone(), AuditEventType::CredentialRevoked, None, Bytes::from_slice(&env, b"c2"));
-        emit_audit_event(&env, alice.clone(), AuditEventType::DIDCreated, None, Bytes::from_slice(&env, b"c3"));
+        emit_audit_event(
+            &env,
+            alice.clone(),
+            AuditEventType::CredentialIssued,
+            None,
+            Bytes::from_slice(&env, b"c1"),
+        );
+        emit_audit_event(
+            &env,
+            bob.clone(),
+            AuditEventType::CredentialRevoked,
+            None,
+            Bytes::from_slice(&env, b"c2"),
+        );
+        emit_audit_event(
+            &env,
+            alice.clone(),
+            AuditEventType::DIDCreated,
+            None,
+            Bytes::from_slice(&env, b"c3"),
+        );
 
         let alice_seqs = get_events_by_actor(&env, alice);
         assert_eq!(alice_seqs.len(), 2);
@@ -317,9 +335,27 @@ mod tests {
         let env = setup();
         let actor = Address::generate(&env);
 
-        emit_audit_event(&env, actor.clone(), AuditEventType::RoleGranted, None, Bytes::from_slice(&env, b"r1"));
-        emit_audit_event(&env, actor.clone(), AuditEventType::RoleRevoked, None, Bytes::from_slice(&env, b"r2"));
-        emit_audit_event(&env, actor.clone(), AuditEventType::RoleGranted, None, Bytes::from_slice(&env, b"r3"));
+        emit_audit_event(
+            &env,
+            actor.clone(),
+            AuditEventType::RoleGranted,
+            None,
+            Bytes::from_slice(&env, b"r1"),
+        );
+        emit_audit_event(
+            &env,
+            actor.clone(),
+            AuditEventType::RoleRevoked,
+            None,
+            Bytes::from_slice(&env, b"r2"),
+        );
+        emit_audit_event(
+            &env,
+            actor.clone(),
+            AuditEventType::RoleGranted,
+            None,
+            Bytes::from_slice(&env, b"r3"),
+        );
 
         let granted = get_events_by_type(&env, AuditEventType::RoleGranted);
         assert_eq!(granted.len(), 2);
@@ -334,7 +370,13 @@ mod tests {
         let actor = Address::generate(&env);
 
         for _ in 0..15 {
-            emit_audit_event(&env, actor.clone(), AuditEventType::AdminAction, None, Bytes::from_slice(&env, b"x"));
+            emit_audit_event(
+                &env,
+                actor.clone(),
+                AuditEventType::AdminAction,
+                None,
+                Bytes::from_slice(&env, b"x"),
+            );
         }
 
         let page0 = get_audit_history(&env, 0, 10);
