@@ -13,6 +13,8 @@ pub mod gas_benchmark;
 mod integration_tests;
 #[cfg(test)]
 mod fuzz_test_script;
+#[cfg(test)]
+mod oracles;
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec};
 
