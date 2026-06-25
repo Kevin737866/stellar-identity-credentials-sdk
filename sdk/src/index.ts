@@ -5,6 +5,24 @@ declare var require: (id: string) => any;
 
 import { Keypair } from 'stellar-sdk';
 
+export const DEFAULT_CONFIGS = {
+  testnet: {
+    network: 'testnet' as const,
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    contracts: {
+      didRegistry: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822a',
+      credentialIssuer: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822b',
+      reputationScore: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822c',
+      zkAttestation: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822d',
+      complianceFilter: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822e',
+    },
+  },
+};
+
+export const UTILS = {
+  generateKeypair: () => Keypair.random(),
+};
+
 export { DIDClient } from './didClient';
 export { CredentialClient } from './credentialClient';
 export { ReputationClient } from './reputation';
@@ -42,6 +60,16 @@ export {
   isConfigurationError,
   isNetworkError,
 } from './errors';
+
+export {
+  WalletConnector,
+  FreighterConnector,
+  XBullConnector,
+  AlbedoConnector,
+  connectWallet,
+  detectInstalledWallets,
+} from './walletConnector';
+export type { WalletType, WalletInfo } from './walletConnector';
 
 export { DIDResolver } from './didResolver';
 export type {

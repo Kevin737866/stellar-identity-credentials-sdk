@@ -9,7 +9,8 @@
     "dev": "tsc --watch",
     "test": "jest",
     "lint": "eslint src/**/*.ts",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "example:cli-demo": "ts-node --script-mode examples/cli-demo.ts"
   },
   "keywords": [
     "stellar",
@@ -22,6 +23,7 @@
   "author": "Stellar Identity Team",
   "license": "Apache-2.0",
   "dependencies": {
+    "@albedo-link/intent": "^0.13.0",
     "@types/snarkjs": "^0.7.9",
     "axios": "^1.6.0",
     "bs58": "^5.0.0",

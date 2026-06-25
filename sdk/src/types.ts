@@ -1,4 +1,13 @@
+export enum CircuitType {
+  RangeProof = 'RangeProof',
+  SetMembership = 'SetMembership',
+  CredentialOwnership = 'CredentialOwnership',
+  CompositeProof = 'CompositeProof',
+  EqualityProof = 'EqualityProof',
+}
+
 export interface DIDDocument {
+
   id: string;
   controller: string;
   verificationMethod: VerificationMethod[];
@@ -140,14 +149,6 @@ export interface ZKCircuit {
   active: boolean;
   circuitType: CircuitType;
   supportedAttributes: string[];
-}
-
-export enum CircuitType {
-  RangeProof = 'RangeProof',
-  SetMembership = 'SetMembership',
-  CredentialOwnership = 'CredentialOwnership',
-  CompositeProof = 'CompositeProof',
-  EqualityProof = 'EqualityProof',
 }
 
 export interface ZKAttestation {
