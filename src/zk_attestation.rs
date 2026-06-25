@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Map, Symbol, Vec,
 };
 
 use crate::{clamp_page_size, PaginatedCircuits};
@@ -99,7 +99,7 @@ pub struct NullifierRecord {
 }
 
 #[contract]
-pub struct ZKAttestationContract;
+pub struct ZKAttestation;
 
 #[contractimpl]
 impl ZKAttestation {
@@ -305,11 +305,7 @@ impl ZKAttestation {
     }
 
     /// Paginated list of registered circuits (#56).
-    pub fn get_registered_circuits(
-        env: Env,
-        page: u32,
-        page_size: u32,
-    ) -> PaginatedCircuits {
+    pub fn get_registered_circuits(env: Env, page: u32, page_size: u32) -> PaginatedCircuits {
         let all: Vec<Symbol> = env
             .storage()
             .persistent()
@@ -403,7 +399,10 @@ impl ZKAttestation {
         let mut id = Bytes::from_slice(env, b"zk:");
         id.append(&Bytes::from_slice(env, timestamp.to_string().as_bytes()));
         id.append(&Bytes::from_slice(env, b":"));
-        id.append(&Bytes::from_slice(env, env.ledger().sequence().to_string().as_bytes()));
+        id.append(&Bytes::from_slice(
+            env,
+            env.ledger().sequence().to_string().as_bytes(),
+        ));
         id
     }
 
@@ -423,15 +422,11 @@ impl ZKAttestation {
     }
 
     fn hash_verifying_key(env: &Env, verifier_key: &Bytes) -> Bytes {
-        let hash = env.crypto().sha256(verifier_key);
-        let hash_bytes: BytesN<32> = hash.into();
-        Bytes::from_slice(env, hash_bytes.to_array().as_slice())
+        env.crypto().sha256(verifier_key).into()
     }
 
     fn hash_proof(env: &Env, proof_bytes: &Bytes) -> Bytes {
-        let hash = env.crypto().sha256(proof_bytes);
-        let hash_bytes: BytesN<32> = hash.into();
-        Bytes::from_slice(env, hash_bytes.to_array().as_slice())
+        env.crypto().sha256(proof_bytes).into()
     }
 
     fn compute_nullifier(
@@ -442,8 +437,6 @@ impl ZKAttestation {
     ) -> Bytes {
         let mut data = credential_id.clone();
         data.append(context);
-        let hash = env.crypto().sha256(&data);
-        let hash_bytes: BytesN<32> = hash.into();
-        Bytes::from_slice(env, hash_bytes.to_array().as_slice())
+        env.crypto().sha256(&data).into()
     }
 }
