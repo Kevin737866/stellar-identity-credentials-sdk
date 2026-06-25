@@ -1,0 +1,45 @@
+{
+  "entryPoints": [
+    "sdk/src/index.ts",
+    "sdk/src/types.ts",
+    "sdk/src/errors.ts",
+    "sdk/src/didClient.ts",
+    "sdk/src/didResolver.ts",
+    "sdk/src/credentialClient.ts",
+    "sdk/src/reputation.ts",
+    "sdk/src/zkProofs.ts",
+    "sdk/src/compliance.ts",
+    "sdk/src/walletConnector.ts",
+    "sdk/src/cacheManager.ts",
+    "sdk/src/dataMinimization.ts",
+    "sdk/src/eventSubscriber.ts",
+    "sdk/src/logger.ts"
+  ],
+  "out": "docs/api",
+  "includeVersion": true,
+  "readme": "README.md",
+  "name": "Stellar Identity SDK",
+  "excludePrivate": true,
+  "excludeProtected": false,
+  "excludeExternals": true,
+  "plugin": [],
+  "categorizeByGroup": true,
+  "categoryOrder": ["Client", "Types", "Errors", "Utilities", "*"],
+  "sort": ["source-order"],
+  "visibilityFilters": {
+    "protected": false,
+    "private": false,
+    "inherited": true,
+    "external": false
+  },
+  "navigation": {
+    "includeCategories": true,
+    "includeGroups": true
+  },
+  "highlightLanguages": ["typescript", "rust", "bash", "json"],
+  "githubPages": true,
+  "cleanOutputDir": true,
+  "compilerOptions": {
+    "skipLibCheck": true
+  }
+}

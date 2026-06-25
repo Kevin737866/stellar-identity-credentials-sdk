@@ -13,11 +13,14 @@ pub mod gas_benchmark;
 pub mod credential_offer;
 pub mod did_recovery;
 pub mod reputation_oracle;
+pub mod dif_interop;
 
 #[cfg(test)]
 mod integration_tests;
 #[cfg(test)]
 mod fuzz_test_script;
+#[cfg(test)]
+mod oracles;
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec};
 

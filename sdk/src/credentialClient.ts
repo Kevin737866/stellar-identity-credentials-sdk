@@ -21,6 +21,12 @@ import { DIDClient } from './didClient';
 import { Logger } from './logger';
 import { DataMinimizationEngine, MinimalDisclosurePolicy } from './dataMinimization';
 
+/**
+ * Client for issuing, verifying, and managing verifiable credentials on Stellar.
+ * Supports W3C VC 2.0 format, KYC credentials, education credentials,
+ * presentations, and data minimization policies.
+ * @category Client
+ */
 export class CredentialClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
@@ -45,6 +51,13 @@ export class CredentialClient {
     }
   }
 
+  /**
+   * Issue a new verifiable credential to a subject.
+   * @param issuerKeypair - The keypair of the credential issuer
+   * @param options - Credential details including subject, type, and data
+   * @param txOptions - Optional transaction parameters
+   * @returns The credential ID
+   */
   async issueCredential(
     issuerKeypair: Keypair,
     options: IssueCredentialOptions,
@@ -92,6 +105,11 @@ export class CredentialClient {
     }
   }
 
+  /**
+   * Verify the validity of a credential.
+   * @param credentialId - The credential identifier
+   * @returns Verification result with validity, revocation, and expiration status
+   */
   async verifyCredential(credentialId: string): Promise<CredentialVerificationResult> {
     this.logger.debug('verifyCredential called', { credentialId });
     try {
@@ -212,6 +230,16 @@ export class CredentialClient {
     }
   }
 
+  /**
+   * Create a verifiable presentation from one or more credentials.
+   * Optionally applies data minimization policies for selective disclosure.
+   * @param credentials - The credentials to include in the presentation
+   * @param holderKeypair - The holder's keypair for signing
+   * @param domain - Optional domain for the proof
+   * @param challenge - Optional challenge for the proof
+   * @param policy - Optional minimal disclosure policy
+   * @returns A verifiable presentation object
+   */
   async createPresentation(
     credentials: VerifiableCredential[],
     holderKeypair: Keypair,
