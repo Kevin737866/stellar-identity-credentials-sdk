@@ -26,6 +26,12 @@ import {
   mapContractError,
 } from './errors';
 
+/**
+ * Client for managing decentralized identifiers (DIDs) on Stellar.
+ * Provides methods for creating, resolving, updating, and deactivating DIDs
+ * using the W3C did:stellar method via Soroban smart contracts.
+ * @category Client
+ */
 export class DIDClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
@@ -43,6 +49,13 @@ export class DIDClient {
     }
   }
 
+  /**
+   * Create a new DID on the Stellar network.
+   * @param keypair - The keypair of the DID controller
+   * @param options - DID creation options including verification methods and services
+   * @param txOptions - Optional transaction parameters (fee, timeout)
+   * @returns The generated DID string (e.g., did:stellar:G...)
+   */
   async createDID(
     keypair: Keypair,
     options: CreateDIDOptions,
@@ -104,6 +117,11 @@ export class DIDClient {
     }
   }
 
+  /**
+   * Resolve a DID to its DID document via on-chain contract call.
+   * @param did - The DID to resolve (e.g., did:stellar:G...)
+   * @returns Resolution result containing the DID document and metadata
+   */
   async resolveDID(did: string): Promise<DIDResolutionResult> {
     try {
       const retval = await this.simulateRead('resolve_did', [
@@ -175,6 +193,11 @@ export class DIDClient {
     }
   }
 
+  /**
+   * Deactivate a DID, preventing further use.
+   * @param keypair - The keypair of the DID controller
+   * @param txOptions - Optional transaction parameters
+   */
   async deactivateDID(keypair: Keypair, txOptions?: TransactionOptions): Promise<void> {
     try {
       const address = keypair.publicKey();

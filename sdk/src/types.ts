@@ -1,3 +1,7 @@
+/**
+ * Enumeration of supported zero-knowledge proof circuit types.
+ * @category Types
+ */
 export enum CircuitType {
   RangeProof = 'RangeProof',
   SetMembership = 'SetMembership',
@@ -6,6 +10,11 @@ export enum CircuitType {
   EqualityProof = 'EqualityProof',
 }
 
+/**
+ * W3C-compliant Decentralized Identifier (DID) document.
+ * Contains the DID's verification methods, services, and metadata.
+ * @category Types
+ */
 export interface DIDDocument {
 
   id: string;
@@ -30,6 +39,11 @@ export interface Service {
   endpoint: string;
 }
 
+/**
+ * W3C Verifiable Credential (VC) 2.0 data model.
+ * Represents a cryptographically signed credential issued by an authority.
+ * @category Types
+ */
 export interface VerifiableCredential {
   id: string;
   issuer: string;
@@ -122,6 +136,11 @@ export interface ReputationTierProof {
   generatedAt: number;
 }
 
+/**
+ * Zero-knowledge proof record stored on-chain.
+ * Contains proof data, circuit info, and verification metadata.
+ * @category Types
+ */
 export interface ZKProof {
   proofId: string;
   circuitId: string;
@@ -168,6 +187,11 @@ export interface NullifierRecord {
   proofId: string;
 }
 
+/**
+ * Compliance check record for a Stellar address.
+ * Tracks sanctions screening results and risk assessment.
+ * @category Types
+ */
 export interface ComplianceRecord {
   address: string;
   riskScore: number;
@@ -187,6 +211,25 @@ export interface SanctionsList {
   entries: string[];
 }
 
+/**
+ * Main configuration object for the Stellar Identity SDK.
+ * Specifies network, contract addresses, and RPC endpoints.
+ * @category Types
+ * @example
+ * ```typescript
+ * const config: StellarIdentityConfig = {
+ *   network: 'testnet',
+ *   contracts: {
+ *     didRegistry: '0x...',
+ *     credentialIssuer: '0x...',
+ *     reputationScore: '0x...',
+ *     zkAttestation: '0x...',
+ *     complianceFilter: '0x...'
+ *   },
+ *   rpcUrl: 'https://soroban-testnet.stellar.org'
+ * };
+ * ```
+ */
 export interface StellarIdentityConfig {
   network: 'mainnet' | 'testnet' | 'futurenet';
   contracts: {
