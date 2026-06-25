@@ -502,9 +502,10 @@ impl CredentialIssuer {
             .get(&CredKey::DelegatorAuths(delegator.clone()))
             .unwrap_or_else(|| Vec::new(&env));
         delegator_auths.push_back(auth_id.clone());
-        env.storage()
-            .persistent()
-            .set(&CredKey::DelegatorAuths(delegator.clone()), &delegator_auths);
+        env.storage().persistent().set(
+            &CredKey::DelegatorAuths(delegator.clone()),
+            &delegator_auths,
+        );
 
         env.events().publish(
             (Symbol::new(&env, "DelegationAuthorized"),),

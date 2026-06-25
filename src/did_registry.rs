@@ -163,7 +163,9 @@ impl DIDRegistry {
         }
 
         doc.updated = env.ledger().timestamp();
-        env.storage().persistent().set(&DidKey::Doc(did.clone()), &doc);
+        env.storage()
+            .persistent()
+            .set(&DidKey::Doc(did.clone()), &doc);
 
         env.events()
             .publish((Symbol::new(&env, "DIDUpdated"),), (did, controller));
@@ -192,7 +194,9 @@ impl DIDRegistry {
 
         doc.deactivated = true;
         doc.updated = env.ledger().timestamp();
-        env.storage().persistent().set(&DidKey::Doc(did.clone()), &doc);
+        env.storage()
+            .persistent()
+            .set(&DidKey::Doc(did.clone()), &doc);
 
         env.events()
             .publish((Symbol::new(&env, "DIDDeactivated"),), (did, controller));

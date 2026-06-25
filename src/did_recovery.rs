@@ -313,9 +313,10 @@ impl DIDRecovery {
             .ok_or(DIDRecoveryError::NotFound)?;
 
         record.active = false;
-        env.storage()
-            .persistent()
-            .set(&RecoveryKey::Guardian(did.clone(), guardian.clone()), &record);
+        env.storage().persistent().set(
+            &RecoveryKey::Guardian(did.clone(), guardian.clone()),
+            &record,
+        );
 
         if config.total_guardians > 0 {
             config.total_guardians -= 1;
