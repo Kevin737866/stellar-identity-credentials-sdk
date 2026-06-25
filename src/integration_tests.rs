@@ -2,21 +2,23 @@
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
-    vec, Address, Bytes, BytesN, Env, Symbol, Vec,
+    vec, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
 };
 
 use crate::{
     compliance_filter::ComplianceFilter,
     credential_issuer::CredentialIssuer,
+    credential_schema::{CredentialSchema, FieldValidation},
     did_registry::{DIDRegistry, DIDRegistryError},
     reputation_score::{ReputationScore, ReputationScoreError, ReputationData, TrustAttestation},
     schema_registry::{CredentialSchemaRegistry, SchemaRegistryError},
     zk_attestation::{CircuitType, ZKAttestation, ZKAttestationError},
-    DIDDocument, Service, VerificationMethod, VerifiableCredential,
+    DIDDocument, Service, VerifiableCredential, VerificationMethod,
 };
 
 fn setup_env() -> Env {
     let env = Env::default();
+    env.mock_all_auths();
     env.ledger().set(LedgerInfo {
         timestamp: 1_700_000_000,
         protocol_version: 22,
@@ -39,13 +41,27 @@ fn make_vm(env: &Env, id: &str, key: &[u8; 32]) -> VerificationMethod {
     }
 }
 
-fn make_did_bytes(env: &Env, addr: &Address) -> Bytes {
-    let s = format!("did:stellar:{}", addr.to_string());
-    Bytes::from_slice(env, s.as_bytes())
+use core::sync::atomic::{AtomicU32, Ordering};
+static DID_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+fn make_did_bytes(env: &Env, _addr: &Address) -> Bytes {
+    let n = DID_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut did = Bytes::from_slice(env, b"did:stellar:GABC");
+    did.append(&Bytes::from_slice(env, n.to_string().as_bytes()));
+    did
 }
 
-fn make_credential_type(env: &Env, s: &str) -> Vec<Bytes> {
-    vec![env, Bytes::from_slice(env, s.as_bytes())]
+fn make_claims(env: &Env) -> Map<Bytes, Bytes> {
+    let mut claims = Map::new(env);
+    claims.set(
+        Bytes::from_slice(env, b"name"),
+        Bytes::from_slice(env, b"Alice"),
+    );
+    claims.set(
+        Bytes::from_slice(env, b"dob"),
+        Bytes::from_slice(env, b"1990-01-01"),
+    );
+    claims
 }
 
 fn new_address(env: &Env) -> Address {
@@ -68,15 +84,15 @@ fn make_services(env: &Env) -> Vec<Service> {
 }
 
 // =========================================================================
-// Test 1: Full KYC flow - create DID -> authorize issuer ->
-//         issue credential -> verify -> revoke -> verify revoked
+// Test 1: Full KYC flow
 // =========================================================================
 
 #[test]
 fn test_full_kyc_flow() {
     let env = setup_env();
-    let key = &[1u8; 32];
+    env.mock_all_auths();
 
+    let key = &[1u8; 32];
     let controller = new_address(&env);
     let issuer = new_address(&env);
     let subject = new_address(&env);
@@ -98,25 +114,22 @@ fn test_full_kyc_flow() {
     assert!(resolved.is_ok());
     assert!(!resolved.unwrap().deactivated);
 
-    let credential_type = make_credential_type(&env, "KYCVerification");
-    let credential_data = Bytes::from_slice(&env, b"{\"name\":\"Alice\",\"dob\":\"1990-01-01\"}");
-    let proof = Bytes::from_slice(&env, b"valid_signature");
+    // Register issuer first
+    CredentialIssuer::register_issuer(env.clone(), issuer.clone()).unwrap();
 
     let cred_id = CredentialIssuer::issue_credential(
         env.clone(),
         issuer.clone(),
         subject.clone(),
-        credential_type,
-        credential_data,
-        None,
-        proof,
+        Bytes::from_slice(&env, b"KYCCredential"),
+        make_claims(&env),
     );
     assert!(cred_id.is_ok());
     let cred_id = cred_id.unwrap();
 
-    let is_valid = CredentialIssuer::verify_credential(env.clone(), cred_id.clone());
-    assert!(is_valid.is_ok());
-    assert!(is_valid.unwrap());
+    let verification = CredentialIssuer::verify_credential(env.clone(), cred_id.clone());
+    assert!(verification.is_ok());
+    assert!(verification.unwrap().valid);
 
     let revoked = CredentialIssuer::revoke_credential(
         env.clone(),
@@ -126,9 +139,9 @@ fn test_full_kyc_flow() {
     );
     assert!(revoked.is_ok());
 
-    let is_valid_after_revoke = CredentialIssuer::verify_credential(env.clone(), cred_id.clone());
-    assert!(is_valid_after_revoke.is_ok());
-    assert!(!is_valid_after_revoke.unwrap());
+    let verification_after = CredentialIssuer::verify_credential(env.clone(), cred_id.clone());
+    assert!(verification_after.is_ok());
+    assert!(!verification_after.unwrap().valid);
 
     let status = CredentialIssuer::get_credential_status(env.clone(), cred_id.clone());
     assert_eq!(status, Bytes::from_slice(&env, b"revoked"));
@@ -180,7 +193,7 @@ fn test_reputation_evolution() {
 }
 
 // =========================================================================
-// Test 3: Compliance enforcement - sanction address -> block issuance
+// Test 3: Compliance enforcement
 // =========================================================================
 
 #[test]
@@ -188,7 +201,6 @@ fn test_compliance_enforcement() {
     let env = setup_env();
     let admin = new_address(&env);
     let sanctioned = new_address(&env);
-    let issuer = new_address(&env);
 
     let source = Bytes::from_slice(&env, b"OFAC_SDN");
     let hash = BytesN::from_array(&env, &[2u8; 32]);
@@ -221,9 +233,52 @@ fn test_compliance_enforcement() {
     );
 }
 
+#[test]
+fn test_sanctions_list_admin_management() {
+    let env = setup_env();
+    let admin = new_address(&env);
+    let offender = new_address(&env);
+    let source = Bytes::from_slice(&env, b"UN_LIST");
+    let hash = BytesN::from_array(&env, &[3u8; 32]);
+
+    ComplianceFilter::update_sanctions_list(
+        env.clone(),
+        admin.clone(),
+        source.clone(),
+        hash,
+        0,
+    )
+    .unwrap();
+
+    assert!(!ComplianceFilter::is_sanctioned(env.clone(), offender.clone()));
+
+    ComplianceFilter::add_to_sanctions_list(
+        env.clone(),
+        admin.clone(),
+        source.clone(),
+        offender.clone(),
+        Bytes::from_slice(&env, b"terror financing"),
+        Bytes::from_slice(&env, b"US"),
+    )
+    .unwrap();
+
+    assert!(ComplianceFilter::is_sanctioned(env.clone(), offender.clone()));
+    let screening = ComplianceFilter::screen_address(env.clone(), offender.clone());
+    assert!(screening.is_err());
+
+    ComplianceFilter::remove_from_sanctions_list(
+        env.clone(),
+        admin.clone(),
+        source.clone(),
+        offender.clone(),
+    )
+    .unwrap();
+
+    assert!(!ComplianceFilter::is_sanctioned(env.clone(), offender.clone()));
+}
+
 // =========================================================================
-// Test 4: ZK proof lifecycle - register circuit -> create proof ->
-//         verify proof
+// Test 4: ZK proof lifecycle
 // =========================================================================
 
 #[test]
@@ -239,7 +294,7 @@ fn test_zk_proof_lifecycle() {
     let circuit_type = CircuitType::RangeProof;
     let supported_attributes = vec![&env, Symbol::new(&env, "age_commitment")];
 
-    let register_result = ZKAttestation::register_circuit(
+    let register_result = ZKAttestationContract::register_circuit(
         env.clone(),
         circuit_id.clone(),
         name,
@@ -266,7 +321,7 @@ fn test_zk_proof_lifecycle() {
         Bytes::from_slice(&env, b"age_verification"),
     );
 
-    let proof_id = ZKAttestation::submit_proof(
+    let proof_id = ZKAttestationContract::submit_proof(
         env.clone(),
         circuit_id.clone(),
         public_inputs,
@@ -279,22 +334,21 @@ fn test_zk_proof_lifecycle() {
     assert!(proof_id.is_ok());
     let proof_id = proof_id.unwrap();
 
-    let verify_result = ZKAttestation::verify_proof(env.clone(), proof_id.clone());
+    let verify_result = ZKAttestationContract::verify_proof(env.clone(), proof_id.clone());
     assert!(verify_result.is_ok());
     assert!(verify_result.unwrap());
 
-    let retrieved = ZKAttestation::get_proof(env.clone(), proof_id.clone());
+    let retrieved = ZKAttestationContract::get_proof(env.clone(), proof_id.clone());
     assert!(retrieved.is_ok());
 
-    let circuits = ZKAttestation::get_active_circuits(env.clone());
+    let circuits = ZKAttestationContract::get_active_circuits(env.clone());
     assert!(circuits.len() >= 1);
 }
 
 // =========================================================================
-// Test 5: Admin operations - admin transfer, renounce admin, restrictions
+// Test 5: Admin operations
 // =========================================================================
 
-// Simulates admin operations via ComplianceFilter's admin-gated functions
 #[test]
 fn test_admin_operations() {
     let env = setup_env();
@@ -329,13 +383,14 @@ fn test_admin_operations() {
 }
 
 // =========================================================================
-// Test 6: Multi-user scenario with 3+ users and cross-user credential
-//         verification
+// Test 6: Multi-user scenario
 // =========================================================================
 
 #[test]
 fn test_multi_user_scenario() {
     let env = setup_env();
+    env.mock_all_auths();
+
     let key1 = &[1u8; 32];
     let key2 = &[2u8; 32];
     let key3 = &[3u8; 32];
@@ -385,17 +440,15 @@ fn test_multi_user_scenario() {
         );
     }
 
-    let cred_data = Bytes::from_slice(&env, b"{\"role\":\"verified\"}");
-    let proof = Bytes::from_slice(&env, b"multi_sig");
+    // Register issuer, then issue credential
+    CredentialIssuer::register_issuer(env.clone(), user1.clone()).unwrap();
 
     let cred_id = CredentialIssuer::issue_credential(
         env.clone(),
         user1.clone(),
         user2.clone(),
-        make_credential_type(&env, "VerifiableCredential"),
-        cred_data,
-        None,
-        proof,
+        Bytes::from_slice(&env, b"KYCCredential"),
+        make_claims(&env),
     );
     assert!(cred_id.is_ok());
     let cred_id = cred_id.unwrap();
@@ -407,16 +460,16 @@ fn test_multi_user_scenario() {
     let user1_creds = CredentialIssuer::get_issuer_credentials(env.clone(), user1.clone());
     assert_eq!(user1_creds.len(), 1);
 
-    let is_valid = CredentialIssuer::verify_credential(env.clone(), cred_id);
-    assert!(is_valid.is_ok());
-    assert!(is_valid.unwrap());
+    let verification = CredentialIssuer::verify_credential(env.clone(), cred_id);
+    assert!(verification.is_ok());
+    assert!(verification.unwrap().valid);
 
     let user3_score = ReputationScore::get_reputation_score(env.clone(), user3.clone());
     assert!(user3_score.is_ok());
 }
 
 // =========================================================================
-// Test 7: Deterministic test that can run in parallel
+// Test 7: Deterministic test
 // =========================================================================
 
 #[test]

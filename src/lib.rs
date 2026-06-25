@@ -1,19 +1,35 @@
+extern crate alloc;
+
 pub mod did_registry;
 pub mod credential_issuer;
 pub mod schema_registry;
 pub mod reputation_score;
 pub mod zk_attestation;
 pub mod compliance_filter;
+pub mod storage_optimization;
+pub mod gas_benchmark;
+
+#[cfg(test)]
+mod integration_tests;
+#[cfg(test)]
+mod fuzz_test_script;
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec};
-use core::fmt::Write;
 
 pub use did_registry::DIDRegistry;
+pub use did_registry::MultiSigConfig;
+pub use did_registry::Signer;
+pub use did_registry::PendingMultiSigOperation;
 pub use credential_issuer::CredentialIssuer;
 pub use schema_registry::CredentialSchemaRegistry;
 pub use reputation_score::ReputationScore;
 pub use zk_attestation::ZKAttestation;
+pub use zk_attestation::ZKAttestationRecord;
 pub use compliance_filter::ComplianceFilter;
+
+// ---------------------------------------------------------------------------
+// Shared types
+// ---------------------------------------------------------------------------
 
 #[contracttype]
 #[derive(Clone)]
@@ -63,13 +79,79 @@ pub struct VerifiableCredential {
     pub issuer: Address,
     pub subject: Address,
     pub type_: Vec<Bytes>,
-    pub claims: Bytes,
+    pub credential_data: Bytes,
     pub issuance_date: u64,
     pub expiration_date: Option<u64>,
-    pub parent_credential: Option<Bytes>,
     pub schema_id: Option<Bytes>,
     pub revocation: Option<Bytes>,
     pub proof: Option<Bytes>,
+}
+
+// ---------------------------------------------------------------------------
+// Pagination (#56)
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PaginatedCredentials {
+    pub data: Vec<Bytes>,
+    pub page: u32,
+    pub total: u32,
+    pub has_more: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PaginatedAddresses {
+    pub data: Vec<Address>,
+    pub page: u32,
+    pub total: u32,
+    pub has_more: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PaginatedCircuits {
+    pub data: Vec<Symbol>,
+    pub page: u32,
+    pub total: u32,
+    pub has_more: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PaginatedReputationHistory {
+    pub data: Vec<reputation_score::ReputationHistoryEntry>,
+    pub page: u32,
+    pub total: u32,
+    pub has_more: bool,
+}
+
+pub const DEFAULT_PAGE_SIZE: u32 = 10;
+pub const MAX_PAGE_SIZE: u32 = 50;
+
+pub fn clamp_page_size(page_size: u32) -> u32 {
+    if page_size == 0 {
+        DEFAULT_PAGE_SIZE
+    } else if page_size > MAX_PAGE_SIZE {
+        MAX_PAGE_SIZE
+    } else {
+        page_size
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Storage key namespacing (#58) — avoids collisions across contracts
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+#[derive(Clone)]
+pub enum StorageKey {
+    DidRegistry,
+    CredentialIssuer,
+    ReputationScore,
+    ZkAttestation,
+    ComplianceFilter,
 }
 
 #[contract]
@@ -95,11 +177,11 @@ impl StellarIdentity {
     }
 
     pub fn get_did_registry_address(env: Env) -> Option<Address> {
-        env.storage().instance().get(&Symbol::new(&env, "did_registry"))
+        env.storage().instance().get(&StorageKey::DidRegistry)
     }
 
     pub fn get_credential_issuer_address(env: Env) -> Option<Address> {
-        env.storage().instance().get(&Symbol::new(&env, "credential_issuer"))
+        env.storage().instance().get(&StorageKey::CredentialIssuer)
     }
 
     pub fn get_schema_registry_address(env: Env) -> Option<Address> {
@@ -107,14 +189,14 @@ impl StellarIdentity {
     }
 
     pub fn get_reputation_score_address(env: Env) -> Option<Address> {
-        env.storage().instance().get(&Symbol::new(&env, "reputation_score"))
+        env.storage().instance().get(&StorageKey::ReputationScore)
     }
 
     pub fn get_zk_attestation_address(env: Env) -> Option<Address> {
-        env.storage().instance().get(&Symbol::new(&env, "zk_attestation"))
+        env.storage().instance().get(&StorageKey::ZkAttestation)
     }
 
     pub fn get_compliance_filter_address(env: Env) -> Option<Address> {
-        env.storage().instance().get(&Symbol::new(&env, "compliance_filter"))
+        env.storage().instance().get(&StorageKey::ComplianceFilter)
     }
 }

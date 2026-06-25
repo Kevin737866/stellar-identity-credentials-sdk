@@ -1,22 +1,21 @@
-//! Fuzz testing script for contract input validation.
-//!
-//! Run with: cargo test --test fuzz_test_script --release
-//! or include this file and run: cargo test
-
 #![cfg(test)]
 
-use soroban_sdk::{vec, Address, Bytes, BytesN, Env, Symbol, Vec};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger, LedgerInfo},
+    vec, Address, Bytes, BytesN, Env, Symbol, Vec,
+};
 use crate::{
     did_registry::{DIDRegistry, DIDRegistryError},
     credential_issuer::{CredentialIssuer, CredentialIssuerError},
-    reputation_score::ReputationScore,
-    zk_attestation::{CircuitType, ZKAttestation},
-    compliance_filter::ComplianceFilter,
+    reputation_score::{ReputationScore, ReputationScoreError},
+    zk_attestation::{CircuitType, ZKAttestation, ZKAttestationError},
+    compliance_filter::{ComplianceFilter, ComplianceFilterError},
 };
 
 fn setup_env() -> Env {
-    let mut env = Env::default();
-    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set(LedgerInfo {
         timestamp: 1_700_000_000,
         protocol_version: 22,
         sequence_number: 1000,
@@ -33,12 +32,11 @@ fn generate_address(env: &Env) -> Address {
     Address::generate(env)
 }
 
-// Test: very long DID string should not panic
 #[test]
 fn fuzz_long_did_string() {
     let env = setup_env();
     let controller = generate_address(&env);
-    let long_bytes: Vec<u8> = (0..10000).map(|_| b'a').collect();
+    let long_bytes = [b'a'; 10000];
     let long_did = Bytes::from_slice(&env, &long_bytes);
     let vm = crate::VerificationMethod {
         id: Bytes::from_slice(&env, b"#key-1"),
@@ -58,41 +56,18 @@ fn fuzz_long_did_string() {
     assert_eq!(result.err().unwrap(), DIDRegistryError::InvalidFormat);
 }
 
-// Test: empty bytes for credential data
 #[test]
-fn fuzz_empty_credential_data() {
+fn fuzz_empty_credential_claims() {
     let env = setup_env();
     let issuer = generate_address(&env);
     let subject = generate_address(&env);
-    let empty_data = Bytes::new(&env);
-    let proof = Bytes::from_slice(&env, b"proof");
 
     let result = CredentialIssuer::issue_credential(
         env.clone(),
-        issuer.clone(),
-        subject.clone(),
+        issuer,
+        subject,
         vec![&env, Bytes::from_slice(&env, b"Test")],
-        empty_data,
-        None,
-        proof,
-    );
-    assert!(result.is_err());
-    assert_eq!(result.err().unwrap(), CredentialIssuerError::InvalidCredential);
-}
-
-// Test: empty credential type
-#[test]
-fn fuzz_empty_credential_type() {
-    let env = setup_env();
-    let issuer = generate_address(&env);
-    let subject = generate_address(&env);
-
-    let result = CredentialIssuer::issue_credential(
-        env.clone(),
-        issuer.clone(),
-        subject.clone(),
-        Vec::new(&env),
-        Bytes::from_slice(&env, b"data"),
+        Bytes::new(&env),
         None,
         Bytes::from_slice(&env, b"proof"),
     );
@@ -100,7 +75,27 @@ fn fuzz_empty_credential_type() {
     assert_eq!(result.err().unwrap(), CredentialIssuerError::InvalidCredential);
 }
 
-// Test: oversized integer values for reputation score
+#[test]
+fn fuzz_invalid_credential_type() {
+    let env = setup_env();
+    let issuer = generate_address(&env);
+    let subject = generate_address(&env);
+
+    CredentialIssuer::register_issuer(env.clone(), issuer.clone()).unwrap();
+
+    let result = CredentialIssuer::issue_credential(
+        env.clone(),
+        issuer,
+        subject,
+        Vec::new(&env),
+        Bytes::from_slice(&env, b"data"),
+        None,
+        Bytes::from_slice(&env, b"proof"),
+    );
+    assert!(result.is_err());
+    assert_eq!(result.err().unwrap(), CredentialIssuerError::InvalidCredentialType);
+}
+
 #[test]
 fn fuzz_oversized_reputation_params() {
     let env = setup_env();
@@ -118,7 +113,6 @@ fn fuzz_oversized_reputation_params() {
     assert_eq!(result.err().unwrap(), ReputationScoreError::InvalidScore);
 }
 
-// Test: maximum depth for trust graph
 #[test]
 fn fuzz_invalid_trust_graph_depth() {
     let env = setup_env();
@@ -133,7 +127,6 @@ fn fuzz_invalid_trust_graph_depth() {
     assert_eq!(result.err().unwrap(), ReputationScoreError::InvalidDepth);
 }
 
-// Test: registering duplicate circuit
 #[test]
 fn fuzz_duplicate_circuit_registration() {
     let env = setup_env();
@@ -143,7 +136,7 @@ fn fuzz_duplicate_circuit_registration() {
     let verifier_key = Bytes::from_slice(&env, b"key_data_16_bytes!");
     let attributes = Vec::new(&env);
 
-    assert!(ZKAttestation::register_circuit(
+    assert!(ZKAttestationContract::register_circuit(
         env.clone(),
         circuit_id.clone(),
         name.clone(),
@@ -156,9 +149,9 @@ fn fuzz_duplicate_circuit_registration() {
     )
     .is_ok());
 
-    let result = ZKAttestation::register_circuit(
+    let result = ZKAttestationContract::register_circuit(
         env.clone(),
-        circuit_id.clone(),
+        circuit_id,
         name,
         description,
         verifier_key,
@@ -171,12 +164,11 @@ fn fuzz_duplicate_circuit_registration() {
     assert_eq!(result.err().unwrap(), ZKAttestationError::InvalidCircuit);
 }
 
-// Test: nullifier reuse
 #[test]
 fn fuzz_nullifier_reuse() {
     let env = setup_env();
     let circuit_id = Symbol::new(&env, "null_test");
-    let _ = ZKAttestation::register_circuit(
+    let _ = ZKAttestationContract::register_circuit(
         env.clone(),
         circuit_id.clone(),
         Bytes::from_slice(&env, b"Null Test"),
@@ -192,7 +184,7 @@ fn fuzz_nullifier_reuse() {
     let mut metadata = soroban_sdk::Map::new(&env);
     metadata.set(Symbol::new(&env, "context"), Bytes::from_slice(&env, b"test"));
 
-    let result1 = ZKAttestation::submit_proof(
+    let result1 = ZKAttestationContract::submit_proof(
         env.clone(),
         circuit_id.clone(),
         vec![&env, Bytes::from_slice(&env, b"input")],
@@ -204,9 +196,9 @@ fn fuzz_nullifier_reuse() {
     );
     assert!(result1.is_ok());
 
-    let result2 = ZKAttestation::submit_proof(
+    let result2 = ZKAttestationContract::submit_proof(
         env.clone(),
-        circuit_id.clone(),
+        circuit_id,
         vec![&env, Bytes::from_slice(&env, b"input2")],
         Bytes::from_slice(&env, b"proof2"),
         nullifier,
@@ -218,12 +210,11 @@ fn fuzz_nullifier_reuse() {
     assert_eq!(result2.err().unwrap(), ZKAttestationError::NullifierAlreadyUsed);
 }
 
-// Test: empty proof bytes
 #[test]
 fn fuzz_empty_proof() {
     let env = setup_env();
     let circuit_id = Symbol::new(&env, "empty_proof");
-    let _ = ZKAttestation::register_circuit(
+    let _ = ZKAttestationContract::register_circuit(
         env.clone(),
         circuit_id.clone(),
         Bytes::from_slice(&env, b"Empty Proof"),
@@ -238,9 +229,9 @@ fn fuzz_empty_proof() {
     let mut metadata = soroban_sdk::Map::new(&env);
     metadata.set(Symbol::new(&env, "context"), Bytes::from_slice(&env, b"test"));
 
-    let result = ZKAttestation::submit_proof(
+    let result = ZKAttestationContract::submit_proof(
         env.clone(),
-        circuit_id.clone(),
+        circuit_id,
         vec![&env, Bytes::from_slice(&env, b"input")],
         Bytes::new(&env),
         Bytes::from_slice(&env, b"null"),
@@ -252,7 +243,6 @@ fn fuzz_empty_proof() {
     assert_eq!(result.err().unwrap(), ZKAttestationError::InvalidProof);
 }
 
-// Test: compliance with invalid risk score
 #[test]
 fn fuzz_invalid_risk_score() {
     let env = setup_env();
@@ -261,8 +251,8 @@ fn fuzz_invalid_risk_score() {
 
     let result = ComplianceFilter::update_risk_score(
         env.clone(),
-        oracle.clone(),
-        user.clone(),
+        oracle,
+        user,
         101,
         Bytes::from_slice(&env, b"test"),
     );
@@ -270,9 +260,6 @@ fn fuzz_invalid_risk_score() {
     assert_eq!(result.err().unwrap(), ComplianceFilterError::InvalidRiskScore);
 }
 
-use crate::compliance_filter::ComplianceFilterError;
-
-// Test: DID with invalid format
 #[test]
 fn fuzz_invalid_did_format() {
     let env = setup_env();
@@ -288,7 +275,7 @@ fn fuzz_invalid_did_format() {
 
     let result = DIDRegistry::create_did(
         env.clone(),
-        controller.clone(),
+        controller,
         bad_did,
         vec![&env, vm],
         Vec::new(&env),
@@ -297,24 +284,24 @@ fn fuzz_invalid_did_format() {
     assert_eq!(result.err().unwrap(), DIDRegistryError::InvalidFormat);
 }
 
-// Test: extremely long credential type bytes
 #[test]
-fn fuzz_long_credential_type() {
+fn fuzz_unregistered_issuer() {
     let env = setup_env();
     let issuer = generate_address(&env);
     let subject = generate_address(&env);
 
-    let long_type: Vec<u8> = (0..5000).map(|_| b'X').collect();
+    let long_type = [b'X'; 5000];
     let long_cred_type = vec![&env, Bytes::from_slice(&env, &long_type)];
 
     let result = CredentialIssuer::issue_credential(
         env.clone(),
-        issuer.clone(),
-        subject.clone(),
+        issuer,
+        subject,
         long_cred_type,
         Bytes::from_slice(&env, b"data"),
         None,
         Bytes::from_slice(&env, b"proof"),
     );
-    assert!(result.is_ok());
+    // 5000 > MAX_CREDENTIAL_TYPE_LENGTH (128), so this should fail
+    assert!(result.is_err());
 }
