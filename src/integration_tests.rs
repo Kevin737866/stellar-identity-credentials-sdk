@@ -293,7 +293,7 @@ fn test_zk_proof_lifecycle() {
     let circuit_type = CircuitType::RangeProof;
     let supported_attributes = soroban_sdk::vec![&env, Symbol::new(&env, "age_commitment")];
 
-    let register_result = ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).register_circuit(
+    let register_result = ZKAttestationContractClient::new(&env, &env.register(ZKAttestationContract, ())).register_circuit(
         env.clone(),
         circuit_id.clone(),
         name,
@@ -320,7 +320,7 @@ fn test_zk_proof_lifecycle() {
         Bytes::from_slice(&env, b"age_verification"),
     );
 
-    let proof_id = ZKAttestationContractClient::new(&env, &env.register_contract(None, ZKAttestationContract)).submit_proof(
+    let proof_id = ZKAttestationContractClient::new(&env, &env.register(ZKAttestationContract, ())).submit_proof(
         env.clone(),
         circuit_id.clone(),
         public_inputs,

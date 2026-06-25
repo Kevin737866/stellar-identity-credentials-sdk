@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contracterror, contractimpl, Address, Bytes, Env, Symbol, Vec};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol};
 
 use crate::CredentialSchema;
 

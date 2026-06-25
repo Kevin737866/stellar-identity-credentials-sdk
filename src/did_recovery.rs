@@ -851,7 +851,7 @@ mod tests {
 
         let result = DIDRecovery::configure_recovery(
             env.clone(),
-            controller,
+            controller.clone(),
             did,
             RecoveryMethod::SocialRecovery,
             1,
@@ -898,7 +898,7 @@ mod tests {
         assert_eq!(config.total_guardians, 1);
 
         // Remove guardian
-        DIDRecovery::remove_guardian(env.clone(), controller, did.clone(), guardian.clone())
+        DIDRecovery::remove_guardian(env.clone(), controller.clone(), did.clone(), guardian.clone())
             .unwrap();
 
         let record = DIDRecovery::get_guardian(env.clone(), did, guardian).unwrap();
@@ -918,7 +918,7 @@ mod tests {
         // Configure social recovery with 2-of-3 guardians
         DIDRecovery::configure_recovery(
             env.clone(),
-            controller,
+            controller.clone(),
             did.clone(),
             RecoveryMethod::SocialRecovery,
             2,
@@ -991,7 +991,7 @@ mod tests {
 
         DIDRecovery::configure_recovery(
             env.clone(),
-            controller,
+            controller.clone(),
             did.clone(),
             RecoveryMethod::SocialRecovery,
             3, // Requires 3 approvals
@@ -1021,7 +1021,7 @@ mod tests {
             env.clone(),
             guardian1.clone(),
             did.clone(),
-            new_controller,
+            new_controller.clone(),
             None,
         )
         .unwrap();
@@ -1089,7 +1089,7 @@ mod tests {
         });
 
         // Now execution should succeed
-        let result = DIDRecovery::execute_recovery(env.clone(), controller, request_id).unwrap();
+        let result = DIDRecovery::execute_recovery(env.clone(), controller.clone(), request_id).unwrap();
         assert_eq!(result, new_controller);
     }
 
@@ -1125,7 +1125,7 @@ mod tests {
             env.clone(),
             guardian,
             did.clone(),
-            new_controller,
+            new_controller.clone(),
             None,
         )
         .unwrap();
@@ -1133,7 +1133,7 @@ mod tests {
         // Cancel the recovery
         DIDRecovery::cancel_recovery(
             env.clone(),
-            controller,
+            controller.clone(),
             request_id.clone(),
             Some(Bytes::from_slice(&env, b"Found my keys")),
         )
@@ -1153,7 +1153,7 @@ mod tests {
 
         DIDRecovery::configure_recovery(
             env.clone(),
-            controller,
+            controller.clone(),
             did.clone(),
             RecoveryMethod::TrustedThirdParty,
             0,
@@ -1188,7 +1188,7 @@ mod tests {
 
         DIDRecovery::configure_recovery(
             env.clone(),
-            controller,
+            controller.clone(),
             did.clone(),
             RecoveryMethod::TrustedThirdParty,
             0,
@@ -1198,7 +1198,7 @@ mod tests {
         .unwrap();
 
         let request_id =
-            DIDRecovery::initiate_recovery(env.clone(), ttp, did.clone(), new_controller, None)
+            DIDRecovery::initiate_recovery(env.clone(), ttp.clone(), did.clone(), new_controller.clone(), None)
                 .unwrap();
 
         // Attacker tries to execute
@@ -1217,7 +1217,7 @@ mod tests {
 
         DIDRecovery::configure_recovery(
             env.clone(),
-            controller,
+            controller.clone(),
             did.clone(),
             RecoveryMethod::SocialRecovery,
             2,
@@ -1239,7 +1239,7 @@ mod tests {
             env.clone(),
             guardian.clone(),
             did.clone(),
-            new_controller,
+            new_controller.clone(),
             None,
         )
         .unwrap();
@@ -1274,7 +1274,7 @@ mod tests {
             did.clone()
         ));
 
-        DIDRecovery::deactivate_recovery(env.clone(), controller, did.clone()).unwrap();
+        DIDRecovery::deactivate_recovery(env.clone(), controller.clone(), did.clone()).unwrap();
 
         let config = DIDRecovery::get_recovery_config(env.clone(), did).unwrap();
         assert!(!config.active);
@@ -1300,7 +1300,7 @@ mod tests {
         // Update threshold to 3
         DIDRecovery::update_recovery_config(
             env.clone(),
-            controller,
+            controller.clone(),
             did.clone(),
             Some(3),
             None,

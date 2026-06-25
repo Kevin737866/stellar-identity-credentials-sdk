@@ -232,7 +232,7 @@ impl CredentialOfferContract {
         // Emit event
         env.events().publish(
             (Symbol::new(&env, "CredentialOfferCreated"),),
-            (offer_id.clone(), issuer, holder),
+            (offer_id.clone(), issuer.clone(), holder.clone()),
         );
 
         Ok(offer_id)
@@ -500,7 +500,7 @@ impl CredentialOfferContract {
     pub fn get_issuer_offers(env: Env, issuer: Address) -> Vec<Bytes> {
         env.storage()
             .persistent()
-            .get(&OfferKey::IssuerOffers(issuer))
+            .get(&OfferKey::IssuerOffers(issuer.clone()))
             .unwrap_or_else(|| Vec::new(&env))
     }
 
@@ -529,7 +529,7 @@ impl CredentialOfferContract {
         let all: Vec<Bytes> = env
             .storage()
             .persistent()
-            .get(&OfferKey::IssuerOffers(issuer))
+            .get(&OfferKey::IssuerOffers(issuer.clone()))
             .unwrap_or_else(|| Vec::new(&env));
         Self::paginate(&env, &all, page, page_size)
     }

@@ -205,15 +205,11 @@ impl CredentialIssuer {
         issuer.require_auth();
 
         use crate::schema_registry::CredentialSchemaRegistry;
-        let _schema = CredentialSchemaRegistry::get_schema(env.clone(), schema_id.clone())
-            .ok_or(CredentialIssuerError::SchemaNotFound)?;
+        let _schema = CredentialSchemaRegistry::get_schema(env.clone(), schema_id.clone(), None)
+            .map_err(|_| CredentialIssuerError::SchemaNotFound)?;
 
-        CredentialSchema::validate_credential_data(
-            env.clone(),
-            schema_id.clone(),
-            credential_data.clone(),
-        )
-        .map_err(|_| CredentialIssuerError::SchemaValidationFailed)?;
+        CredentialSchemaRegistry::validate_schema_exists(env.clone(), schema_id.clone())
+            .map_err(|_| CredentialIssuerError::SchemaValidationFailed)?;
 
         for ct in credential_type.iter() {
             if ct.len() > Self::MAX_CREDENTIAL_TYPE_LENGTH {
@@ -841,16 +837,11 @@ impl CredentialIssuer {
                         .set(&CredKey::Reason(credential_id.clone()), r);
                 }
 
-                let proof_nonce = Bytes::from_slice(
-                    &env,
-                    env.crypto()
-                        .sha256(&Bytes::from_slice(
-                            &env,
-                            format!("{}{}", now, credential_id.clone()).as_bytes(),
-                        ))
-                        .to_array()
-                        .as_slice(),
-                );
+                let mut data = Bytes::from_slice(&env, &now.to_be_bytes());
+                data.append(&credential_id);
+                let hash = env.crypto().sha256(&data);
+                let hash_bytes: soroban_sdk::BytesN<32> = hash.into();
+                let proof_nonce = Bytes::from_slice(&env, hash_bytes.to_array().as_slice());
 
                 let proof = RevocationProof {
                     registry_id: registry_id.clone(),
