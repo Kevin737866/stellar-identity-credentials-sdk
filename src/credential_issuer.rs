@@ -640,7 +640,7 @@ impl CredentialIssuer {
         issuer_creds.push_back(credential_id.clone());
         env.storage()
             .persistent()
-            .set(&CredKey::IssuerCreds(issuer.clone()), &issuer_creds);
+            .set(&CredKey::IssuerCreds(auth.delegator.clone()), &issuer_creds);
 
         let mut subject_creds: Vec<Bytes> = env
             .storage()

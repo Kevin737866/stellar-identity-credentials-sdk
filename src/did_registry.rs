@@ -1,8 +1,8 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
-use crate::DIDDocument;
+use crate::{DIDDocument, Service, VerificationMethod};
 
 // ---------------------------------------------------------------------------
 // Multi-Signature Types (#93)

@@ -311,7 +311,7 @@ impl ReputationScore {
         amount: i128,
     ) -> Result<u32, ReputationScoreError> {
         let config = Self::get_config(&env);
-        let mut profile = Self::load_profile(&env, &address)?;
+        let mut profile = Self::load_profile(&env, address.clone())?;
 
         profile.total_transactions += 1;
         if success {
