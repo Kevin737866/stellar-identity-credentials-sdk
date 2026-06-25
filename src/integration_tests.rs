@@ -68,7 +68,7 @@ fn new_address(env: &Env) -> Address {
     Address::generate(env)
 }
 
-fn make_vm_vec(env: &Env, vms: Vec<VerificationMethod>) -> Vec<VerificationMethod> {
+fn make_vm_vec(_env: &Env, vms: Vec<VerificationMethod>) -> Vec<VerificationMethod> {
     vms
 }
 

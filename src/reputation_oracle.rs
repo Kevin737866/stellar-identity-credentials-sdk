@@ -311,7 +311,7 @@ impl ReputationOracle {
         subject_feeds.push_back(feed_id.clone());
         env.storage()
             .persistent()
-            .set(&OracleKey::SubjectFeeds(subject), &subject_feeds);
+            .set(&OracleKey::SubjectFeeds(subject.clone()), &subject_feeds);
 
         // Update oracle stats
         oracle_record.total_feeds += 1;

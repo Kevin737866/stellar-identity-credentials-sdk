@@ -612,10 +612,10 @@ impl DIDRegistry {
             }
         }
 
-        operation.approvals.push_back(signer);
+        operation.approvals.push_back(signer.clone());
         env.storage()
             .persistent()
-            .set(&DidKey::Operation(operation_id), &operation);
+            .set(&DidKey::Operation(operation_id.clone()), &operation);
 
         env.events().publish(
             (Symbol::new(&env, "MultiSigOperationSigned"),),
@@ -678,7 +678,7 @@ impl DIDRegistry {
             .get(&DidKey::Operation(operation_id))
     }
 
-    fn generate_operation_id(env: &Env, did: &Bytes) -> Bytes {
+    fn generate_operation_id(env: &Env, _did: &Bytes) -> Bytes {
         let mut id = Bytes::from_slice(env, b"op:");
         id.append(&Bytes::from_slice(
             env,
