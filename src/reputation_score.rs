@@ -528,7 +528,7 @@ impl ReputationScore {
             .expect("contract not initialized")
     }
 
-    pub fn load_profile(
+    pub(crate) fn load_profile(
         env: &Env,
         address: &Address,
     ) -> Result<ReputationData, ReputationScoreError> {

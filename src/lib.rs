@@ -2,6 +2,7 @@ extern crate alloc;
 
 pub mod did_registry;
 pub mod credential_issuer;
+pub mod credential_schema;
 pub mod schema_registry;
 pub mod reputation_score;
 pub mod zk_attestation;
@@ -26,7 +27,7 @@ pub use did_registry::PendingMultiSigOperation;
 pub use credential_issuer::CredentialIssuer;
 pub use schema_registry::CredentialSchemaRegistry;
 pub use reputation_score::ReputationScore;
-pub use zk_attestation::ZKAttestation;
+pub use zk_attestation::ZKAttestationContract;
 pub use zk_attestation::ZKAttestationRecord;
 pub use compliance_filter::ComplianceFilter;
 pub use credential_offer::CredentialOfferContract;

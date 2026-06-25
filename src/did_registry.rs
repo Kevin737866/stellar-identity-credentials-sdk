@@ -120,7 +120,7 @@ impl DIDRegistry {
             .set(&DidKey::Doc(did_id.clone()), &doc);
         env.storage()
             .persistent()
-            .set(&DidKey::Controller(controller), &did_id);
+            .set(&DidKey::Controller(controller.clone()), &did_id);
 
         env.events().publish(
             (Symbol::new(&env, "DIDCreated"),),
@@ -171,7 +171,7 @@ impl DIDRegistry {
         doc.updated = env.ledger().timestamp();
         env.storage()
             .persistent()
-            .set(&DidKey::Doc(did), &doc);
+            .set(&DidKey::Doc(did.clone()), &doc);
 
         env.events().publish(
             (Symbol::new(&env, "DIDUpdated"),),
@@ -204,7 +204,7 @@ impl DIDRegistry {
         doc.updated = env.ledger().timestamp();
         env.storage()
             .persistent()
-            .set(&DidKey::Doc(did), &doc);
+            .set(&DidKey::Doc(did.clone()), &doc);
 
         env.events().publish(
             (Symbol::new(&env, "DIDDeactivated"),),
@@ -637,10 +637,10 @@ impl DIDRegistry {
             }
         }
 
-        operation.approvals.push_back(signer);
+        operation.approvals.push_back(signer.clone());
         env.storage()
             .persistent()
-            .set(&DidKey::Operation(operation_id), &operation);
+            .set(&DidKey::Operation(operation_id.clone()), &operation);
 
         env.events().publish(
             (Symbol::new(&env, "MultiSigOperationSigned"),),
@@ -673,7 +673,7 @@ impl DIDRegistry {
             .get(&DidKey::MultiSig(operation.did.clone()))
             .ok_or(DIDRegistryError::NotFound)?;
 
-        if operation.approvals.len() as u32 < config.threshold {
+        if (operation.approvals.len() as u32) < config.threshold {
             return Err(DIDRegistryError::Unauthorized);
         }
 

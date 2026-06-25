@@ -10,8 +10,8 @@ use crate::{
     credential_issuer::CredentialIssuer,
     credential_schema::{CredentialSchema, FieldValidation},
     did_registry::DIDRegistry,
-    reputation_score::{ReputationScore, Config},
-    zk_attestation::{CircuitType, ZKAttestation},
+    reputation_score::{Config, ReputationScore},
+    zk_attestation::{CircuitType, ZKAttestationContract},
     Service, VerificationMethod,
 };
 
@@ -44,6 +44,16 @@ fn make_did_bytes(env: &Env) -> Bytes {
     Bytes::from_slice(env, b"did:stellar:GABCDEF123456789")
 }
 
+fn default_config() -> Config {
+    Config {
+        max_score: 10000,
+        transaction_success_weight: 10,
+        transaction_failure_weight: 5,
+        credential_valid_weight: 20,
+        credential_invalid_weight: 15,
+    }
+}
+
 #[test]
 fn bench_create_did() {
     let env = setup_env();
@@ -67,7 +77,6 @@ fn bench_create_did() {
         services,
     );
     assert!(result.is_ok());
-    std::println!("[BENCH] create_did            OK");
 }
 
 #[test]
@@ -86,7 +95,6 @@ fn bench_resolve_did() {
 
     let result = DIDRegistry::resolve_did(env.clone(), did);
     assert!(result.is_ok());
-    std::println!("[BENCH] resolve_did           OK");
 }
 
 #[test]
@@ -105,7 +113,6 @@ fn bench_issue_credential() {
         Bytes::from_slice(&env, b"proof"),
     );
     assert!(result.is_ok());
-    std::println!("[BENCH] issue_credential      OK");
 }
 
 #[test]
@@ -127,7 +134,6 @@ fn bench_verify_credential() {
     let result = CredentialIssuer::verify_credential(env.clone(), cred_id);
     assert!(result.is_ok());
     assert!(result.unwrap());
-    std::println!("[BENCH] verify_credential     OK");
 }
 
 #[test]
@@ -135,18 +141,10 @@ fn bench_initialize_reputation() {
     let env = setup_env();
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let config = Config {
-        max_score: 100,
-        transaction_success_weight: 10,
-        transaction_failure_weight: 5,
-        credential_valid_weight: 20,
-        credential_invalid_weight: 15,
-    };
-    ReputationScore::initialize(env.clone(), admin, config);
 
+    ReputationScore::initialize(env.clone(), admin, default_config()).unwrap();
     let result = ReputationScore::initialize_reputation(env.clone(), user);
     assert!(result.is_ok());
-    std::println!("[BENCH] initialize_reputation OK");
 }
 
 #[test]
@@ -154,26 +152,20 @@ fn bench_update_reputation() {
     let env = setup_env();
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let config = Config {
-        max_score: 100,
-        transaction_success_weight: 10,
-        transaction_failure_weight: 5,
-        credential_valid_weight: 20,
-        credential_invalid_weight: 15,
-    };
-    ReputationScore::initialize(env.clone(), admin, config);
-    let _ = ReputationScore::initialize_reputation(env.clone(), user.clone());
 
-    let result = ReputationScore::update_transaction_reputation(env.clone(), user, true, 1000);
+    ReputationScore::initialize(env.clone(), admin, default_config()).unwrap();
+    ReputationScore::initialize_reputation(env.clone(), user.clone()).unwrap();
+
+    let result =
+        ReputationScore::update_transaction_reputation(env.clone(), user, true, 1000);
     assert!(result.is_ok());
-    std::println!("[BENCH] update_tx_reputation  OK");
 }
 
 #[test]
 fn bench_register_circuit() {
     let env = setup_env();
 
-    let result = ZKAttestation::register_circuit(
+    let result = ZKAttestationContract::register_circuit(
         env.clone(),
         Symbol::new(&env, "bench_circ"),
         Bytes::from_slice(&env, b"Bench Circuit"),
@@ -185,7 +177,6 @@ fn bench_register_circuit() {
         vec![&env, Symbol::new(&env, "attr")],
     );
     assert!(result.is_ok());
-    std::println!("[BENCH] register_circuit      OK");
 }
 
 #[test]
@@ -194,14 +185,24 @@ fn bench_screen_address() {
     let admin = Address::generate(&env);
     let source = Bytes::from_slice(&env, b"OFAC_SDN");
     let hash = BytesN::from_array(&env, &[2u8; 32]);
-    let _ = ComplianceFilter::update_sanctions_list(env.clone(), admin.clone(), source.clone(), hash, 1);
+    let _ = ComplianceFilter::update_sanctions_list(
+        env.clone(),
+        admin.clone(),
+        source.clone(),
+        hash,
+        1,
+    );
     let sanctioned = Address::generate(&env);
-    let _ = ComplianceFilter::load_list_entries(env.clone(), admin, source, vec![&env, sanctioned.clone()]);
+    let _ = ComplianceFilter::load_list_entries(
+        env.clone(),
+        admin,
+        source,
+        vec![&env, sanctioned.clone()],
+    );
 
     let clean = Address::generate(&env);
     let result = ComplianceFilter::screen_address(env.clone(), clean);
     assert!(result.is_ok());
-    std::println!("[BENCH] screen_address(clear) OK");
 }
 
 #[test]
@@ -222,11 +223,18 @@ fn bench_paginated_credentials() {
         );
     }
 
-    let result = CredentialIssuer::get_credentials_by_subject(env.clone(), subject, 0, 10);
+    let result =
+        CredentialIssuer::get_credentials_by_subject(env.clone(), subject.clone(), 0, 10);
     assert_eq!(result.data.len(), 10);
     assert_eq!(result.total, 25);
     assert!(result.has_more);
-    std::println!("[BENCH] paginated_creds(p0)   items={}", result.data.len());
+
+    let page2 = CredentialIssuer::get_credentials_by_subject(env.clone(), subject.clone(), 1, 10);
+    assert_eq!(page2.data.len(), 10);
+
+    let page3 = CredentialIssuer::get_credentials_by_subject(env.clone(), subject.clone(), 2, 10);
+    assert_eq!(page3.data.len(), 5);
+    assert!(!page3.has_more);
 }
 
 #[test]
@@ -252,5 +260,4 @@ fn bench_register_schema() {
         validations,
     );
     assert!(result.is_ok());
-    std::println!("[BENCH] register_schema       OK");
 }

@@ -186,7 +186,7 @@ impl CredentialIssuer {
 
         env.events().publish(
             (Symbol::new(&env, "CredentialIssued"),),
-            (credential_id.clone(), issuer),
+            (credential_id.clone(), issuer.clone()),
         );
 
         Ok(credential_id)
@@ -338,10 +338,10 @@ impl CredentialIssuer {
             .persistent()
             .set(&CredKey::Status(credential_id.clone()), &1u32);
 
-        if let Some(reason_bytes) = reason {
+        if let Some(ref reason_bytes) = reason {
             env.storage()
                 .persistent()
-                .set(&CredKey::Reason(credential_id), &reason_bytes);
+                .set(&CredKey::Reason(credential_id.clone()), reason_bytes);
         }
 
         env.events().publish(
@@ -504,7 +504,7 @@ impl CredentialIssuer {
 
         env.events().publish(
             (Symbol::new(&env, "DelegationAuthorized"),),
-            (auth_id.clone(), delegator, delegate),
+            (auth_id.clone(), delegator.clone(), delegate.clone()),
         );
 
         Ok(auth_id)
@@ -640,7 +640,7 @@ impl CredentialIssuer {
         issuer_creds.push_back(credential_id.clone());
         env.storage()
             .persistent()
-            .set(&CredKey::IssuerCreds(auth.delegator), &issuer_creds);
+            .set(&CredKey::IssuerCreds(auth.delegator.clone()), &issuer_creds);
 
         let mut subject_creds: Vec<Bytes> = env
             .storage()
@@ -837,7 +837,11 @@ impl CredentialIssuer {
                 let proof_nonce = Bytes::from_slice(
                     &env,
                     env.crypto()
-                        .sha256(&Bytes::from_slice(&env, format!("{}{}", now, credential_id.clone()).as_bytes()))
+                        .sha256(&{
+                            let mut data = Bytes::from_slice(&env, now.to_string().as_bytes());
+                            data.append(&credential_id.clone());
+                            data
+                        })
                         .to_array()
                         .as_slice(),
                 );

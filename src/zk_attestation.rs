@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
 };
 
 use crate::{clamp_page_size, PaginatedCircuits};
@@ -102,7 +102,7 @@ pub struct NullifierRecord {
 pub struct ZKAttestationContract;
 
 #[contractimpl]
-impl ZKAttestation {
+impl ZKAttestationContract {
     pub fn register_circuit(
         env: Env,
         circuit_id: Symbol,
