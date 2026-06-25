@@ -39,6 +39,20 @@ export type {
   AttributeExpiration 
 } from './dataMinimization';
 
+export { ComplianceClient } from './compliance';
+export type {
+  ScreeningStatus,
+  ScreeningResult,
+  TransactionRisk,
+  ComplianceReport,
+  TravelRulePayload,
+  AlertSubscription,
+  ComplianceReportOptions,
+  JurisdictionRule,
+  RiskLevel,
+  EnrichedProfile,
+} from './compliance';
+
 export { RegulatoryReportingClient } from './regulatoryReporting';
 export type {
   TemplateSection,
