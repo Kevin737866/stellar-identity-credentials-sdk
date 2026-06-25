@@ -293,13 +293,35 @@ export class DIDResolver {
     this.cache.delete(did);
   }
 
-  async resolveViaTOML(did: string, options?: DIDResolveOptions): Promise<W3CResolutionResult> {
+  /**
+   * Resolve a DID via Stellar TOML file.
+   * Accepts either a DID (did:stellar:...) or a Stellar account address (G...).
+   * Fetches the account's stellar.toml and constructs a DID document from the
+   * DID-related configuration fields.
+   * @param didOrAddress - A DID string or Stellar account address
+   * @param options - Optional resolution options (timeout, etc.)
+   * @returns W3C resolution result with DID document from TOML
+   */
+  async resolveViaTOML(didOrAddress: string, options?: DIDResolveOptions): Promise<W3CResolutionResult> {
     const startMs = Date.now();
     const timeout = options?.timeout ?? DEFAULT_TOML_TIMEOUT_MS;
 
-    const validationError = this.validateDIDFormat(did);
-    if (validationError) {
-      return this.errorResult('invalidDid', validationError, startMs, 'toml');
+    // Accept both DID and raw account address
+    let address: string;
+    let did: string;
+    if (didOrAddress.startsWith(DID_STELLAR_PREFIX)) {
+      did = didOrAddress;
+      const validationError = this.validateDIDFormat(did);
+      if (validationError) {
+        return this.errorResult('invalidDid', validationError, startMs, 'toml');
+      }
+      address = DIDResolver.didToAddress(did);
+    } else {
+      address = didOrAddress;
+      if (!this.isValidStellarAddress(address)) {
+        return this.errorResult('invalidDid', `Invalid Stellar account address: ${address}`, startMs, 'toml');
+      }
+      did = DIDResolver.addressToDID(address);
     }
 
     const cacheKey = `toml:${did}`;
@@ -309,7 +331,6 @@ export class DIDResolver {
     }
 
     try {
-      const address = DIDResolver.didToAddress(did);
       const domain = this.inferDomainFromAddress(address);
       const tomlUrl = `https://${domain}/.well-known/stellar.toml`;
 
@@ -621,32 +642,14 @@ export class DIDResolver {
   }
 
   private parseDIDStellarTOML(toml: string): Service[] {
-    const services: Service[] = [];
-    const block = /\[\[DID_SERVICES\]\]([\s\S]*?)(?=\[\[|$)/g;
-    let match: RegExpExecArray | null;
-    while ((match = block.exec(toml)) !== null) {
-      const segment = match[1];
-      const get = (key: string) => { const m = segment.match(new RegExp(`${key}\\s*=\\s*"([^"]+)"`)); return m ? m[1] : ''; };
-      const id = get('id'), type = get('type'), endpoint = get('serviceEndpoint');
-      if (id && type && endpoint) services.push({ id, type, endpoint });
-    }
-    return services;
+    return this.extractDIDServicesFromTOML(toml);
   }
 
   private parseStellarTOMLToDIDDocument(tomlContent: string, address: string, did: string): DIDDocument {
     const toml = this.parseTOMLKeyValues(tomlContent);
 
-    const services: Service[] = [];
-
-    // Parse [[DID_SERVICES]] blocks from TOML
-    const block = /\[\[DID_SERVICES\]\]([\s\S]*?)(?=\[\[|$)/g;
-    let match: RegExpExecArray | null;
-    while ((match = block.exec(tomlContent)) !== null) {
-      const segment = match[1];
-      const get = (key: string) => { const m = segment.match(new RegExp(`${key}\\s*=\\s*"([^"]+)"`)); return m ? m[1] : ''; };
-      const id = get('id'), type = get('type'), endpoint = get('serviceEndpoint');
-      if (id && type && endpoint) services.push({ id, type, endpoint });
-    }
+    // Parse DID_SERVICES blocks using shared helper
+    const services = this.extractDIDServicesFromTOML(tomlContent);
 
     // Parse verification methods from TOML
     const verificationMethods: VerificationMethod[] = [];
@@ -724,6 +727,19 @@ export class DIDResolver {
 
   private inferDomainFromAddress(_address: string): string {
     return 'stellar.org';
+  }
+
+  private extractDIDServicesFromTOML(toml: string): Service[] {
+    const services: Service[] = [];
+    const block = /\[\[DID_SERVICES\]\]([\s\S]*?)(?=\[\[|$)/g;
+    let match: RegExpExecArray | null;
+    while ((match = block.exec(toml)) !== null) {
+      const segment = match[1];
+      const get = (key: string) => { const m = segment.match(new RegExp(`${key}\\s*=\\s*"([^"]+)"`)); return m ? m[1] : ''; };
+      const id = get('id'), type = get('type'), endpoint = get('serviceEndpoint');
+      if (id && type && endpoint) services.push({ id, type, endpoint });
+    }
+    return services;
   }
 
   private errorResult(code: string, message: string, startMs: number, method?: string): W3CResolutionResult {
