@@ -6,14 +6,18 @@ import {
   CardContent 
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Progress } from '@/components/ui/progress';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ReputationBadge } from '@/components/ReputationBadge';
 import { CredentialWallet } from '@/components/CredentialWallet';
 import { ProofRequest } from '@/components/ProofRequest';
 import { ComplianceCheck } from '@/components/ComplianceCheck';
 import { useStellarIdentity } from '@/hooks/useStellarIdentity';
 import { StellarIdentityConfig } from '@stellar-identity/sdk';
+import { Keypair } from 'stellar-sdk';
 import { 
   LayoutDashboard, 
   Shield, 
@@ -21,6 +25,7 @@ import {
   CheckSquare, 
   TrendingUp,
   Wallet,
+  Settings,
   LogOut,
   Wifi,
   WifiOff,
