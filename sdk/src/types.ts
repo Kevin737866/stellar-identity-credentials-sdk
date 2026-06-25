@@ -186,6 +186,8 @@ export interface SanctionsList {
   entries: string[];
 }
 
+import { Keypair } from 'stellar-sdk';
+
 export interface StellarIdentityConfig {
   network: 'mainnet' | 'testnet' | 'futurenet';
   contracts: {
@@ -197,6 +199,7 @@ export interface StellarIdentityConfig {
   };
   rpcUrl?: string;
   horizonUrl?: string;
+  keypair?: Keypair;
 }
 
 export interface CreateDIDOptions {

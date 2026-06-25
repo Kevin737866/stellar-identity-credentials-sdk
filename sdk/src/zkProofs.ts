@@ -138,7 +138,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'age_range_proof',
           publicInputs: [commitment, minAge.toString()],
@@ -192,7 +192,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'income_range_proof',
           publicInputs: [commitment, minIncome.toString()],
@@ -269,13 +269,13 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'kyc_composite_proof',
           publicInputs: [credential.hash],
           proofBytes,
           nullifier,
-          revealedAttributes: requiredChecks.map(check => Symbol.for(check)),
+          revealedAttributes: requiredChecks,
           expiresAt: options?.expiresAt,
           metadata: {
             type: 'kyc_verification',
@@ -335,7 +335,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'loan_application_composite_proof',
           publicInputs: Object.values(publicInputs).map(v => v.toString()),
@@ -352,6 +352,87 @@ export class ZKProofsClient {
         },
         options?.txOptions
       );
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Create Selective Disclosure Proof
+   */
+  async createSelectiveDisclosureProof(
+    credential: any,
+    attributesToReveal: string[],
+    options?: ZKProofOptions
+  ): Promise<string> {
+    try {
+      const inputs: any = {
+        credential_id: credential.id,
+        subject_private_key: this.hexToField(credential.privateKey),
+        credential_hash: this.hexToField(credential.hash),
+      };
+
+      const publicInputs: any = {};
+      
+      for (const attr of attributesToReveal) {
+        inputs[`${attr}_randomness`] = this.hexToField(this.generateSalt());
+        publicInputs[`${attr}_revealed`] = credential[attr];
+      }
+
+      const { proof, publicSignals } = await this.generateProof(
+        'selective_disclosure_proof',
+        inputs,
+        publicInputs
+      );
+
+      const proofBytes = JSON.stringify(proof);
+      const nullifier = this.generateNullifier(
+        credential.id,
+        'selective_disclosure_proof',
+        options?.context || 'default'
+      );
+
+      return this.submitProof(
+        this.config.keypair!,
+        {
+          circuitId: 'selective_disclosure_proof',
+          publicInputs: Object.values(publicInputs).map(v => String(v)),
+          proofBytes,
+          nullifier,
+          revealedAttributes: attributesToReveal,
+          expiresAt: options?.expiresAt,
+          metadata: {
+            type: 'selective_disclosure',
+            attributes: attributesToReveal.join(','),
+            context: options?.context || 'default',
+            credential_id: credential.id,
+          },
+        },
+        options?.txOptions
+      );
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Verify Selective Disclosure Proof
+   */
+  async verifySelectiveDisclosureProof(
+    proofId: string,
+    expectedAttributes: Record<string, any>
+  ): Promise<boolean> {
+    try {
+      const proof = await this.getProof(proofId);
+      if (proof.circuitId !== 'selective_disclosure_proof') {
+        throw new Error('Invalid circuit ID for selective disclosure');
+      }
+
+      const isValidVal = await this.simulateRead('verify_proof', [
+        nativeToScVal(new TextEncoder().encode(proofId), { type: 'bytes' }),
+      ]);
+      
+      return scValToNative(isValidVal) as boolean;
     } catch (error) {
       throw this.handleError(error);
     }
@@ -386,7 +467,7 @@ export class ZKProofsClient {
           proof: null,
           publicSignals: null,
           generationTime: Date.now() - startTime,
-          error: error.message,
+          error: (error as any).message,
         });
       }
     }
@@ -408,7 +489,7 @@ export class ZKProofsClient {
       this.wasmCache.set(wasmPath, wasm);
       return wasm;
     } catch (error) {
-      throw new Error(`Failed to load WASM from ${wasmPath}: ${error.message}`);
+      throw new Error(`Failed to load WASM from ${wasmPath}: ${(error as any).message}`);
     }
   }
 
@@ -426,7 +507,7 @@ export class ZKProofsClient {
       this.zkeyCache.set(zkeyPath, zkey);
       return zkey;
     } catch (error) {
-      throw new Error(`Failed to load zkey from ${zkeyPath}: ${error.message}`);
+      throw new Error(`Failed to load zkey from ${zkeyPath}: ${(error as any).message}`);
     }
   }
 
@@ -652,7 +733,7 @@ export class ZKProofsClient {
     return Promise.all(proofIds.map(id => this.verifyProof(id)));
   }
 
-  async createAgeProof(
+  async submitAgeProof(
     submitterKeypair: Keypair,
     circuitId: string,
     commitment: string,
@@ -666,6 +747,8 @@ export class ZKProofsClient {
         circuitId,
         publicInputs: [commitment, String(minAge)],
         proofBytes,
+        nullifier: '',
+        revealedAttributes: [],
         metadata: { type: 'age_verification', minAge: String(minAge) },
       },
       txOptions
@@ -684,7 +767,7 @@ export class ZKProofsClient {
     }
   }
 
-  async createIncomeProof(
+  async submitIncomeProof(
     submitterKeypair: Keypair,
     circuitId: string,
     commitment: string,
@@ -698,6 +781,8 @@ export class ZKProofsClient {
         circuitId,
         publicInputs: [commitment, String(minIncome)],
         proofBytes,
+        nullifier: '',
+        revealedAttributes: [],
         metadata: { type: 'income_verification' },
       },
       txOptions
@@ -717,6 +802,8 @@ export class ZKProofsClient {
         circuitId,
         publicInputs: [credentialHash],
         proofBytes,
+        nullifier: '',
+        revealedAttributes: [],
         metadata: { type: 'credential_ownership' },
       },
       txOptions
@@ -738,6 +825,8 @@ export class ZKProofsClient {
         circuitId,
         publicInputs: [commitment, String(minValue), String(maxValue)],
         proofBytes,
+        nullifier: '',
+        revealedAttributes: [],
         metadata: { type: 'range_verification', min: String(minValue), max: String(maxValue) },
       },
       txOptions
@@ -786,6 +875,9 @@ export class ZKProofsClient {
       createdAt: Number(r[5] ?? 0),
       expiresAt: r[6] != null ? Number(r[6]) : undefined,
       metadata: this.parseMetadata(r[7]),
+      verifyingKeyHash: '',
+      nullifier: '',
+      revealedAttributes: [],
     };
   }
 
@@ -802,6 +894,9 @@ export class ZKProofsClient {
       createdBy: toStr(r[6]),
       createdAt: Number(r[7] ?? 0),
       active: Boolean(r[8]),
+      verifyingKeyHash: '',
+      circuitType: CircuitType.RangeProof,
+      supportedAttributes: [],
     };
   }
 
