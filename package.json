@@ -14,7 +14,8 @@
     "docs": "typedoc",
     "docs:watch": "typedoc --watch",
     "docs:serve": "npx serve docs/api",
-    "docs:contracts": "cargo doc --no-deps --document-private-items"
+    "docs:contracts": "cargo doc --no-deps --document-private-items",
+    "docs:all": "npm run docs && cargo doc --no-deps --document-private-items"
   },
   "keywords": [
     "stellar",
