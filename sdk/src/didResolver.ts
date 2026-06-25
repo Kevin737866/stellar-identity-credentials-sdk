@@ -55,8 +55,19 @@ interface CacheEntry {
   expiresAt: number;
 }
 
+export interface DIDResolveOptions {
+  method?: 'contract' | 'toml' | 'http';
+  fallback?: boolean;
+  endpoint?: string;
+  timeout?: number;
+}
+
 const DID_STELLAR_PREFIX = 'did:stellar:';
 const DEFAULT_CACHE_TTL_MS = 30_000;
+const TOML_CACHE_TTL_MS = 300_000;
+const HTTP_CACHE_TTL_MS = 60_000;
+const DEFAULT_HTTP_TIMEOUT_MS = 10_000;
+const DEFAULT_TOML_TIMEOUT_MS = 10_000;
 
 export class DIDResolver {
   private rpc: SorobanRpc.Server;
@@ -64,6 +75,8 @@ export class DIDResolver {
   private contract: Contract;
   private cache: Map<string, CacheEntry>;
   private cacheTtlMs: number;
+  private tomlCache: Map<string, CacheEntry>;
+  private httpCache: Map<string, CacheEntry>;
 
   constructor(config: StellarIdentityConfig, cacheTtlMs = DEFAULT_CACHE_TTL_MS) {
     this.config = config;
@@ -71,9 +84,32 @@ export class DIDResolver {
     this.contract = new Contract(config.contracts.didRegistry);
     this.cache = new Map();
     this.cacheTtlMs = cacheTtlMs;
+    this.tomlCache = new Map();
+    this.httpCache = new Map();
   }
 
-  async resolve(did: string): Promise<W3CResolutionResult> {
+  async resolve(did: string, options?: DIDResolveOptions): Promise<W3CResolutionResult> {
+    const method = options?.method ?? 'contract';
+    const shouldFallback = options?.fallback ?? false;
+
+    if (method === 'toml') {
+      return this.resolveViaTOML(did, options);
+    }
+
+    if (method === 'http') {
+      return this.resolveViaHTTP(did, options?.endpoint, options);
+    }
+
+    // Default: contract resolution
+    if (!shouldFallback) {
+      return this.resolveContract(did);
+    }
+
+    // Fallback chain: contract → TOML → HTTP
+    return this.resolveWithFallback(did, options);
+  }
+
+  async resolveContract(did: string): Promise<W3CResolutionResult> {
     const startMs = Date.now();
 
     const validationError = this.validateDIDFormat(did);
@@ -218,7 +254,7 @@ export class DIDResolver {
   ): Promise<void> {
     const resolution = await this.resolve(did);
     if (resolution.didResolutionMetadata.error) {
-      throw this.makeError(`DID not found: ${did}`, 404, 'NotFound');
+      throw this.makeError(`DID not found: ${did}`, ErrorCode.DIDNotFound);
     }
 
     const doc = resolution.didDocument as DIDDocument;
@@ -255,6 +291,197 @@ export class DIDResolver {
     ]);
 
     this.cache.delete(did);
+  }
+
+  /**
+   * Resolve a DID via Stellar TOML file.
+   * Accepts either a DID (did:stellar:...) or a Stellar account address (G...).
+   * Fetches the account's stellar.toml and constructs a DID document from the
+   * DID-related configuration fields.
+   * @param didOrAddress - A DID string or Stellar account address
+   * @param options - Optional resolution options (timeout, etc.)
+   * @returns W3C resolution result with DID document from TOML
+   */
+  async resolveViaTOML(didOrAddress: string, options?: DIDResolveOptions): Promise<W3CResolutionResult> {
+    const startMs = Date.now();
+    const timeout = options?.timeout ?? DEFAULT_TOML_TIMEOUT_MS;
+
+    // Accept both DID and raw account address
+    let address: string;
+    let did: string;
+    if (didOrAddress.startsWith(DID_STELLAR_PREFIX)) {
+      did = didOrAddress;
+      const validationError = this.validateDIDFormat(did);
+      if (validationError) {
+        return this.errorResult('invalidDid', validationError, startMs, 'toml');
+      }
+      address = DIDResolver.didToAddress(did);
+    } else {
+      address = didOrAddress;
+      if (!this.isValidStellarAddress(address)) {
+        return this.errorResult('invalidDid', `Invalid Stellar account address: ${address}`, startMs, 'toml');
+      }
+      did = DIDResolver.addressToDID(address);
+    }
+
+    const cacheKey = `toml:${did}`;
+    const cached = this.tomlCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.result;
+    }
+
+    try {
+      const domain = this.inferDomainFromAddress(address);
+      const tomlUrl = `https://${domain}/.well-known/stellar.toml`;
+
+      let tomlContent: string;
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        const response = await fetch(tomlUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          return this.errorResult('notFound', `TOML file not found at ${tomlUrl}`, startMs, 'toml');
+        }
+        tomlContent = await response.text();
+      } catch (fetchErr: unknown) {
+        const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        if (msg.includes('abort') || msg.includes('AbortError')) {
+          return this.errorResult('timeout', `TOML resolution timed out after ${timeout}ms`, startMs, 'toml');
+        }
+        return this.errorResult('internalError', `Failed to fetch TOML: ${msg}`, startMs, 'toml');
+      }
+
+      const didDocument = this.parseStellarTOMLToDIDDocument(tomlContent, address, did);
+
+      const resMeta: DIDResolutionMetadata = {
+        contentType: 'application/did+ld+json',
+        retrieved: new Date().toISOString(),
+        duration: Date.now() - startMs,
+        method: 'stellar-toml',
+        network: this.config.network,
+      };
+
+      const docMeta: DIDDocumentMetadata = {
+        created: didDocument.created ? new Date(didDocument.created).toISOString() : undefined,
+        updated: didDocument.updated ? new Date(didDocument.updated).toISOString() : undefined,
+        canonicalId: did,
+      };
+
+      const resolution: W3CResolutionResult = { didDocument, didResolutionMetadata: resMeta, didDocumentMetadata: docMeta };
+      this.tomlCache.set(cacheKey, { result: resolution, expiresAt: Date.now() + TOML_CACHE_TTL_MS });
+      return resolution;
+    } catch (err: unknown) {
+      return this.errorResult('internalError', err instanceof Error ? err.message : String(err), startMs, 'toml');
+    }
+  }
+
+  async resolveViaHTTP(did: string, endpoint?: string, options?: DIDResolveOptions): Promise<W3CResolutionResult> {
+    const startMs = Date.now();
+    const timeout = options?.timeout ?? DEFAULT_HTTP_TIMEOUT_MS;
+    const httpEndpoint = endpoint || this.config.horizonUrl || this.defaultRpcUrl();
+
+    const validationError = this.validateDIDFormat(did);
+    if (validationError) {
+      return this.errorResult('invalidDid', validationError, startMs, 'http');
+    }
+
+    const cacheKey = `http:${httpEndpoint}:${did}`;
+    const cached = this.httpCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.result;
+    }
+
+    try {
+      const url = `${httpEndpoint}/did/resolve?did=${encodeURIComponent(did)}`;
+
+      let didDocument: DIDDocument;
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { 'Accept': 'application/did+ld+json, application/json' },
+        });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            return this.errorResult('notFound', `DID not found via HTTP: ${did}`, startMs, 'http');
+          }
+          return this.errorResult('internalError', `HTTP resolution failed with status ${response.status}`, startMs, 'http');
+        }
+
+        const body = await response.json();
+        didDocument = this.parseHTTPResponseToDIDDocument(body, did);
+      } catch (fetchErr: unknown) {
+        const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        if (msg.includes('abort') || msg.includes('AbortError')) {
+          return this.errorResult('timeout', `HTTP resolution timed out after ${timeout}ms`, startMs, 'http');
+        }
+        return this.errorResult('internalError', `Failed to resolve via HTTP: ${msg}`, startMs, 'http');
+      }
+
+      const resMeta: DIDResolutionMetadata = {
+        contentType: 'application/did+ld+json',
+        retrieved: new Date().toISOString(),
+        duration: Date.now() - startMs,
+        method: 'stellar-http',
+        network: this.config.network,
+      };
+
+      const docMeta: DIDDocumentMetadata = {
+        created: didDocument.created ? new Date(didDocument.created).toISOString() : undefined,
+        updated: didDocument.updated ? new Date(didDocument.updated).toISOString() : undefined,
+        canonicalId: did,
+      };
+
+      const resolution: W3CResolutionResult = { didDocument, didResolutionMetadata: resMeta, didDocumentMetadata: docMeta };
+      this.httpCache.set(cacheKey, { result: resolution, expiresAt: Date.now() + HTTP_CACHE_TTL_MS });
+      return resolution;
+    } catch (err: unknown) {
+      return this.errorResult('internalError', err instanceof Error ? err.message : String(err), startMs, 'http');
+    }
+  }
+
+  async resolveWithFallback(did: string, options?: DIDResolveOptions): Promise<W3CResolutionResult> {
+    let lastError: W3CResolutionResult | null = null;
+
+    // Try contract resolution first
+    try {
+      const contractResult = await this.resolveContract(did);
+      if (!contractResult.didResolutionMetadata.error) {
+        return contractResult;
+      }
+      lastError = contractResult;
+    } catch {
+      lastError = this.errorResult('internalError', 'Contract resolution failed', Date.now());
+    }
+
+    // Fallback to TOML
+    try {
+      const tomlResult = await this.resolveViaTOML(did, options);
+      if (!tomlResult.didResolutionMetadata.error) {
+        return tomlResult;
+      }
+      lastError = tomlResult;
+    } catch {
+      lastError = this.errorResult('internalError', 'TOML resolution failed', Date.now());
+    }
+
+    // Fallback to HTTP
+    try {
+      const httpResult = await this.resolveViaHTTP(did, options?.endpoint, options);
+      if (!httpResult.didResolutionMetadata.error) {
+        return httpResult;
+      }
+      lastError = httpResult;
+    } catch {
+      lastError = this.errorResult('internalError', 'HTTP resolution failed', Date.now());
+    }
+
+    return lastError || this.errorResult('notFound', `DID not resolvable via any method: ${did}`, Date.now());
   }
 
   async resolveWithTOML(did: string, domain: string): Promise<DIDDocument | null> {
@@ -300,6 +527,8 @@ export class DIDResolver {
 
   clearCache(): void {
     this.cache.clear();
+    this.tomlCache.clear();
+    this.httpCache.clear();
   }
 
   private async submitUpdateDID(keypair: Keypair, verificationMethods: VerificationMethod[], services: Service[]): Promise<void> {
@@ -413,6 +642,94 @@ export class DIDResolver {
   }
 
   private parseDIDStellarTOML(toml: string): Service[] {
+    return this.extractDIDServicesFromTOML(toml);
+  }
+
+  private parseStellarTOMLToDIDDocument(tomlContent: string, address: string, did: string): DIDDocument {
+    const toml = this.parseTOMLKeyValues(tomlContent);
+
+    // Parse DID_SERVICES blocks using shared helper
+    const services = this.extractDIDServicesFromTOML(tomlContent);
+
+    // Parse verification methods from TOML
+    const verificationMethods: VerificationMethod[] = [];
+    const publicKey = toml['DID_PUBLIC_KEY'] || address;
+    if (publicKey) {
+      verificationMethods.push({
+        id: '#key-1',
+        type: 'Ed25519VerificationKey2018',
+        controller: did,
+        publicKey,
+      });
+    }
+
+    const now = Date.now();
+    return {
+      id: did,
+      controller: toml['DID_CONTROLLER'] || address,
+      verificationMethod: verificationMethods,
+      authentication: toml['DID_AUTHENTICATION'] ? [toml['DID_AUTHENTICATION']] : ['#key-1'],
+      service: services,
+      created: now,
+      updated: now,
+    };
+  }
+
+  private parseHTTPResponseToDIDDocument(body: Record<string, unknown>, did: string): DIDDocument {
+    const doc = (body.didDocument || body) as Record<string, unknown>;
+    const toStr = (v: unknown): string => {
+      if (v == null) return '';
+      if (typeof v === 'string') return v;
+      return String(v);
+    };
+
+    return {
+      id: toStr(doc.id) || did,
+      controller: toStr(doc.controller),
+      verificationMethod: Array.isArray(doc.verificationMethod)
+        ? (doc.verificationMethod as unknown[]).map((vm: unknown) => {
+            const v = vm as Record<string, unknown>;
+            return {
+              id: toStr(v.id),
+              type: toStr(v.type),
+              controller: toStr(v.controller),
+              publicKey: toStr(v.publicKey),
+            };
+          })
+        : [],
+      authentication: Array.isArray(doc.authentication) ? (doc.authentication as unknown[]).map(toStr) : [],
+      service: Array.isArray(doc.service)
+        ? (doc.service as unknown[]).map((s: unknown) => {
+            const sv = s as Record<string, unknown>;
+            return { id: toStr(sv.id), type: toStr(sv.type), endpoint: toStr(sv.endpoint) };
+          })
+        : [],
+      created: Number(doc.created ?? Date.now()),
+      updated: Number(doc.updated ?? Date.now()),
+    };
+  }
+
+  private parseTOMLKeyValues(toml: string): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const line of toml.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('[')) {
+        const eq = trimmed.indexOf('=');
+        if (eq !== -1) {
+          const key = trimmed.slice(0, eq).trim();
+          const value = trimmed.slice(eq + 1).trim().replace(/"/g, '');
+          result[key] = value;
+        }
+      }
+    }
+    return result;
+  }
+
+  private inferDomainFromAddress(_address: string): string {
+    return 'stellar.org';
+  }
+
+  private extractDIDServicesFromTOML(toml: string): Service[] {
     const services: Service[] = [];
     const block = /\[\[DID_SERVICES\]\]([\s\S]*?)(?=\[\[|$)/g;
     let match: RegExpExecArray | null;
@@ -425,10 +742,10 @@ export class DIDResolver {
     return services;
   }
 
-  private errorResult(code: string, message: string, startMs: number): W3CResolutionResult {
+  private errorResult(code: string, message: string, startMs: number, method?: string): W3CResolutionResult {
     return {
       didDocument: {},
-      didResolutionMetadata: { error: code, message, duration: Date.now() - startMs, retrieved: new Date().toISOString() },
+      didResolutionMetadata: { error: code, message, duration: Date.now() - startMs, retrieved: new Date().toISOString(), method },
       didDocumentMetadata: {},
     };
   }
