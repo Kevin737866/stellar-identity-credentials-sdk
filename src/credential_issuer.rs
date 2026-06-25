@@ -186,7 +186,7 @@ impl CredentialIssuer {
 
         env.events().publish(
             (Symbol::new(&env, "CredentialIssued"),),
-            (credential_id.clone(), issuer),
+            (credential_id.clone(), issuer.clone()),
         );
 
         Ok(credential_id)
@@ -338,15 +338,15 @@ impl CredentialIssuer {
             .persistent()
             .set(&CredKey::Status(credential_id.clone()), &1u32);
 
-        if let Some(reason_bytes) = reason {
+        if let Some(ref reason_bytes) = reason {
             env.storage()
                 .persistent()
-                .set(&CredKey::Reason(credential_id), &reason_bytes);
+                .set(&CredKey::Reason(credential_id.clone()), &reason_bytes);
         }
 
         env.events().publish(
             (Symbol::new(&env, "CredentialRevoked"),),
-            (credential_id, issuer, reason),
+            (credential_id.clone(), issuer.clone(), reason),
         );
 
         Ok(())
@@ -490,7 +490,7 @@ impl CredentialIssuer {
         delegate_auths.push_back(auth_id.clone());
         env.storage()
             .persistent()
-            .set(&CredKey::DelegateAuths(delegate), &delegate_auths);
+            .set(&CredKey::DelegateAuths(delegate.clone()), &delegate_auths);
 
         let mut delegator_auths: Vec<Bytes> = env
             .storage()
@@ -500,11 +500,11 @@ impl CredentialIssuer {
         delegator_auths.push_back(auth_id.clone());
         env.storage()
             .persistent()
-            .set(&CredKey::DelegatorAuths(delegator), &delegator_auths);
+            .set(&CredKey::DelegatorAuths(delegator.clone()), &delegator_auths);
 
         env.events().publish(
             (Symbol::new(&env, "DelegationAuthorized"),),
-            (auth_id.clone(), delegator, delegate),
+            (auth_id.clone(), delegator.clone(), delegate.clone()),
         );
 
         Ok(auth_id)
@@ -640,7 +640,7 @@ impl CredentialIssuer {
         issuer_creds.push_back(credential_id.clone());
         env.storage()
             .persistent()
-            .set(&CredKey::IssuerCreds(auth.delegator), &issuer_creds);
+            .set(&CredKey::IssuerCreds(issuer.clone()), &issuer_creds);
 
         let mut subject_creds: Vec<Bytes> = env
             .storage()
@@ -655,7 +655,7 @@ impl CredentialIssuer {
         auth.issued_count += 1;
         env.storage()
             .persistent()
-            .set(&CredKey::Delegation(auth_id), &auth);
+            .set(&CredKey::Delegation(auth_id.clone()), &auth);
 
         env.events().publish(
             (Symbol::new(&env, "DelegatedCredentialIssued"),),
@@ -834,13 +834,13 @@ impl CredentialIssuer {
                         .set(&CredKey::Reason(credential_id.clone()), r);
                 }
 
-                let proof_nonce = Bytes::from_slice(
-                    &env,
-                    env.crypto()
-                        .sha256(&Bytes::from_slice(&env, format!("{}{}", now, credential_id.clone()).as_bytes()))
-                        .to_array()
-                        .as_slice(),
-                );
+                let proof_nonce: Bytes = env.crypto()
+                    .sha256(&{
+                        let mut digest = Bytes::from_slice(&env, &now.to_string().as_bytes());
+                        digest.append(&credential_id);
+                        digest
+                    })
+                    .into();
 
                 let proof = RevocationProof {
                     registry_id: registry_id.clone(),

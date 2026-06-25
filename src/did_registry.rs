@@ -1,8 +1,8 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
 };
 
-use crate::{DIDDocument, Service, VerificationMethod};
+use crate::DIDDocument;
 
 // ---------------------------------------------------------------------------
 // Multi-Signature Types (#93)
@@ -673,7 +673,7 @@ impl DIDRegistry {
             .get(&DidKey::MultiSig(operation.did.clone()))
             .ok_or(DIDRegistryError::NotFound)?;
 
-        if operation.approvals.len() as u32 < config.threshold {
+        if (operation.approvals.len() as u32) < config.threshold {
             return Err(DIDRegistryError::Unauthorized);
         }
 

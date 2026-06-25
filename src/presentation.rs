@@ -29,14 +29,14 @@ pub struct SelectiveDisclosureEntry {
 fn make_disclosure_key(env: &Env, presentation_id: &Bytes) -> Bytes {
     let prefix = Bytes::from_slice(env, b"disclosure:");
     let mut key = prefix;
-    key.append(presentation_id.clone());
+    key.append(presentation_id);
     key
 }
 
 fn make_fulfillment_key(env: &Env, request_id: &Bytes) -> Bytes {
     let prefix = Bytes::from_slice(env, b"fulfillment:");
     let mut key = prefix;
-    key.append(request_id.clone());
+    key.append(request_id);
     key
 }
 
@@ -352,14 +352,20 @@ impl PresentationManager {
     /// Generate a unique presentation ID.
     fn generate_presentation_id(env: &Env, holder: &Address) -> Bytes {
         let timestamp = env.ledger().timestamp();
-        let id_string = format!("vp:{}:{}", holder.to_string(), timestamp);
-        Bytes::from_slice(env, id_string.as_bytes())
+        let mut id = Bytes::from_slice(env, b"vp:");
+        id.append(&holder.to_string().to_bytes());
+        id.append(&Bytes::from_slice(env, b":"));
+        id.append(&Bytes::from_slice(env, &timestamp.to_string().as_bytes()));
+        id
     }
 
     /// Generate a unique request ID.
     fn generate_request_id(env: &Env, verifier: &Address) -> Bytes {
         let timestamp = env.ledger().timestamp();
-        let id_string = format!("req:{}:{}", verifier.to_string(), timestamp);
-        Bytes::from_slice(env, id_string.as_bytes())
+        let mut id = Bytes::from_slice(env, b"req:");
+        id.append(&verifier.to_string().to_bytes());
+        id.append(&Bytes::from_slice(env, b":"));
+        id.append(&Bytes::from_slice(env, &timestamp.to_string().as_bytes()));
+        id
     }
 }

@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, Address, Bytes, Env, Vec,
+    contract, contracterror, contractimpl, Address, Bytes, Env,
 };
 
 use crate::CredentialSchema;
@@ -149,18 +149,18 @@ impl CredentialSchemaRegistry {
     fn make_version_key(env: &Env, schema_id: &Bytes) -> Bytes {
         let prefix = Bytes::from_slice(env, b"version:");
         let mut key = prefix;
-        key.append(schema_id.clone());
+        key.append(&schema_id);
         key
     }
 
     fn get_version_key(env: &Env, schema_id: &Bytes, version: u32) -> Bytes {
         let prefix = Bytes::from_slice(env, b"schema:");
         let mut key = prefix;
-        key.append(schema_id.clone());
+        key.append(&schema_id);
         let mut suffix = Bytes::from_slice(env, b":v");
         let version_bytes = Bytes::from_slice(env, &version.to_string().as_bytes());
-        suffix.append(version_bytes);
-        key.append(suffix);
+        suffix.append(&version_bytes);
+        key.append(&suffix);
         key
     }
 }

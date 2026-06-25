@@ -188,7 +188,7 @@ impl ComplianceFilter {
         env.storage()
             .instance()
             .set(&Symbol::new(&env, KEY_ORACLES), &oracles);
-        env.events().publish(Symbol::new(&env, "oracle_reg"), oracle);
+        env.events().publish((Symbol::new(&env, "oracle_reg"),), oracle);
         Ok(())
     }
 
@@ -680,7 +680,7 @@ impl ComplianceFilter {
         let k = CfKey::Rule(jurisdiction.clone());
         Self::persist(&env, &k, &rule);
 
-        env.events().publish(Symbol::new(&env, "rule_reg"), jurisdiction);
+        env.events().publish((Symbol::new(&env, "rule_reg"),), jurisdiction);
         Ok(())
     }
 

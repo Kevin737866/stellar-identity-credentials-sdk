@@ -264,7 +264,7 @@ impl ReputationScore {
         env: Env,
         address: Address,
     ) -> Result<u32, ReputationScoreError> {
-        let target = Self::load_profile(&env, &address)?.score;
+        let target = Self::load_profile(&env, address.clone())?.score;
         let population: Vec<Address> = env
             .storage()
             .persistent()
@@ -278,7 +278,7 @@ impl ReputationScore {
 
         let mut below_or_equal = 0u32;
         for subject in population.iter() {
-            if let Ok(candidate) = Self::load_profile(&env, &subject) {
+            if let Ok(candidate) = Self::load_profile(&env, subject.clone()) {
                 if candidate.score <= target {
                     below_or_equal += 1;
                 }
@@ -296,7 +296,7 @@ impl ReputationScore {
         address: Address,
         threshold: u32,
     ) -> Result<bool, ReputationScoreError> {
-        let profile = Self::load_profile(&env, &address)?;
+        let profile = Self::load_profile(&env, address.clone())?;
         let scaled = threshold.saturating_mul(SCORE_SCALE);
         Ok(profile.score >= scaled)
     }
@@ -362,7 +362,7 @@ impl ReputationScore {
         }
 
         let config = Self::get_config(&env);
-        let mut profile = Self::load_profile(&env, &address)?;
+        let mut profile = Self::load_profile(&env, address.clone())?;
 
         profile.total_credentials += 1;
         if valid {
@@ -530,7 +530,7 @@ impl ReputationScore {
 
     pub fn load_profile(
         env: &Env,
-        address: &Address,
+        address: Address,
     ) -> Result<ReputationData, ReputationScoreError> {
         env.storage()
             .persistent()
@@ -728,7 +728,7 @@ mod tests {
             .unwrap();
         ReputationScore::update_transaction_reputation(env.clone(), user.clone(), true, 300)
             .unwrap();
-        let profile = ReputationScore::load_profile(&env, &user).unwrap();
+        let profile = ReputationScore::load_profile(&env, user.clone()).unwrap();
         assert_eq!(profile.volume, 800);
     }
 

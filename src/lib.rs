@@ -2,6 +2,7 @@ extern crate alloc;
 
 pub mod did_registry;
 pub mod credential_issuer;
+pub mod credential_schema;
 pub mod schema_registry;
 pub mod presentation;
 pub mod reputation_score;
