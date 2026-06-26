@@ -16,6 +16,7 @@ pub mod reputation_oracle;
 pub mod dif_interop;
 pub mod regulatory_reporting;
 pub mod audit_trail;
+pub mod contract_upgrade_governance;
 
 #[cfg(test)]
 mod integration_tests;
@@ -58,6 +59,20 @@ pub use reputation_oracle::OracleDispute;
 pub use reputation_oracle::DisputeStatus;
 pub use reputation_oracle::ReputationOracleError;
 pub use reputation_oracle::PaginatedFeeds;
+pub use contract_upgrade_governance::ContractUpgradeGovernance;
+pub use contract_upgrade_governance::GovernanceConfig;
+pub use contract_upgrade_governance::Governor;
+pub use contract_upgrade_governance::UpgradeProposal;
+pub use contract_upgrade_governance::ProposalType;
+pub use contract_upgrade_governance::ProposalStatus;
+pub use contract_upgrade_governance::VoteType;
+pub use contract_upgrade_governance::VoteRecord;
+pub use contract_upgrade_governance::ExecutedUpgrade;
+pub use contract_upgrade_governance::SimulationResult;
+pub use contract_upgrade_governance::RollbackSnapshot;
+pub use contract_upgrade_governance::PaginatedProposals;
+pub use contract_upgrade_governance::PaginatedGovernors;
+pub use contract_upgrade_governance::GovernanceError;
 pub use regulatory_reporting::RegulatoryReporting;
 pub use regulatory_reporting::ReportTemplate;
 pub use regulatory_reporting::TemplateSection;
