@@ -145,6 +145,7 @@ export type {
   SanctionsList,
   StellarIdentityConfig,
   CreateDIDOptions,
+  UpdateDIDOptions,
   IssueCredentialOptions,
   ZKProofOptions,
   ComplianceCheckOptions,
