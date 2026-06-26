@@ -26,6 +26,9 @@ export type { ProgressProps } from './components/ui/progress';
 export { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/tabs';
 export type { TabsProps, TabsTriggerProps, TabsContentProps } from './components/ui/tabs';
 
+export { Checkbox } from './components/ui/checkbox';
+export type { CheckboxProps } from './components/ui/checkbox';
+
 // Layout
 export { Layout } from './components/Layout';
 export type { LayoutProps, NavItem } from './components/Layout';
