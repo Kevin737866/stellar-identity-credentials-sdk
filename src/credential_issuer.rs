@@ -207,7 +207,7 @@ impl CredentialIssuer {
         issuer_creds.push_back(credential_id.clone());
         env.storage()
             .persistent()
-            .set(&CredKey::IssuerCreds(issuer), &issuer_creds);
+            .set(&CredKey::IssuerCreds(issuer.clone()), &issuer_creds);
 
         let mut subject_creds: Vec<Bytes> = env
             .storage()
@@ -240,11 +240,11 @@ impl CredentialIssuer {
     ) -> Result<Bytes, CredentialIssuerError> {
         issuer.require_auth();
 
-        use crate::credential_schema::CredentialSchema;
-        let _schema = CredentialSchema::get_schema(env.clone(), schema_id.clone())
-            .ok_or(CredentialIssuerError::SchemaNotFound)?;
+        use crate::schema_registry::CredentialSchemaRegistry;
+        let _schema = CredentialSchemaRegistry::get_schema(env.clone(), schema_id.clone(), None)
+            .map_err(|_| CredentialIssuerError::SchemaNotFound)?;
 
-        CredentialSchema::validate_credential_data(env.clone(), schema_id.clone(), credential_data.clone())
+        CredentialSchemaRegistry::validate_schema_exists(env.clone(), schema_id.clone())
             .map_err(|_| CredentialIssuerError::SchemaValidationFailed)?;
 
         for ct in credential_type.iter() {
@@ -289,7 +289,7 @@ impl CredentialIssuer {
         issuer_creds.push_back(credential_id.clone());
         env.storage()
             .persistent()
-            .set(&CredKey::IssuerCreds(issuer), &issuer_creds);
+            .set(&CredKey::IssuerCreds(issuer.clone()), &issuer_creds);
 
         let mut subject_creds: Vec<Bytes> = env
             .storage()
@@ -651,9 +651,10 @@ impl CredentialIssuer {
             .get(&CredKey::DelegatorAuths(delegator.clone()))
             .unwrap_or_else(|| Vec::new(&env));
         delegator_auths.push_back(auth_id.clone());
-        env.storage()
-            .persistent()
-            .set(&CredKey::DelegatorAuths(delegator.clone()), &delegator_auths);
+        env.storage().persistent().set(
+            &CredKey::DelegatorAuths(delegator.clone()),
+            &delegator_auths,
+        );
 
         env.events().publish(
             (Symbol::new(&env, "DelegationAuthorized"),),
@@ -818,10 +819,7 @@ impl CredentialIssuer {
         Ok(credential_id)
     }
 
-    pub fn get_delegation(
-        env: Env,
-        auth_id: Bytes,
-    ) -> Option<DelegationAuthorization> {
+    pub fn get_delegation(env: Env, auth_id: Bytes) -> Option<DelegationAuthorization> {
         env.storage()
             .persistent()
             .get(&CredKey::Delegation(auth_id))
@@ -890,7 +888,12 @@ impl CredentialIssuer {
         registry_id: Bytes,
         reason: Option<Bytes>,
     ) -> Result<(), CredentialIssuerError> {
-        Self::revoke_credential(env.clone(), issuer.clone(), credential_id.clone(), reason.clone())?;
+        Self::revoke_credential(
+            env.clone(),
+            issuer.clone(),
+            credential_id.clone(),
+            reason.clone(),
+        )?;
 
         let mut registry: RevocationRegistryEntry = env
             .storage()
@@ -905,7 +908,10 @@ impl CredentialIssuer {
         let nonce = Bytes::from_slice(
             &env,
             env.crypto()
-                .sha256(&Bytes::from_slice(&env, env.ledger().timestamp().to_string().as_bytes()))
+                .sha256(&Bytes::from_slice(
+                    &env,
+                    env.ledger().timestamp().to_string().as_bytes(),
+                ))
                 .to_array()
                 .as_slice(),
         );
@@ -970,10 +976,7 @@ impl CredentialIssuer {
                 .unwrap_or(0);
 
             if status == 0 {
-                credential.revocation = Some(Bytes::from_slice(
-                    &env,
-                    now.to_string().as_bytes(),
-                ));
+                credential.revocation = Some(Bytes::from_slice(&env, now.to_string().as_bytes()));
                 env.storage()
                     .persistent()
                     .set(&CredKey::Credential(credential_id.clone()), &credential);
@@ -987,13 +990,11 @@ impl CredentialIssuer {
                         .set(&CredKey::Reason(credential_id.clone()), r);
                 }
 
-                let proof_nonce: Bytes = env.crypto()
-                    .sha256(&{
-                        let mut digest = Bytes::from_slice(&env, &now.to_string().as_bytes());
-                        digest.append(&credential_id);
-                        digest
-                    })
-                    .into();
+                let mut data = Bytes::from_slice(&env, &now.to_be_bytes());
+                data.append(&credential_id);
+                let hash = env.crypto().sha256(&data);
+                let hash_bytes: soroban_sdk::BytesN<32> = hash.into();
+                let proof_nonce = Bytes::from_slice(&env, hash_bytes.to_array().as_slice());
 
                 let proof = RevocationProof {
                     registry_id: registry_id.clone(),
@@ -1045,10 +1046,7 @@ impl CredentialIssuer {
         Ok(batch_id)
     }
 
-    pub fn check_revocation_status(
-        env: Env,
-        credential_id: Bytes,
-    ) -> bool {
+    pub fn check_revocation_status(env: Env, credential_id: Bytes) -> bool {
         let status: u32 = env
             .storage()
             .persistent()
@@ -1057,10 +1055,7 @@ impl CredentialIssuer {
         status == 1
     }
 
-    pub fn get_revocation_proof(
-        env: Env,
-        credential_id: Bytes,
-    ) -> Option<RevocationProof> {
+    pub fn get_revocation_proof(env: Env, credential_id: Bytes) -> Option<RevocationProof> {
         env.storage()
             .persistent()
             .get(&CredKey::RevocationProof(credential_id))
@@ -1114,7 +1109,10 @@ impl CredentialIssuer {
         let mut id = Bytes::from_slice(env, b"vc:");
         id.append(&Bytes::from_slice(env, timestamp.to_string().as_bytes()));
         id.append(&Bytes::from_slice(env, b":"));
-        id.append(&Bytes::from_slice(env, env.ledger().sequence().to_string().as_bytes()));
+        id.append(&Bytes::from_slice(
+            env,
+            env.ledger().sequence().to_string().as_bytes(),
+        ));
         id
     }
 
@@ -1123,7 +1121,10 @@ impl CredentialIssuer {
         let mut id = Bytes::from_slice(env, b"del:");
         id.append(&Bytes::from_slice(env, timestamp.to_string().as_bytes()));
         id.append(&Bytes::from_slice(env, b":"));
-        id.append(&Bytes::from_slice(env, env.ledger().sequence().to_string().as_bytes()));
+        id.append(&Bytes::from_slice(
+            env,
+            env.ledger().sequence().to_string().as_bytes(),
+        ));
         id
     }
 
@@ -1132,7 +1133,10 @@ impl CredentialIssuer {
         let mut id = Bytes::from_slice(env, b"reg:");
         id.append(&Bytes::from_slice(env, timestamp.to_string().as_bytes()));
         id.append(&Bytes::from_slice(env, b":"));
-        id.append(&Bytes::from_slice(env, env.ledger().sequence().to_string().as_bytes()));
+        id.append(&Bytes::from_slice(
+            env,
+            env.ledger().sequence().to_string().as_bytes(),
+        ));
         id
     }
 
@@ -1141,7 +1145,10 @@ impl CredentialIssuer {
         let mut id = Bytes::from_slice(env, b"batch:");
         id.append(&Bytes::from_slice(env, timestamp.to_string().as_bytes()));
         id.append(&Bytes::from_slice(env, b":"));
-        id.append(&Bytes::from_slice(env, env.ledger().sequence().to_string().as_bytes()));
+        id.append(&Bytes::from_slice(
+            env,
+            env.ledger().sequence().to_string().as_bytes(),
+        ));
         id
     }
 

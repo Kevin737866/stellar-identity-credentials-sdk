@@ -154,7 +154,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'age_range_proof',
           publicInputs: [commitment, minAge.toString()],
@@ -217,7 +217,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'income_range_proof',
           publicInputs: [commitment, minIncome.toString()],
@@ -294,7 +294,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'kyc_composite_proof',
           publicInputs: [credential.hash],
@@ -361,7 +361,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'loan_application_composite_proof',
           publicInputs: Object.values(publicInputs).map(v => v.toString()),

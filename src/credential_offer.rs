@@ -232,7 +232,7 @@ impl CredentialOfferContract {
         // Emit event
         env.events().publish(
             (Symbol::new(&env, "CredentialOfferCreated"),),
-            (offer_id.clone(), issuer, holder),
+            (offer_id.clone(), issuer.clone(), holder.clone()),
         );
 
         Ok(offer_id)
@@ -293,7 +293,10 @@ impl CredentialOfferContract {
             &offer.credential_data,
             offer.schema_id.clone(),
             None, // No additional expiration beyond what's in the offer
-            offer.proof.clone().unwrap_or_else(|| Bytes::from_slice(&env, b"offer_acceptance")),
+            offer
+                .proof
+                .clone()
+                .unwrap_or_else(|| Bytes::from_slice(&env, b"offer_acceptance")),
         )?;
 
         // Update offer status
@@ -305,7 +308,12 @@ impl CredentialOfferContract {
             .persistent()
             .set(&OfferKey::Offer(offer_id.clone()), &offer);
 
-        Self::update_offer_status(&env, &offer_id, OfferStatusCode::Accepted, Some(credential_id.clone()));
+        Self::update_offer_status(
+            &env,
+            &offer_id,
+            OfferStatusCode::Accepted,
+            Some(credential_id.clone()),
+        );
 
         // Emit event
         env.events().publish(
@@ -347,8 +355,6 @@ impl CredentialOfferContract {
             OfferStatusCode::Expired => return Err(CredentialOfferError::OfferExpired),
             OfferStatusCode::Pending => {}
         }
-
-        let _now = env.ledger().timestamp();
 
         offer.status = OfferStatusCode::Rejected;
         offer.rejection_reason = reason.clone();
@@ -398,8 +404,6 @@ impl CredentialOfferContract {
             OfferStatusCode::Expired => return Err(CredentialOfferError::OfferExpired),
             OfferStatusCode::Pending => {}
         }
-
-        let _now = env.ledger().timestamp();
 
         offer.status = OfferStatusCode::Cancelled;
 
@@ -462,10 +466,7 @@ impl CredentialOfferContract {
     }
 
     /// Get the full credential offer by ID.
-    pub fn get_offer(
-        env: Env,
-        offer_id: Bytes,
-    ) -> Result<CredentialOffer, CredentialOfferError> {
+    pub fn get_offer(env: Env, offer_id: Bytes) -> Result<CredentialOffer, CredentialOfferError> {
         let mut offer: CredentialOffer = env
             .storage()
             .persistent()
@@ -499,7 +500,7 @@ impl CredentialOfferContract {
     pub fn get_issuer_offers(env: Env, issuer: Address) -> Vec<Bytes> {
         env.storage()
             .persistent()
-            .get(&OfferKey::IssuerOffers(issuer))
+            .get(&OfferKey::IssuerOffers(issuer.clone()))
             .unwrap_or_else(|| Vec::new(&env))
     }
 
@@ -528,7 +529,7 @@ impl CredentialOfferContract {
         let all: Vec<Bytes> = env
             .storage()
             .persistent()
-            .get(&OfferKey::IssuerOffers(issuer))
+            .get(&OfferKey::IssuerOffers(issuer.clone()))
             .unwrap_or_else(|| Vec::new(&env));
         Self::paginate(&env, &all, page, page_size)
     }
@@ -592,10 +593,7 @@ impl CredentialOfferContract {
     fn generate_offer_id(env: &Env, _issuer: &Address, _holder: &Address) -> Bytes {
         let timestamp = env.ledger().timestamp();
         let mut id = Bytes::from_slice(env, b"offer:");
-        id.append(&Bytes::from_slice(
-            env,
-            timestamp.to_string().as_bytes(),
-        ));
+        id.append(&Bytes::from_slice(env, timestamp.to_string().as_bytes()));
         id.append(&Bytes::from_slice(env, b":"));
         id.append(&Bytes::from_slice(
             env,
@@ -633,7 +631,8 @@ impl CredentialOfferContract {
     ) -> Result<Bytes, CredentialOfferError> {
         // Generate a unique credential ID
         let timestamp = env.ledger().timestamp();
-        let mut cred_id_bytes: alloc::vec::Vec<u8> = alloc::vec![b'v', b'c', b':', b'o', b'f', b'f', b'e', b'r', b':'];
+        let mut cred_id_bytes: alloc::vec::Vec<u8> =
+            alloc::vec![b'v', b'c', b':', b'o', b'f', b'f', b'e', b'r', b':'];
         let ts_str = alloc::format!("{}", timestamp);
         let seq_str = alloc::format!("{}", env.ledger().sequence());
         cred_id_bytes.extend_from_slice(ts_str.as_bytes());
@@ -662,12 +661,7 @@ impl CredentialOfferContract {
         Ok(cred_id)
     }
 
-    fn paginate(
-        env: &Env,
-        items: &Vec<Bytes>,
-        page: u32,
-        page_size: u32,
-    ) -> PaginatedOffers {
+    fn paginate(env: &Env, items: &Vec<Bytes>, page: u32, page_size: u32) -> PaginatedOffers {
         let size = clamp_page_size(page_size);
         let total = items.len() as u32;
         let start = page * size;
@@ -791,8 +785,7 @@ mod tests {
 
         assert!(!credential_id.is_empty());
 
-        let offer =
-            CredentialOfferContract::get_offer(env.clone(), offer_id.clone()).unwrap();
+        let offer = CredentialOfferContract::get_offer(env.clone(), offer_id.clone()).unwrap();
         assert_eq!(offer.status, OfferStatusCode::Accepted);
         assert!(offer.accepted_at.is_some());
         assert_eq!(offer.resulting_credential_id.unwrap(), credential_id);
@@ -820,8 +813,7 @@ mod tests {
         CredentialOfferContract::accept_offer(env.clone(), holder.clone(), offer_id.clone())
             .unwrap();
 
-        let result =
-            CredentialOfferContract::accept_offer(env.clone(), holder, offer_id);
+        let result = CredentialOfferContract::accept_offer(env.clone(), holder, offer_id);
         assert!(result.is_err());
         assert_eq!(result.err().unwrap(), CredentialOfferError::AlreadyAccepted);
     }
@@ -854,8 +846,7 @@ mod tests {
         )
         .unwrap();
 
-        let offer =
-            CredentialOfferContract::get_offer(env.clone(), offer_id).unwrap();
+        let offer = CredentialOfferContract::get_offer(env.clone(), offer_id).unwrap();
         assert_eq!(offer.status, OfferStatusCode::Rejected);
         assert_eq!(offer.rejection_reason, Some(reason));
     }
@@ -881,8 +872,7 @@ mod tests {
 
         CredentialOfferContract::cancel_offer(env.clone(), issuer, offer_id.clone()).unwrap();
 
-        let offer =
-            CredentialOfferContract::get_offer(env.clone(), offer_id).unwrap();
+        let offer = CredentialOfferContract::get_offer(env.clone(), offer_id).unwrap();
         assert_eq!(offer.status, OfferStatusCode::Cancelled);
     }
 
@@ -968,12 +958,8 @@ mod tests {
         assert_eq!(page0.total, 25);
         assert!(page0.has_more);
 
-        let page2 = CredentialOfferContract::get_holder_offers_paginated(
-            env.clone(),
-            holder,
-            2,
-            10,
-        );
+        let page2 =
+            CredentialOfferContract::get_holder_offers_paginated(env.clone(), holder, 2, 10);
         assert_eq!(page2.data.len(), 5);
         assert!(!page2.has_more);
     }
@@ -1000,8 +986,7 @@ mod tests {
         CredentialOfferContract::reject_offer(env.clone(), holder.clone(), offer_id.clone(), None)
             .unwrap();
 
-        let result =
-            CredentialOfferContract::reject_offer(env.clone(), holder, offer_id, None);
+        let result = CredentialOfferContract::reject_offer(env.clone(), holder, offer_id, None);
         assert!(result.is_err());
         assert_eq!(result.err().unwrap(), CredentialOfferError::AlreadyRejected);
     }

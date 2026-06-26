@@ -211,25 +211,8 @@ export interface SanctionsList {
   entries: string[];
 }
 
-/**
- * Main configuration object for the Stellar Identity SDK.
- * Specifies network, contract addresses, and RPC endpoints.
- * @category Types
- * @example
- * ```typescript
- * const config: StellarIdentityConfig = {
- *   network: 'testnet',
- *   contracts: {
- *     didRegistry: '0x...',
- *     credentialIssuer: '0x...',
- *     reputationScore: '0x...',
- *     zkAttestation: '0x...',
- *     complianceFilter: '0x...'
- *   },
- *   rpcUrl: 'https://soroban-testnet.stellar.org'
- * };
- * ```
- */
+import { Keypair } from 'stellar-sdk';
+
 export interface StellarIdentityConfig {
   network: 'mainnet' | 'testnet' | 'futurenet';
   contracts: {
@@ -241,7 +224,7 @@ export interface StellarIdentityConfig {
   };
   rpcUrl?: string;
   horizonUrl?: string;
-  keypair?: any; // Use any for now to avoid importing Keypair if not needed here
+  keypair?: Keypair;
 }
 
 export interface CreateDIDOptions {

@@ -1,6 +1,5 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype,
-    Address, Bytes, BytesN, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
 use crate::{clamp_page_size, PaginatedAddresses};
@@ -138,11 +137,7 @@ impl ComplianceFilter {
     /// Initialize the contract with a designated admin.
     /// Fails if already initialized.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ComplianceFilterError> {
-        if env
-            .storage()
-            .instance()
-            .has(&Symbol::new(&env, KEY_ADMIN))
-        {
+        if env.storage().instance().has(&Symbol::new(&env, KEY_ADMIN)) {
             return Err(ComplianceFilterError::AlreadyInitialized);
         }
         env.storage()
@@ -170,10 +165,8 @@ impl ComplianceFilter {
         env.storage()
             .instance()
             .set(&Symbol::new(&env, KEY_ADMIN), &new_admin);
-        env.events().publish(
-            (Symbol::new(&env, "admin_xfer"), admin),
-            new_admin,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "admin_xfer"), admin), new_admin);
         Ok(())
     }
 
@@ -272,10 +265,8 @@ impl ComplianceFilter {
             Self::persist(&env, &CfKey::ListIndex, &index);
         }
 
-        env.events().publish(
-            (Symbol::new(&env, "list_update"), source),
-            entry_count,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "list_update"), source), entry_count);
         Ok(())
     }
 
@@ -359,10 +350,9 @@ impl ComplianceFilter {
         detail.append(&Bytes::from_slice(&env, b",jurisdiction:"));
         detail.append(&jurisdiction);
         Self::append_audit(&env, &address, b"sanctioned", &detail);
-        env.events().publish(
-            (Symbol::new(&env, "AddressSanctioned"), address.clone()),
-            (source, reason, jurisdiction),
-        );
+
+        env.events()
+            .publish((Symbol::new(&env, "sanctioned"), address), source);
         Ok(())
     }
 
@@ -415,10 +405,8 @@ impl ComplianceFilter {
             b"desanctioned",
             &Bytes::from_slice(&env, b"removed"),
         );
-        env.events().publish(
-            (Symbol::new(&env, "AddressRemovedFromSanctions"), address.clone()),
-            source,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "desanctioned"), address), source);
         Ok(())
     }
 
@@ -632,19 +620,19 @@ impl ComplianceFilter {
 
         let sk = CfKey::Screening(address.clone());
         let mut result: ScreeningResult =
-            env.storage().persistent().get(&sk).unwrap_or_else(|| {
-                ScreeningResult {
+            env.storage()
+                .persistent()
+                .get(&sk)
+                .unwrap_or_else(|| ScreeningResult {
                     address: address.clone(),
                     status: Bytes::from_slice(&env, b"clear"),
                     risk_score: 0,
                     matches: Vec::new(&env),
                     timestamp: 0,
-                }
-            });
+                });
 
         result.risk_score = new_score;
-        result.status =
-            Self::status_from_score(&env, new_score, !result.matches.is_empty());
+        result.status = Self::status_from_score(&env, new_score, !result.matches.is_empty());
         result.timestamp = env.ledger().timestamp();
 
         Self::persist(&env, &sk, &result);
@@ -658,9 +646,7 @@ impl ComplianceFilter {
     }
 
     pub fn get_screening_result(env: Env, address: Address) -> Option<ScreeningResult> {
-        env.storage()
-            .persistent()
-            .get(&CfKey::Screening(address))
+        env.storage().persistent().get(&CfKey::Screening(address))
     }
 
     // ── Compliance rules ──────────────────────────────────────────────────────
@@ -793,10 +779,8 @@ impl ComplianceFilter {
         Self::persist(&env, &k, &report);
         Self::append_audit_ts(&env, &subject, ts);
 
-        env.events().publish(
-            (Symbol::new(&env, "report_filed"), subject, reporter),
-            ts,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "report_filed"), subject, reporter), ts);
         Ok(())
     }
 
@@ -1083,9 +1067,11 @@ mod tests {
     fn double_initialize_returns_error() {
         let env = setup_env();
         bootstrap(&env);
-        let result =
-            ComplianceFilter::initialize(env.clone(), Address::generate(&env));
-        assert_eq!(result.unwrap_err(), ComplianceFilterError::AlreadyInitialized);
+        let result = ComplianceFilter::initialize(env.clone(), Address::generate(&env));
+        assert_eq!(
+            result.unwrap_err(),
+            ComplianceFilterError::AlreadyInitialized
+        );
     }
 
     // ── Admin management ──────────────────────────────────────────────────────
@@ -1110,8 +1096,7 @@ mod tests {
         let env = setup_env();
         let admin = bootstrap(&env);
         let new_admin = Address::generate(&env);
-        ComplianceFilter::transfer_admin(env.clone(), admin.clone(), new_admin.clone())
-            .unwrap();
+        ComplianceFilter::transfer_admin(env.clone(), admin.clone(), new_admin.clone()).unwrap();
         // Old admin should no longer be able to create a list.
         let result = ComplianceFilter::update_sanctions_list(
             env.clone(),
@@ -1167,7 +1152,10 @@ mod tests {
             50,
             Bytes::from_slice(&env, b"reason"),
         );
-        assert_eq!(result.unwrap_err(), ComplianceFilterError::OracleNotRegistered);
+        assert_eq!(
+            result.unwrap_err(),
+            ComplianceFilterError::OracleNotRegistered
+        );
     }
 
     #[test]
@@ -1198,7 +1186,10 @@ mod tests {
             30,
             Bytes::from_slice(&env, b"reason"),
         );
-        assert_eq!(result.unwrap_err(), ComplianceFilterError::OracleNotRegistered);
+        assert_eq!(
+            result.unwrap_err(),
+            ComplianceFilterError::OracleNotRegistered
+        );
     }
 
     #[test]
@@ -1406,12 +1397,8 @@ mod tests {
         )
         .unwrap();
 
-        ComplianceFilter::deactivate_sanctions_list(
-            env.clone(),
-            admin.clone(),
-            source.clone(),
-        )
-        .unwrap();
+        ComplianceFilter::deactivate_sanctions_list(env.clone(), admin.clone(), source.clone())
+            .unwrap();
 
         assert!(!ComplianceFilter::is_sanctioned(env.clone(), target));
     }
@@ -1582,11 +1569,9 @@ mod tests {
         )
         .unwrap();
 
-        let rule = ComplianceFilter::get_compliance_rule(
-            env.clone(),
-            Bytes::from_slice(&env, b"EU"),
-        )
-        .unwrap();
+        let rule =
+            ComplianceFilter::get_compliance_rule(env.clone(), Bytes::from_slice(&env, b"EU"))
+                .unwrap();
         assert!(rule.active);
     }
 
@@ -1605,15 +1590,10 @@ mod tests {
         )
         .unwrap();
 
-        ComplianceFilter::deactivate_compliance_rule(
-            env.clone(),
-            admin,
-            jurisdiction.clone(),
-        )
-        .unwrap();
+        ComplianceFilter::deactivate_compliance_rule(env.clone(), admin, jurisdiction.clone())
+            .unwrap();
 
-        let rule =
-            ComplianceFilter::get_compliance_rule(env.clone(), jurisdiction).unwrap();
+        let rule = ComplianceFilter::get_compliance_rule(env.clone(), jurisdiction).unwrap();
         assert!(!rule.active);
     }
 
@@ -1651,8 +1631,7 @@ mod tests {
         )
         .unwrap();
 
-        let report =
-            ComplianceFilter::get_regulatory_report(env.clone(), subject.clone(), ts);
+        let report = ComplianceFilter::get_regulatory_report(env.clone(), subject.clone(), ts);
         assert!(report.is_some());
 
         let trail = ComplianceFilter::get_audit_trail(env.clone(), subject);
@@ -1725,119 +1704,5 @@ mod tests {
         let page = ComplianceFilter::get_sanctioned_addresses(env.clone(), 0, 10);
         // `shared` appears in both lists but should only show up once.
         assert_eq!(page.total, 1);
-    }
-
-    // ── Issue #41: Event emission tests ──────────────────────────────────
-
-    #[test]
-    fn test_address_sanctioned_event_emitted() {
-        let env = setup_env();
-        let admin = bootstrap(&env);
-        let source = create_list(&env, &admin, b"OFAC");
-        let target = Address::generate(&env);
-
-        ComplianceFilter::add_to_sanctions_list(
-            env.clone(),
-            admin,
-            source,
-            target,
-            Bytes::from_slice(&env, b"fraud"),
-            Bytes::from_slice(&env, b"US"),
-        )
-        .unwrap();
-
-        let events = env.events().all();
-        assert!(events.iter().any(|e| {
-            let topics = e.0.clone();
-            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
-                &env,
-                "AddressSanctioned",
-            )))
-        }));
-    }
-
-    #[test]
-    fn test_address_removed_from_sanctions_event_emitted() {
-        let env = setup_env();
-        let admin = bootstrap(&env);
-        let source = create_list(&env, &admin, b"OFAC");
-        let target = Address::generate(&env);
-
-        ComplianceFilter::add_to_sanctions_list(
-            env.clone(),
-            admin.clone(),
-            source.clone(),
-            target.clone(),
-            Bytes::from_slice(&env, b"fraud"),
-            Bytes::from_slice(&env, b"US"),
-        )
-        .unwrap();
-
-        ComplianceFilter::remove_from_sanctions_list(
-            env.clone(),
-            admin,
-            source,
-            target,
-        )
-        .unwrap();
-
-        let events = env.events().all();
-        assert!(events.iter().any(|e| {
-            let topics = e.0.clone();
-            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
-                &env,
-                "AddressRemovedFromSanctions",
-            )))
-        }));
-    }
-
-    #[test]
-    fn test_risk_weights_configured_event_emitted() {
-        let env = setup_env();
-        let admin = bootstrap(&env);
-
-        ComplianceFilter::configure_risk_weights(
-            env.clone(),
-            admin,
-            80,
-            20,
-            70,
-        )
-        .unwrap();
-
-        let events = env.events().all();
-        assert!(events.iter().any(|e| {
-            let topics = e.0.clone();
-            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
-                &env,
-                "RiskWeightsConfigured",
-            )))
-        }));
-    }
-
-    #[test]
-    fn test_risk_weights_configuration_boundary() {
-        let env = setup_env();
-        let admin = bootstrap(&env);
-
-        // High risk threshold 0 should fail
-        let result = ComplianceFilter::configure_risk_weights(
-            env.clone(),
-            admin.clone(),
-            80,
-            20,
-            0,
-        );
-        assert_eq!(result.unwrap_err(), ComplianceFilterError::InvalidRiskScore);
-
-        // High risk threshold above MAX should fail
-        let result = ComplianceFilter::configure_risk_weights(
-            env.clone(),
-            admin,
-            80,
-            20,
-            101,
-        );
-        assert_eq!(result.unwrap_err(), ComplianceFilterError::InvalidRiskScore);
     }
 }

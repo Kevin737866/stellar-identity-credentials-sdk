@@ -317,8 +317,8 @@ export class ReputationClient {
 
       const hash = 'hash' in result ? result.hash : prepared.hash().toString('hex');
       const response = await this.rpc.getTransaction(hash);
-      if (response.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS && response.returnValue) {
-        return response.returnValue;
+      if ('resultMetaXdr' in response && (response as any).returnValue) {
+        return (response as any).returnValue;
       }
 
       const simulated = await this.rpc.simulateTransaction(prepared);
@@ -335,7 +335,11 @@ export class ReputationClient {
 
   private async simulateRead(method: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
     const dummy = Keypair.random();
-    const account = new Account(dummy.publicKey(), '0');
+    const account = {
+      accountId: () => dummy.publicKey(),
+      sequenceNumber: () => '0',
+      incrementSequenceNumber: () => undefined,
+    } as any;
 
     const tx = new TransactionBuilder(account, {
       fee: '100',

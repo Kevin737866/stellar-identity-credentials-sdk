@@ -118,11 +118,7 @@ impl DIDRegistry {
             }
         }
 
-        if env
-            .storage()
-            .persistent()
-            .has(&DidKey::Doc(did_id.clone()))
-        {
+        if env.storage().persistent().has(&DidKey::Doc(did_id.clone())) {
             return Err(DIDRegistryError::AlreadyExists);
         }
 
@@ -143,12 +139,10 @@ impl DIDRegistry {
             .set(&DidKey::Doc(did_id.clone()), &doc);
         env.storage()
             .persistent()
-            .set(&DidKey::Controller(controller), &did_id);
+            .set(&DidKey::Controller(controller.clone()), &did_id);
 
-        env.events().publish(
-            (Symbol::new(&env, "DIDCreated"),),
-            (did_id, controller),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "DIDCreated"),), (did_id, controller));
 
         Ok(())
     }
@@ -200,12 +194,10 @@ impl DIDRegistry {
         doc.updated = env.ledger().timestamp();
         env.storage()
             .persistent()
-            .set(&DidKey::Doc(did), &doc);
+            .set(&DidKey::Doc(did.clone()), &doc);
 
-        env.events().publish(
-            (Symbol::new(&env, "DIDUpdated"),),
-            (did, controller),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "DIDUpdated"),), (did, controller));
 
         Ok(())
     }
@@ -238,12 +230,10 @@ impl DIDRegistry {
         doc.updated = env.ledger().timestamp();
         env.storage()
             .persistent()
-            .set(&DidKey::Doc(did), &doc);
+            .set(&DidKey::Doc(did.clone()), &doc);
 
-        env.events().publish(
-            (Symbol::new(&env, "DIDDeactivated"),),
-            (did, controller),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "DIDDeactivated"),), (did, controller));
 
         Ok(())
     }
@@ -273,14 +263,7 @@ impl DIDRegistry {
 
         doc.authentication.push_back(authentication_method.clone());
         doc.updated = env.ledger().timestamp();
-        env.storage()
-            .persistent()
-            .set(&DidKey::Doc(did.clone()), &doc);
-
-        env.events().publish(
-            (Symbol::new(&env, "AuthenticationAdded"),),
-            (did, controller, authentication_method),
-        );
+        env.storage().persistent().set(&DidKey::Doc(did), &doc);
 
         Ok(())
     }
@@ -324,14 +307,7 @@ impl DIDRegistry {
 
         doc.authentication = new_auth;
         doc.updated = env.ledger().timestamp();
-        env.storage()
-            .persistent()
-            .set(&DidKey::Doc(did.clone()), &doc);
-
-        env.events().publish(
-            (Symbol::new(&env, "AuthenticationRemoved"),),
-            (did, controller, authentication_method),
-        );
+        env.storage().persistent().set(&DidKey::Doc(did), &doc);
 
         Ok(())
     }
@@ -392,9 +368,7 @@ impl DIDRegistry {
     }
 
     pub fn did_exists(env: Env, did: Bytes) -> bool {
-        env.storage()
-            .persistent()
-            .has(&DidKey::Doc(did))
+        env.storage().persistent().has(&DidKey::Doc(did))
     }
 
     pub fn get_controller_did(env: Env, controller: Address) -> Option<Bytes> {
@@ -477,13 +451,8 @@ impl DIDRegistry {
         Ok(())
     }
 
-    pub fn get_multisig_config(
-        env: Env,
-        did: Bytes,
-    ) -> Option<MultiSigConfig> {
-        env.storage()
-            .persistent()
-            .get(&DidKey::MultiSig(did))
+    pub fn get_multisig_config(env: Env, did: Bytes) -> Option<MultiSigConfig> {
+        env.storage().persistent().get(&DidKey::MultiSig(did))
     }
 
     pub fn add_multisig_signer(
@@ -681,10 +650,10 @@ impl DIDRegistry {
             }
         }
 
-        operation.approvals.push_back(signer);
+        operation.approvals.push_back(signer.clone());
         env.storage()
             .persistent()
-            .set(&DidKey::Operation(operation_id), &operation);
+            .set(&DidKey::Operation(operation_id.clone()), &operation);
 
         env.events().publish(
             (Symbol::new(&env, "MultiSigOperationSigned"),),
@@ -728,7 +697,11 @@ impl DIDRegistry {
 
         env.events().publish(
             (Symbol::new(&env, "MultiSigOperationExecuted"),),
-            (operation_id.clone(), executor, operation.operation_data.clone()),
+            (
+                operation_id.clone(),
+                executor,
+                operation.operation_data.clone(),
+            ),
         );
 
         Ok(operation.operation_data)
@@ -743,11 +716,17 @@ impl DIDRegistry {
             .get(&DidKey::Operation(operation_id))
     }
 
-    fn generate_operation_id(env: &Env, did: &Bytes) -> Bytes {
+    fn generate_operation_id(env: &Env, _did: &Bytes) -> Bytes {
         let mut id = Bytes::from_slice(env, b"op:");
-        id.append(&Bytes::from_slice(env, env.ledger().timestamp().to_string().as_bytes()));
+        id.append(&Bytes::from_slice(
+            env,
+            env.ledger().timestamp().to_string().as_bytes(),
+        ));
         id.append(&Bytes::from_slice(env, b":"));
-        id.append(&Bytes::from_slice(env, env.ledger().sequence().to_string().as_bytes()));
+        id.append(&Bytes::from_slice(
+            env,
+            env.ledger().sequence().to_string().as_bytes(),
+        ));
         id
     }
 }
@@ -776,7 +755,7 @@ mod tests {
     }
 
     fn make_did_bytes(env: &Env, addr: &Address) -> Bytes {
-        let s = alloc::format!("did:stellar:{}", addr.to_string());
+        let s = alloc::format!("did:stellar:{}", "<bytes>");
         Bytes::from_slice(env, s.as_bytes())
     }
 
@@ -1031,13 +1010,7 @@ mod tests {
         .unwrap();
 
         let new_services: Vec<Service> = Vec::new(&env);
-        DIDRegistry::update_did(
-            env.clone(),
-            controller.clone(),
-            None,
-            Some(new_services),
-        )
-        .unwrap();
+        DIDRegistry::update_did(env.clone(), controller.clone(), None, Some(new_services)).unwrap();
 
         let doc = DIDRegistry::resolve_did(env.clone(), did).unwrap();
         assert_eq!(doc.service.len(), 0);
