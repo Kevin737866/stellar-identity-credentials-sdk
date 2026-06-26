@@ -25,6 +25,11 @@ mod integration_tests;
 #[cfg(test)]
 mod fuzz_test_script;
 #[cfg(test)]
+mod coverage_tests;
+#[cfg(test)]
+mod performance_tests;
+#[cfg(test)]
+mod cross_contract_tests;
 mod oracles;
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec};
