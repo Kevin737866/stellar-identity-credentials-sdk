@@ -11,6 +11,8 @@
     "lint": "eslint src/**/*.ts",
     "prepare": "npm run build",
     "example:cli-demo": "ts-node --script-mode examples/cli-demo.ts",
+    "example:kyc": "ts-node --script-mode examples/kyc-flow.ts",
+    "example:reputation": "ts-node --script-mode examples/reputation-builder.ts",
     "docs": "typedoc",
     "docs:watch": "typedoc --watch",
     "docs:serve": "npx serve docs/api",
