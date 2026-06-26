@@ -16,6 +16,7 @@ pub mod reputation_oracle;
 pub mod dif_interop;
 pub mod regulatory_reporting;
 pub mod audit_trail;
+pub mod geographic_restriction;
 
 #[cfg(test)]
 mod integration_tests;
@@ -58,6 +59,16 @@ pub use reputation_oracle::OracleDispute;
 pub use reputation_oracle::DisputeStatus;
 pub use reputation_oracle::ReputationOracleError;
 pub use reputation_oracle::PaginatedFeeds;
+pub use geographic_restriction::GeographicRestriction;
+pub use geographic_restriction::Jurisdiction;
+pub use geographic_restriction::GeoTag;
+pub use geographic_restriction::GeoRestrictionRule;
+pub use geographic_restriction::GeoConfig;
+pub use geographic_restriction::TravelAuthorization;
+pub use geographic_restriction::CrossBorderPolicy;
+pub use geographic_restriction::GeoVerificationResult;
+pub use geographic_restriction::RestrictionLevel;
+pub use geographic_restriction::GeographicError;
 pub use regulatory_reporting::RegulatoryReporting;
 pub use regulatory_reporting::ReportTemplate;
 pub use regulatory_reporting::TemplateSection;
