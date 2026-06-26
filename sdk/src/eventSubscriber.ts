@@ -110,7 +110,7 @@ type ConnectionEventType = keyof ConnectionEventMap;
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
-interface Subscription {
+export interface Subscription {
   id: string;
   eventType: EventType | '*';
   filter?: EventFilter;
@@ -190,7 +190,7 @@ export class EventSubscriber {
 
   // ── Connection lifecycle callbacks ────────────────────────────────────────
 
-  private connectionListeners = new Map
+  private connectionListeners = new Map<
     ConnectionEventType,
     Array<(...args: unknown[]) => void>
   >();
@@ -797,3 +797,5 @@ export class EventSubscriber {
     }
   }
 }
+
+export type { EventType, Subscription, EventFilter, SDKEvent };
