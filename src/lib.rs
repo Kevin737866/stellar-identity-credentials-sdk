@@ -174,9 +174,48 @@ pub fn clamp_page_size(page_size: u32) -> u32 {
 pub enum StorageKey {
     DidRegistry,
     CredentialIssuer,
+    SchemaRegistry,
+    PresentationManager,
     ReputationScore,
     ZkAttestation,
     ComplianceFilter,
+}
+
+// ---------------------------------------------------------------------------
+// Verifiable Presentation (W3C) — #95
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+#[derive(Clone)]
+pub struct VerifiablePresentation {
+    pub id: Bytes,
+    pub holder: Address,
+    pub credentials: Vec<Bytes>,
+    pub type_: Vec<Bytes>,
+    pub proof: Option<Bytes>,
+    pub created: u64,
+    pub expires_at: Option<u64>,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct PresentationRequest {
+    pub id: Bytes,
+    pub verifier: Address,
+    pub query: Vec<Bytes>,
+    pub challenge: Bytes,
+    pub domain: Option<Bytes>,
+    pub expires_at: Option<u64>,
+    pub created: u64,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct PresentationResponse {
+    pub request_id: Bytes,
+    pub presentation_id: Bytes,
+    pub responder: Address,
+    pub created: u64,
 }
 
 #[contract]
@@ -189,6 +228,7 @@ impl StellarIdentity {
         did_registry_address: Address,
         credential_issuer_address: Address,
         schema_registry_address: Address,
+        presentation_manager_address: Address,
         reputation_score_address: Address,
         zk_attestation_address: Address,
         compliance_filter_address: Address,

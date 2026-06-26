@@ -589,7 +589,7 @@ impl DIDRecovery {
 
         env.events().publish(
             (Symbol::new(&env, "RecoveryExecuted"),),
-            (request_id, request.did, new_controller.clone()),
+            (request_id, request.did.clone(), new_controller.clone()),
         );
 
         Ok(new_controller)

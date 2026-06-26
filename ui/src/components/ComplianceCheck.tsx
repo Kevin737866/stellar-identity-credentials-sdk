@@ -34,9 +34,10 @@ interface ComplianceCheckProps {
   sdk: any; // StellarIdentitySDK instance
   address: string;
   keypair: Keypair;
+  disabled?: boolean;
 }
 
-export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, keypair }) => {
+export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, keypair, disabled = false }) => {
   const [complianceData, setComplianceData] = useState<ComplianceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -157,8 +158,9 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
                 onChange={(e) => setCustomAddress(e.target.value)}
                 placeholder="Enter Stellar address (G...)"
                 className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={disabled}
               />
-              <Button onClick={checkCustomAddress} disabled={loading}>
+              <Button onClick={checkCustomAddress} disabled={disabled || loading}>
                 <Search className="h-4 w-4 mr-2" />
                 Check
               </Button>

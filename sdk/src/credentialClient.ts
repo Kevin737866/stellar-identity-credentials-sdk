@@ -20,7 +20,15 @@ import { StellarIdentityError, ConfigurationError, ErrorCode, mapContractError }
 import { DIDClient } from './didClient';
 import { Logger } from './logger';
 import { DataMinimizationEngine, MinimalDisclosurePolicy } from './dataMinimization';
+import { CacheManager, DataType } from './cacheManager';
+import { compressPayload, decompressPayload } from './compression';
 
+/**
+ * Client for issuing, verifying, and managing verifiable credentials on Stellar.
+ * Supports W3C VC 2.0 format, KYC credentials, education credentials,
+ * presentations, and data minimization policies.
+ * @category Client
+ */
 export class CredentialClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
@@ -28,6 +36,7 @@ export class CredentialClient {
   private didClient: DIDClient;
   private logger: Logger;
   private dataMinimizationEngine: DataMinimizationEngine;
+  private cache: CacheManager;
 
   constructor(config: StellarIdentityConfig) {
     this.config = config;
@@ -36,6 +45,7 @@ export class CredentialClient {
     this.didClient = new DIDClient(config);
     this.logger = new Logger('CredentialClient');
     this.dataMinimizationEngine = new DataMinimizationEngine();
+    this.cache = new CacheManager();
     this.logger.debug('CredentialClient initialized', { rpcUrl: config.rpcUrl });
   }
 
@@ -45,6 +55,13 @@ export class CredentialClient {
     }
   }
 
+  /**
+   * Issue a new verifiable credential to a subject.
+   * @param issuerKeypair - The keypair of the credential issuer
+   * @param options - Credential details including subject, type, and data
+   * @param txOptions - Optional transaction parameters
+   * @returns The credential ID
+   */
   async issueCredential(
     issuerKeypair: Keypair,
     options: IssueCredentialOptions,
@@ -62,6 +79,8 @@ export class CredentialClient {
       this.validateInput(dataStr.length <= 10240, 'Credential data too large (max 10KB)');
       const account = await this.rpc.getAccount(address);
 
+      const compressedData = await compressPayload(options.credentialData);
+
       const tx = new TransactionBuilder(account, {
         fee: String(txOptions?.fee ?? 100),
         networkPassphrase: this.getNetworkPassphrase(),
@@ -71,7 +90,7 @@ export class CredentialClient {
             'issue_credential',
             xdr.ScVal.scvAddress(new Address(options.subject).toScAddress()),
             nativeToScVal(options.credentialType.map(t => new TextEncoder().encode(t)), { type: 'vec' }),
-            nativeToScVal(new TextEncoder().encode(JSON.stringify(options.credentialData)), { type: 'bytes' }),
+            nativeToScVal(new TextEncoder().encode(compressedData), { type: 'bytes' }),
             options.expirationDate != null ? nativeToScVal(BigInt(options.expirationDate), { type: 'u64' }) : xdr.ScVal.scvVoid(),
             nativeToScVal(new TextEncoder().encode(options.proof), { type: 'bytes' })
           )
@@ -92,8 +111,15 @@ export class CredentialClient {
     }
   }
 
+  /**
+   * Verify the validity of a credential.
+   * @param credentialId - The credential identifier
+   * @returns Verification result with validity, revocation, and expiration status
+   */
   async verifyCredential(credentialId: string): Promise<CredentialVerificationResult> {
     this.logger.debug('verifyCredential called', { credentialId });
+    const cached = this.cache.get<CredentialVerificationResult>(DataType.CREDENTIAL_STATUS, credentialId);
+    if (cached) return cached;
     try {
       const credential = await this.getCredential(credentialId);
       const isValidVal = await this.simulateRead('verify_credential', [
@@ -103,7 +129,7 @@ export class CredentialClient {
         nativeToScVal(new TextEncoder().encode(credentialId), { type: 'bytes' }),
       ]);
 
-      return {
+      const result: CredentialVerificationResult = {
         valid: scValToNative(isValidVal) as boolean,
         revoked: scValToNative(statusVal) === 'revoked',
         expired: this.isCredentialExpired(credential),
@@ -112,6 +138,8 @@ export class CredentialClient {
         issuanceDate: credential.issuanceDate,
         expirationDate: credential.expirationDate,
       };
+      this.cache.set(DataType.CREDENTIAL_STATUS, credentialId, result);
+      return result;
     } catch (error) {
       throw this.handleError(error);
     }
@@ -144,6 +172,7 @@ export class CredentialClient {
       const prepared = await this.rpc.prepareTransaction(tx);
       prepared.sign(issuerKeypair);
       await this.rpc.sendTransaction(prepared);
+      this.cache.invalidate(DataType.CREDENTIAL_STATUS, credentialId);
     } catch (error) {
       throw this.handleError(error);
     }
@@ -155,7 +184,16 @@ export class CredentialClient {
       const retval = await this.simulateRead('get_credential', [
         nativeToScVal(new TextEncoder().encode(credentialId), { type: 'bytes' }),
       ]);
-      return this.parseCredential(scValToNative(retval));
+      const credential = this.parseCredential(scValToNative(retval));
+      // Decompress credential data if it was stored compressed
+      if (typeof credential.credentialData === 'string') {
+        try {
+          credential.credentialData = await decompressPayload(credential.credentialData as unknown as string);
+        } catch {
+          // Not compressed - already parsed object
+        }
+      }
+      return credential;
     } catch (error) {
       throw this.handleError(error);
     }
@@ -212,6 +250,16 @@ export class CredentialClient {
     }
   }
 
+  /**
+   * Create a verifiable presentation from one or more credentials.
+   * Optionally applies data minimization policies for selective disclosure.
+   * @param credentials - The credentials to include in the presentation
+   * @param holderKeypair - The holder's keypair for signing
+   * @param domain - Optional domain for the proof
+   * @param challenge - Optional challenge for the proof
+   * @param policy - Optional minimal disclosure policy
+   * @returns A verifiable presentation object
+   */
   async createPresentation(
     credentials: VerifiableCredential[],
     holderKeypair: Keypair,

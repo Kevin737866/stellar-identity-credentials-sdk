@@ -44,7 +44,6 @@ impl CredentialSchemaRegistry {
             return Err(SchemaRegistryError::InvalidFormat);
         }
 
-        // Check if schema already exists (version 1)
         let version_key = Self::get_version_key(&env, &schema_id, 1);
         if env.storage().persistent().has(&version_key) {
             return Err(SchemaRegistryError::AlreadyExists);

@@ -100,7 +100,7 @@ pub struct NullifierRecord {
 }
 
 #[contract]
-pub struct ZKAttestationContract;
+pub struct ZKAttestation;
 
 #[contractimpl]
 impl ZKAttestationContract {
@@ -155,6 +155,11 @@ impl ZKAttestationContract {
         env.storage()
             .persistent()
             .set(&ZkKey::ActiveCircuits, &active);
+
+        env.events().publish(
+            (Symbol::new(&env, "CircuitRegistered"),),
+            (circuit_id, circuit.name, circuit_type),
+        );
 
         Ok(())
     }
@@ -254,6 +259,11 @@ impl ZKAttestationContract {
             .persistent()
             .set(&ZkKey::Attestation(proof_id.clone()), &attestation);
 
+        env.events().publish(
+            (Symbol::new(&env, "ProofCreated"),),
+            (proof_id.clone(), circuit_id, nullifier),
+        );
+
         Ok(proof_id)
     }
 
@@ -276,12 +286,19 @@ impl ZKAttestationContract {
             .get(&ZkKey::Circuit(proof.circuit_id))
             .ok_or(ZKAttestationError::InvalidCircuit)?;
 
-        Self::verify_zk_proof(
+        let result = Self::verify_zk_proof(
             &env,
             &circuit.verifier_key,
             &proof.public_inputs,
             &proof.proof_bytes,
-        )
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "ProofVerified"),),
+            (proof_id, proof.circuit_id, result.unwrap_or(false)),
+        );
+
+        result
     }
 
     pub fn get_proof(env: Env, proof_id: Bytes) -> Result<ZKProof, ZKAttestationError> {
@@ -423,15 +440,11 @@ impl ZKAttestationContract {
     }
 
     fn hash_verifying_key(env: &Env, verifier_key: &Bytes) -> Bytes {
-        let hash = env.crypto().sha256(verifier_key);
-        let hash_bytes: BytesN<32> = hash.into();
-        Bytes::from_slice(env, hash_bytes.to_array().as_slice())
+        env.crypto().sha256(verifier_key).into()
     }
 
     fn hash_proof(env: &Env, proof_bytes: &Bytes) -> Bytes {
-        let hash = env.crypto().sha256(proof_bytes);
-        let hash_bytes: BytesN<32> = hash.into();
-        Bytes::from_slice(env, hash_bytes.to_array().as_slice())
+        env.crypto().sha256(proof_bytes).into()
     }
 
     fn compute_nullifier(
@@ -442,8 +455,162 @@ impl ZKAttestationContract {
     ) -> Bytes {
         let mut data = credential_id.clone();
         data.append(context);
-        let hash = env.crypto().sha256(&data);
-        let hash_bytes: BytesN<32> = hash.into();
-        Bytes::from_slice(env, hash_bytes.to_array().as_slice())
+        env.crypto().sha256(&data).into()
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
+    use soroban_sdk::{vec, Bytes, Env, Map, Symbol, Vec};
+
+    fn setup_env() -> Env {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set(LedgerInfo {
+            timestamp: 1_700_000_000,
+            protocol_version: 22,
+            sequence_number: 1000,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 50_000,
+            min_persistent_entry_ttl: 50_000,
+            max_entry_ttl: 50_000,
+        });
+        env
+    }
+
+    fn register_test_circuit(env: &Env) -> Symbol {
+        let circuit_id = Symbol::new(env, "test_circuit");
+        ZKAttestation::register_circuit(
+            env.clone(),
+            circuit_id.clone(),
+            Bytes::from_slice(env, b"Test Circuit"),
+            Bytes::from_slice(env, b"Test Description"),
+            Bytes::from_slice(env, b"test_verifier_key_32_bytes_long!"),
+            2,
+            3,
+            CircuitType::RangeProof,
+            vec![env, Symbol::new(env, "age_commitment")],
+        )
+        .unwrap();
+        circuit_id
+    }
+
+    // ── Issue #41: Event emission tests ─────────────────────────────────
+
+    #[test]
+    fn test_circuit_registered_event_emitted() {
+        let env = setup_env();
+        let circuit_id = Symbol::new(&env, "test_circuit");
+
+        ZKAttestation::register_circuit(
+            env.clone(),
+            circuit_id,
+            Bytes::from_slice(&env, b"Test Circuit"),
+            Bytes::from_slice(&env, b"Test Description"),
+            Bytes::from_slice(&env, b"test_verifier_key_32_bytes_long!"),
+            2,
+            3,
+            CircuitType::RangeProof,
+            vec![&env, Symbol::new(&env, "age_commitment")],
+        )
+        .unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "CircuitRegistered",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_proof_created_event_emitted() {
+        let env = setup_env();
+        let circuit_id = register_test_circuit(&env);
+
+        let public_inputs = vec![
+            &env,
+            Bytes::from_slice(&env, b"commitment_1"),
+            Bytes::from_slice(&env, b"18"),
+        ];
+        let proof_bytes = Bytes::from_slice(&env, b"valid_zk_proof_data");
+        let nullifier = Bytes::from_slice(&env, b"unique_nullifier_1");
+        let revealed_attributes = vec![&env, Symbol::new(&env, "age_commitment")];
+        let mut metadata = Map::new(&env);
+        metadata.set(
+            Symbol::new(&env, "context"),
+            Bytes::from_slice(&env, b"age_verification"),
+        );
+
+        ZKAttestation::submit_proof(
+            env.clone(),
+            circuit_id,
+            public_inputs,
+            proof_bytes,
+            nullifier,
+            revealed_attributes,
+            None,
+            metadata,
+        )
+        .unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "ProofCreated",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_proof_verified_event_emitted() {
+        let env = setup_env();
+        let circuit_id = register_test_circuit(&env);
+
+        let public_inputs = vec![
+            &env,
+            Bytes::from_slice(&env, b"commitment_1"),
+            Bytes::from_slice(&env, b"18"),
+        ];
+        let proof_bytes = Bytes::from_slice(&env, b"valid_zk_proof_data");
+        let nullifier = Bytes::from_slice(&env, b"unique_nullifier_2");
+        let revealed_attributes = vec![&env, Symbol::new(&env, "age_commitment")];
+        let mut metadata = Map::new(&env);
+        metadata.set(
+            Symbol::new(&env, "context"),
+            Bytes::from_slice(&env, b"age_verification"),
+        );
+
+        let proof_id = ZKAttestation::submit_proof(
+            env.clone(),
+            circuit_id,
+            public_inputs,
+            proof_bytes,
+            nullifier,
+            revealed_attributes,
+            None,
+            metadata,
+        )
+        .unwrap();
+
+        ZKAttestation::verify_proof(env.clone(), proof_id).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "ProofVerified",
+            )))
+        }));
     }
 }

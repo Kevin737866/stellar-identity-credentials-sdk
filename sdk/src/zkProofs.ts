@@ -23,6 +23,12 @@ import {
 } from './types';
 import { StellarIdentityError, mapContractError } from './errors';
 
+/**
+ * Client for generating and verifying zero-knowledge proofs on Stellar.
+ * Supports age verification, income verification, KYC composite proofs,
+ * loan application proofs, and batch proof generation using snarkjs.
+ * @category Client
+ */
 export class ZKProofsClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
@@ -101,6 +107,16 @@ export class ZKProofsClient {
   /**
    * Create high-level age proof
    */
+  /**
+   * Create an age verification zero-knowledge proof.
+   * Proves that the subject is at least `minAge` years old without revealing
+   * their actual birth year or age.
+   * @param birthYear - The subject's birth year
+   * @param currentYear - The current year for age calculation
+   * @param minAge - The minimum age threshold to prove
+   * @param options - Additional proof options including expiration
+   * @returns The generated proof ID
+   */
   async createAgeProof(
     birthYear: number,
     currentYear: number,
@@ -161,6 +177,15 @@ export class ZKProofsClient {
 
   /**
    * Create high-level income proof
+   */
+  /**
+   * Create an income verification zero-knowledge proof.
+   * Proves that the subject's income meets or exceeds `minIncome` without
+   * revealing the exact income amount.
+   * @param income - The subject's actual income
+   * @param minIncome - The minimum income threshold to prove
+   * @param options - Additional proof options including expiration
+   * @returns The generated proof ID
    */
   async createIncomeProof(
     income: number,
@@ -500,6 +525,13 @@ export class ZKProofsClient {
     }
   }
 
+  /**
+   * Submit a zero-knowledge proof to the on-chain contract.
+   * @param submitterKeypair - The keypair of the proof submitter
+   * @param options - Proof details including circuit, inputs, and proof bytes
+   * @param txOptions - Optional transaction parameters
+   * @returns The proof ID
+   */
   async submitProof(
     submitterKeypair: Keypair,
     options: ZKProofOptions,
@@ -759,6 +791,13 @@ export class ZKProofsClient {
     );
   }
 
+  /**
+   * Generate a cryptographic commitment using SHA-256.
+   * Used for hiding private data in zero-knowledge proofs.
+   * @param privateData - The data to commit to
+   * @param salt - Optional random salt (generated if not provided)
+   * @returns Hex-encoded commitment hash
+   */
   generateCommitment(privateData: string, salt?: string): string {
     const crypto = require('crypto') as typeof import('crypto');
     const actualSalt = salt ?? (crypto.randomBytes(32).toString('hex'));

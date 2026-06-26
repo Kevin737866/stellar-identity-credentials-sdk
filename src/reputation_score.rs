@@ -3,6 +3,8 @@ use soroban_sdk::{
 };
 
 use crate::{clamp_page_size, PaginatedReputationHistory};
+use crate::rate_limiter::{check_rate_limit, defaults};
+use crate::reentrancy_guard::ReentrancyGuard;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -106,6 +108,8 @@ pub enum ReputationScoreError {
     Unauthorized = 7,
     /// The same truster has already attested this subject.
     DuplicateAttestation = 8,
+    /// Caller has exceeded the allowed request rate.
+    RateLimitExceeded = 9,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -257,7 +261,7 @@ impl ReputationScore {
         env: Env,
         address: Address,
     ) -> Result<u32, ReputationScoreError> {
-        let target = Self::load_profile(&env, &address)?.score;
+        let target = Self::load_profile(&env, address.clone())?.score;
         let population: Vec<Address> = env
             .storage()
             .persistent()
@@ -271,7 +275,7 @@ impl ReputationScore {
 
         let mut below_or_equal = 0u32;
         for subject in population.iter() {
-            if let Ok(candidate) = Self::load_profile(&env, &subject) {
+            if let Ok(candidate) = Self::load_profile(&env, subject.clone()) {
                 if candidate.score <= target {
                     below_or_equal += 1;
                 }
@@ -289,7 +293,7 @@ impl ReputationScore {
         address: Address,
         threshold: u32,
     ) -> Result<bool, ReputationScoreError> {
-        let profile = Self::load_profile(&env, &address)?;
+        let profile = Self::load_profile(&env, address.clone())?;
         let scaled = threshold.saturating_mul(SCORE_SCALE);
         Ok(profile.score >= scaled)
     }
@@ -303,8 +307,22 @@ impl ReputationScore {
         success: bool,
         amount: i128,
     ) -> Result<u32, ReputationScoreError> {
+        // Rate limit: max 20 updates per address per 60 seconds
+        check_rate_limit(
+            &env,
+            &address,
+            Symbol::new(&env, "update_rep"),
+            defaults::UPDATE_REPUTATION_MAX,
+            defaults::UPDATE_REPUTATION_WINDOW,
+        )
+        .map_err(|_| ReputationScoreError::RateLimitExceeded)?;
+
+        // Reentrancy guard: prevent score inflation via cross-contract callback loops
+        ReentrancyGuard::acquire(&env, "update_rep")
+            .map_err(|_| ReputationScoreError::Unauthorized)?;
+
         let config = Self::get_config(&env);
-        let mut profile = Self::load_profile(&env, &address)?;
+        let mut profile = Self::load_profile(&env, address.clone())?;
 
         profile.total_transactions += 1;
         if success {
@@ -338,10 +356,11 @@ impl ReputationScore {
         );
 
         env.events().publish(
-            (Symbol::new(&env, "rep_updated"), address),
+            (Symbol::new(&env, "ReputationScoreUpdated"), address),
             (profile.score, success),
         );
 
+        ReentrancyGuard::release(&env, "update_rep");
         Ok(profile.score)
     }
 
@@ -357,7 +376,7 @@ impl ReputationScore {
         }
 
         let config = Self::get_config(&env);
-        let mut profile = Self::load_profile(&env, &address)?;
+        let mut profile = Self::load_profile(&env, address.clone())?;
 
         profile.total_credentials += 1;
         if valid {
@@ -375,9 +394,33 @@ impl ReputationScore {
 
         profile.last_updated = env.ledger().timestamp();
         Self::save_profile(&env, &address, &profile);
-        Self::append_history(&env, &address, profile.score, credential_type);
+        Self::append_history(&env, &address, profile.score, credential_type.clone());
+
+        env.events().publish(
+            (Symbol::new(&env, "ReputationScoreUpdated"), address),
+            (profile.score, credential_type, valid),
+        );
 
         Ok(profile.score)
+    }
+
+    /// Batch update transaction reputation for multiple addresses (#84).
+    /// More gas-efficient than individual calls: one ledger read/write per address.
+    pub fn batch_update_transaction_reputation(
+        env: Env,
+        updates: Vec<(Address, bool, i128)>,
+    ) -> Result<Vec<u32>, ReputationScoreError> {
+        let mut scores = Vec::new(&env);
+        for (address, success, amount) in updates.iter() {
+            let score = Self::update_transaction_reputation(
+                env.clone(),
+                address.clone(),
+                success,
+                amount,
+            )?;
+            scores.push_back(score);
+        }
+        Ok(scores)
     }
 
     // ── Trust graph ───────────────────────────────────────────────────────────
@@ -495,6 +538,12 @@ impl ReputationScore {
         env.storage()
             .instance()
             .set(&Symbol::new(&env, KEY_CONFIG), &config);
+
+        env.events().publish(
+            (Symbol::new(&env, "TierThresholdsConfigured"),),
+            (config.max_score, config.transaction_success_weight, config.credential_valid_weight),
+        );
+
         Ok(())
     }
 
@@ -523,7 +572,7 @@ impl ReputationScore {
 
     pub fn load_profile(
         env: &Env,
-        address: &Address,
+        address: Address,
     ) -> Result<ReputationData, ReputationScoreError> {
         env.storage()
             .persistent()
@@ -722,7 +771,7 @@ mod tests {
             .unwrap();
         ReputationScore::update_transaction_reputation(env.clone(), user.clone(), true, 300)
             .unwrap();
-        let profile = ReputationScore::load_profile(&env, &user).unwrap();
+        let profile = ReputationScore::load_profile(&env, user.clone()).unwrap();
         assert_eq!(profile.volume, 800);
     }
 

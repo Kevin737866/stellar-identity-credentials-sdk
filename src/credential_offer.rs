@@ -216,7 +216,7 @@ impl CredentialOfferContract {
         holder_offers.push_back(offer_id.clone());
         env.storage()
             .persistent()
-            .set(&OfferKey::HolderOffers(holder), &holder_offers);
+            .set(&OfferKey::HolderOffers(holder.clone()), &holder_offers);
 
         // Add to global offer index
         let mut index: Vec<Bytes> = env

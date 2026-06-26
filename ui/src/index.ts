@@ -26,6 +26,9 @@ export type { ProgressProps } from './components/ui/progress';
 export { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/tabs';
 export type { TabsProps, TabsTriggerProps, TabsContentProps } from './components/ui/tabs';
 
+export { Checkbox } from './components/ui/checkbox';
+export type { CheckboxProps } from './components/ui/checkbox';
+
 // Layout
 export { Layout } from './components/Layout';
 export type { LayoutProps, NavItem } from './components/Layout';
@@ -36,6 +39,13 @@ export { CredentialWallet } from './components/CredentialWallet';
 export { ReputationBadge } from './components/ReputationBadge';
 export { ProofRequest } from './components/ProofRequest';
 export { ComplianceCheck } from './components/ComplianceCheck';
+export { RegulatoryDashboard } from './components/RegulatoryDashboard';
+
+// Pages
+export { Dashboard } from './pages/Dashboard';
+export type { DashboardProps } from './pages/Dashboard';
+export { ApiPlayground } from './pages/ApiPlayground';
+export type { ApiPlaygroundProps } from './pages/ApiPlayground';
 
 // Hooks
 export {

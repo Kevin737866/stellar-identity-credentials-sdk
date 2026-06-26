@@ -62,6 +62,7 @@ enum CfKey {
     Audit(Address, u64),
     AuditIndex(Address),
     ListIndex,
+    RiskWeights,
 }
 
 // ── Data structures ───────────────────────────────────────────────────────────
@@ -113,6 +114,15 @@ pub struct BatchScreenResult {
     pub blocked: bool,
     pub risk_score: u32,
     pub status: Bytes,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiskWeights {
+    pub sanctions_weight: u32,
+    pub oracle_weight: u32,
+    pub high_risk_threshold: u32,
+    pub last_updated: u64,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -693,6 +703,45 @@ impl ComplianceFilter {
 
     pub fn get_compliance_rule(env: Env, jurisdiction: Bytes) -> Option<ComplianceRule> {
         env.storage().persistent().get(&CfKey::Rule(jurisdiction))
+    }
+
+    // ── Risk weight configuration ─────────────────────────────────────────
+
+    /// Configure risk assessment weights. Emits RiskWeightsConfigured event.
+    /// Only admin may call this.
+    pub fn configure_risk_weights(
+        env: Env,
+        admin: Address,
+        sanctions_weight: u32,
+        oracle_weight: u32,
+        high_risk_threshold: u32,
+    ) -> Result<(), ComplianceFilterError> {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin)?;
+
+        if high_risk_threshold == 0 || high_risk_threshold > MAX_RISK_SCORE {
+            return Err(ComplianceFilterError::InvalidRiskScore);
+        }
+
+        let weights = RiskWeights {
+            sanctions_weight,
+            oracle_weight,
+            high_risk_threshold,
+            last_updated: env.ledger().timestamp(),
+        };
+
+        Self::persist(&env, &CfKey::RiskWeights, &weights);
+
+        env.events().publish(
+            (Symbol::new(&env, "RiskWeightsConfigured"),),
+            (sanctions_weight, oracle_weight, high_risk_threshold),
+        );
+
+        Ok(())
+    }
+
+    pub fn get_risk_weights(env: Env) -> Option<RiskWeights> {
+        env.storage().persistent().get(&CfKey::RiskWeights)
     }
 
     // ── Regulatory reports & audit trail ──────────────────────────────────────

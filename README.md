@@ -70,6 +70,16 @@ yarn add @stellar-identity/sdk
 pnpm add @stellar-identity/sdk
 ```
 
+The SDK ships with **dual ESM + CommonJS** support and full TypeScript type declarations:
+
+```typescript
+// ESM (recommended)
+import { StellarIdentitySDK, DEFAULT_CONFIGS } from '@stellar-identity/sdk';
+
+// CommonJS
+const { StellarIdentitySDK, DEFAULT_CONFIGS } = require('@stellar-identity/sdk');
+```
+
 ### Install React Components
 
 ```bash
@@ -80,7 +90,7 @@ npm install @stellar-identity/ui react react-dom
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/stellar-identity/sdk.git
+git clone https://github.com/Kevin737866/stellar-identity-credentials-sdk.git
 cd stellar-identity-credentials-sdk
 ```
 

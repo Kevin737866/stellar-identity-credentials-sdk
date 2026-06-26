@@ -28,6 +28,7 @@ export { CredentialClient } from './credentialClient';
 export { ReputationClient } from './reputation';
 export { ZKProofsClient } from './zkProofs';
 export { CacheManager, DataType } from './cacheManager';
+export { compressPayload, decompressPayload, compressionRatio } from './compression';
 export { EventSubscriber } from './eventSubscriber';
 export { Logger, LogLevel } from './logger';
 export { GDPREngine } from './gdpr';
@@ -39,6 +40,52 @@ export type {
   SaltedHashCommitment, 
   AttributeExpiration 
 } from './dataMinimization';
+
+export { ComplianceClient } from './compliance';
+export type {
+  ScreeningStatus,
+  ScreeningResult,
+  TransactionRisk,
+  ComplianceReport,
+  TravelRulePayload,
+  AlertSubscription,
+  ComplianceReportOptions,
+  JurisdictionRule,
+  RiskLevel,
+  EnrichedProfile,
+} from './compliance';
+
+export { RegulatoryReportingClient } from './regulatoryReporting';
+export type {
+  TemplateSection,
+  ReportTemplate,
+  ReportField,
+  ReportSection,
+  RegulatoryReport,
+  SARReport,
+  ReportSchedule,
+  TransactionReport,
+  ExportSnapshot,
+  PaginatedReports,
+  PaginatedSARs,
+  ReportStatistics,
+  ExportFormat,
+} from './regulatoryReporting';
+export { DEFAULT_TEMPLATES } from './regulatoryReporting';
+
+export { NetworkMonitor } from './networkMonitor';
+export type {
+  MonitorConfig,
+  AlertChannel,
+  AlertThreshold,
+  AlertEvent,
+  AlertSeverity,
+  AlertChannelType,
+  TransactionMetrics,
+  ContractStateChange,
+  AnomalyResult,
+  MonitorHealth,
+} from './networkMonitor';
 
 export {
   ErrorCode,
@@ -77,6 +124,7 @@ export type {
   DIDResolutionMetadata,
   DIDDocumentMetadata,
   DereferencingResult,
+  DIDResolveOptions,
 } from './didResolver';
 
 export type {
@@ -118,6 +166,21 @@ import { EventSubscriber } from './eventSubscriber';
 import { GDPREngine } from './gdpr';
 import { StellarIdentityConfig } from './types';
 
+/**
+ * Stellar Identity SDK - Main entry point.
+ *
+ * Composes all client modules (DID, Credentials, Reputation, ZK Proofs,
+ * Compliance) into a single unified SDK with caching and event subscription.
+ *
+ * @example
+ * ```typescript
+ * import { StellarIdentitySDK, DEFAULT_CONFIGS } from '@stellar-identity/sdk';
+ *
+ * const sdk = new StellarIdentitySDK(DEFAULT_CONFIGS.testnet);
+ * const did = await sdk.did.createDID(keypair, options);
+ * ```
+ * @category Client
+ */
 export class StellarIdentitySDK {
   public did: DIDClient;
   public credentials: CredentialClient;
@@ -137,6 +200,13 @@ export class StellarIdentitySDK {
     this.gdpr = new GDPREngine(this.did, this.credentials);
   }
 
+  /**
+   * Initialize a complete user identity: create DID and initialize reputation.
+   * @param keypair - The user's Stellar keypair
+   * @param verificationMethods - Array of verification methods for the DID
+   * @param services - Array of service endpoints for the DID
+   * @returns Object containing the DID and Stellar address
+   */
   async initializeUserIdentity(
     keypair: Keypair,
     verificationMethods: any[],
@@ -156,6 +226,12 @@ export class StellarIdentitySDK {
     };
   }
 
+  /**
+   * Get a complete identity profile for an address.
+   * Fetches DID document, reputation data, and credentials in parallel.
+   * @param address - The Stellar address to query
+   * @returns Identity profile with DID, reputation, and credentials
+   */
   async getIdentityProfile(address: string) {
     const [didDocument, reputationData, credentials] = await Promise.all([
       this.did.resolveDID(this.did.generateDID(address)).catch(() => null),
