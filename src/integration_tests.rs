@@ -10,6 +10,7 @@ use crate::{
     credential_issuer::CredentialIssuer,
     credential_schema::{CredentialSchema, FieldValidation},
     did_registry::{DIDRegistry, DIDRegistryError},
+    presentation::{PresentationManager, PresentationError, SelectiveDisclosureEntry},
     reputation_score::{ReputationScore, ReputationScoreError, ReputationData, TrustAttestation},
     schema_registry::{CredentialSchemaRegistry, SchemaRegistryError},
     zk_attestation::{CircuitType, ZKAttestation, ZKAttestationError},
@@ -68,7 +69,7 @@ fn new_address(env: &Env) -> Address {
     Address::generate(env)
 }
 
-fn make_vm_vec(env: &Env, vms: Vec<VerificationMethod>) -> Vec<VerificationMethod> {
+fn make_vm_vec(vms: Vec<VerificationMethod>) -> Vec<VerificationMethod> {
     vms
 }
 
@@ -105,7 +106,7 @@ fn test_full_kyc_flow() {
         env.clone(),
         controller.clone(),
         did.clone(),
-        make_vm_vec(&env, vec![&env, vm]),
+        make_vm_vec(vec![&env, vm]),
         services,
     )
     .is_ok());
@@ -407,7 +408,7 @@ fn test_multi_user_scenario() {
         env.clone(),
         user1.clone(),
         did1.clone(),
-        make_vm_vec(&env, vec![&env, make_vm(&env, "#key-1", key1)]),
+        make_vm_vec(vec![&env, make_vm(&env, "#key-1", key1)]),
         make_services(&env),
     )
     .is_ok());
@@ -416,7 +417,7 @@ fn test_multi_user_scenario() {
         env.clone(),
         user2.clone(),
         did2.clone(),
-        make_vm_vec(&env, vec![&env, make_vm(&env, "#key-1", key2)]),
+        make_vm_vec(vec![&env, make_vm(&env, "#key-1", key2)]),
         make_services(&env),
     )
     .is_ok());
@@ -425,7 +426,7 @@ fn test_multi_user_scenario() {
         env.clone(),
         user3.clone(),
         did3.clone(),
-        make_vm_vec(&env, vec![&env, make_vm(&env, "#key-1", key3)]),
+        make_vm_vec(vec![&env, make_vm(&env, "#key-1", key3)]),
         make_services(&env),
     )
     .is_ok());
@@ -581,4 +582,262 @@ fn test_schema_registry_lifecycle() {
     let non_existent_id = Bytes::from_slice(&env, b"non-existent");
     let validate_non_existent = CredentialSchemaRegistry::validate_schema_exists(env.clone(), non_existent_id);
     assert!(validate_non_existent.is_err());
+}
+
+// =========================================================================
+// Test 9: Verifiable Presentation lifecycle — create, verify, expire,
+//         selective disclosure, request/response protocol
+// =========================================================================
+
+#[test]
+fn test_verifiable_presentation_lifecycle() {
+    let env = setup_env();
+    let holder = new_address(&env);
+    let verifier = new_address(&env);
+
+    // Issue two credentials for the holder
+    let issuer = new_address(&env);
+    let proof = Bytes::from_slice(&env, b"valid_signature");
+
+    let cred1_id = CredentialIssuer::issue_credential(
+        env.clone(),
+        issuer.clone(),
+        holder.clone(),
+        make_credential_type(&env, "KYCVerification"),
+        Bytes::from_slice(&env, b"{\"name\":\"Alice\"}"),
+        None,
+        proof.clone(),
+    )
+    .unwrap();
+
+    let cred2_id = CredentialIssuer::issue_credential(
+        env.clone(),
+        issuer.clone(),
+        holder.clone(),
+        make_credential_type(&env, "AgeVerification"),
+        Bytes::from_slice(&env, b"{\"age\":25}"),
+        None,
+        proof.clone(),
+    )
+    .unwrap();
+
+    let credential_ids = vec![&env, cred1_id.clone(), cred2_id.clone()];
+    let pres_type = vec![&env, Bytes::from_slice(&env, b"VerifiablePresentation")];
+
+    // Create a verifiable presentation
+    let pres_id = PresentationManager::create_presentation(
+        env.clone(),
+        holder.clone(),
+        credential_ids,
+        pres_type.clone(),
+        Some(proof.clone()),
+        None,
+    );
+    assert!(pres_id.is_ok());
+    let pres_id = pres_id.unwrap();
+
+    // Get the presentation
+    let presentation = PresentationManager::get_presentation(env.clone(), pres_id.clone());
+    assert!(presentation.is_ok());
+    let presentation = presentation.unwrap();
+    assert_eq!(presentation.holder, holder);
+    assert_eq!(presentation.credentials.len(), 2);
+
+    // Verify the presentation
+    let is_valid = PresentationManager::verify_presentation(env.clone(), pres_id.clone());
+    assert!(is_valid.is_ok());
+    assert!(is_valid.unwrap());
+
+    // Get holder's presentations
+    let holder_presentations = PresentationManager::get_holder_presentations(env.clone(), holder.clone());
+    assert_eq!(holder_presentations.len(), 1);
+
+    // Expire the presentation
+    assert!(PresentationManager::expire_presentation(
+        env.clone(),
+        holder.clone(),
+        pres_id.clone(),
+    )
+    .is_ok());
+
+    // Verify after expiration
+    let is_valid_after = PresentationManager::verify_presentation(env.clone(), pres_id.clone());
+    assert!(is_valid_after.is_ok());
+    assert!(!is_valid_after.unwrap());
+
+    // Create selective disclosure presentation
+    let disclosure_entry = SelectiveDisclosureEntry {
+        credential_id: cred1_id.clone(),
+        zk_proof_ids: Vec::new(&env),
+        revealed_attributes: vec![&env, Symbol::new(&env, "name")],
+    };
+    let disclosures = vec![&env, disclosure_entry];
+
+    let sd_pres_id = PresentationManager::create_sd_presentation(
+        env.clone(),
+        holder.clone(),
+        pres_type.clone(),
+        disclosures,
+        Some(proof.clone()),
+        None,
+    );
+    assert!(sd_pres_id.is_ok());
+    let sd_pres_id = sd_pres_id.unwrap();
+
+    // Get selective disclosures
+    let disclosures_retrieved = PresentationManager::get_selective_disclosures(env.clone(), sd_pres_id.clone());
+    assert_eq!(disclosures_retrieved.len(), 1);
+    assert_eq!(disclosures_retrieved.get(0).unwrap().credential_id, cred1_id);
+
+    // Verify selective disclosure presentation
+    let sd_valid = PresentationManager::verify_presentation(env.clone(), sd_pres_id.clone());
+    assert!(sd_valid.is_ok());
+    assert!(sd_valid.unwrap());
+}
+
+#[test]
+fn test_presentation_request_response_protocol() {
+    let env = setup_env();
+    let holder = new_address(&env);
+    let verifier = new_address(&env);
+
+    // Issue a credential for the holder
+    let issuer = new_address(&env);
+    let proof = Bytes::from_slice(&env, b"valid_signature");
+
+    let cred_id = CredentialIssuer::issue_credential(
+        env.clone(),
+        issuer.clone(),
+        holder.clone(),
+        make_credential_type(&env, "KYCVerification"),
+        Bytes::from_slice(&env, b"{\"name\":\"Alice\"}"),
+        None,
+        proof.clone(),
+    )
+    .unwrap();
+
+    // Create a presentation request
+    let query = vec![&env, Bytes::from_slice(&env, b"KYCVerification")];
+    let challenge = Bytes::from_slice(&env, b"nonce-123");
+    let domain = Some(Bytes::from_slice(&env, b"example.com"));
+
+    let req_id = PresentationManager::create_presentation_request(
+        env.clone(),
+        verifier.clone(),
+        query,
+        challenge,
+        domain,
+        None,
+    );
+    assert!(req_id.is_ok());
+    let req_id = req_id.unwrap();
+
+    // Get the request
+    let request = PresentationManager::get_presentation_request(env.clone(), req_id.clone());
+    assert!(request.is_ok());
+    let request = request.unwrap();
+    assert_eq!(request.verifier, verifier);
+
+    // Holder creates a presentation in response
+    let credential_ids = vec![&env, cred_id.clone()];
+    let pres_type = vec![&env, Bytes::from_slice(&env, b"VerifiablePresentation")];
+
+    let pres_id = PresentationManager::create_presentation(
+        env.clone(),
+        holder.clone(),
+        credential_ids,
+        pres_type,
+        Some(proof.clone()),
+        None,
+    )
+    .unwrap();
+
+    // Fulfill the request
+    assert!(PresentationManager::fulfill_presentation_request(
+        env.clone(),
+        holder.clone(),
+        req_id.clone(),
+        pres_id.clone(),
+    )
+    .is_ok());
+
+    // Check fulfillment
+    let fulfillment = PresentationManager::get_fulfillment(env.clone(), req_id.clone());
+    assert!(fulfillment.is_some());
+    let fulfillment = fulfillment.unwrap();
+    assert_eq!(fulfillment.request_id, req_id);
+    assert_eq!(fulfillment.presentation_id, pres_id);
+    assert_eq!(fulfillment.responder, holder);
+
+    // Try duplicate fulfillment (should fail)
+    let dup_fulfill = PresentationManager::fulfill_presentation_request(
+        env.clone(),
+        holder.clone(),
+        req_id.clone(),
+        pres_id.clone(),
+    );
+    assert!(dup_fulfill.is_err());
+    assert_eq!(dup_fulfill.unwrap_err(), PresentationError::RequestAlreadyFulfilled);
+}
+
+#[test]
+fn test_presentation_validation_errors() {
+    let env = setup_env();
+    let holder = new_address(&env);
+    let other = new_address(&env);
+
+    // Empty credentials list
+    let empty_creds = Vec::new(&env);
+    let pres_type = vec![&env, Bytes::from_slice(&env, b"VerifiablePresentation")];
+    let proof = Bytes::from_slice(&env, b"proof");
+
+    let empty_result = PresentationManager::create_presentation(
+        env.clone(),
+        holder.clone(),
+        empty_creds,
+        pres_type.clone(),
+        Some(proof.clone()),
+        None,
+    );
+    assert!(empty_result.is_err());
+    assert_eq!(empty_result.unwrap_err(), PresentationError::InvalidCredential);
+
+    // Get non-existent presentation
+    let non_existent_id = Bytes::from_slice(&env, b"non-existent-vp");
+    let get_result = PresentationManager::get_presentation(env.clone(), non_existent_id);
+    assert!(get_result.is_err());
+    assert_eq!(get_result.unwrap_err(), PresentationError::NotFound);
+
+    // Expire presentation not owned by caller
+    let credential_ids = vec![&env, Bytes::from_slice(&env, b"dummy-cred")];
+    let pres_id = PresentationManager::create_presentation(
+        env.clone(),
+        holder.clone(),
+        credential_ids,
+        pres_type.clone(),
+        Some(proof.clone()),
+        None,
+    )
+    .unwrap();
+
+    let expire_result = PresentationManager::expire_presentation(
+        env.clone(),
+        other.clone(),
+        pres_id.clone(),
+    );
+    assert!(expire_result.is_err());
+    assert_eq!(expire_result.unwrap_err(), PresentationError::Unauthorized);
+
+    // Empty query in request
+    let empty_query = Vec::new(&env);
+    let req_result = PresentationManager::create_presentation_request(
+        env.clone(),
+        holder.clone(),
+        empty_query,
+        Bytes::from_slice(&env, b"challenge"),
+        None,
+        None,
+    );
+    assert!(req_result.is_err());
+    assert_eq!(req_result.unwrap_err(), PresentationError::InvalidFormat);
 }

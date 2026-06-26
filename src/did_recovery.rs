@@ -319,7 +319,7 @@ impl DIDRecovery {
         record.active = false;
         env.storage()
             .persistent()
-            .set(&RecoveryKey::Guardian(did, guardian.clone()), &record);
+            .set(&RecoveryKey::Guardian(did.clone(), guardian.clone()), &record);
 
         if config.total_guardians > 0 {
             config.total_guardians -= 1;
@@ -327,11 +327,11 @@ impl DIDRecovery {
         config.updated_at = env.ledger().timestamp();
         env.storage()
             .persistent()
-            .set(&RecoveryKey::RecoveryConfig(did), &config);
+            .set(&RecoveryKey::RecoveryConfig(did.clone()), &config);
 
         env.events().publish(
             (Symbol::new(&env, "GuardianRemoved"),),
-            (did, guardian),
+            (did.clone(), guardian),
         );
 
         Ok(())
@@ -587,11 +587,11 @@ impl DIDRecovery {
         config.updated_at = now;
         env.storage()
             .persistent()
-            .set(&RecoveryKey::RecoveryConfig(request.did), &config);
+            .set(&RecoveryKey::RecoveryConfig(request.did.clone()), &config);
 
         env.events().publish(
             (Symbol::new(&env, "RecoveryExecuted"),),
-            (request_id, request.did, new_controller.clone()),
+            (request_id, request.did.clone(), new_controller.clone()),
         );
 
         Ok(new_controller)

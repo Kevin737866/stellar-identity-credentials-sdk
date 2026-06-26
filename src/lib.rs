@@ -2,7 +2,9 @@ extern crate alloc;
 
 pub mod did_registry;
 pub mod credential_issuer;
+pub mod credential_schema;
 pub mod schema_registry;
+pub mod presentation;
 pub mod reputation_score;
 pub mod zk_attestation;
 pub mod compliance_filter;
@@ -11,6 +13,9 @@ pub mod gas_benchmark;
 pub mod credential_offer;
 pub mod did_recovery;
 pub mod reputation_oracle;
+pub mod dif_interop;
+pub mod regulatory_reporting;
+pub mod audit_trail;
 
 #[cfg(test)]
 mod integration_tests;
@@ -22,6 +27,7 @@ mod coverage_tests;
 mod performance_tests;
 #[cfg(test)]
 mod cross_contract_tests;
+mod oracles;
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec};
 
@@ -31,6 +37,7 @@ pub use did_registry::Signer;
 pub use did_registry::PendingMultiSigOperation;
 pub use credential_issuer::CredentialIssuer;
 pub use schema_registry::CredentialSchemaRegistry;
+pub use presentation::PresentationManager;
 pub use reputation_score::ReputationScore;
 pub use zk_attestation::ZKAttestation;
 pub use zk_attestation::ZKAttestationRecord;
@@ -56,6 +63,19 @@ pub use reputation_oracle::OracleDispute;
 pub use reputation_oracle::DisputeStatus;
 pub use reputation_oracle::ReputationOracleError;
 pub use reputation_oracle::PaginatedFeeds;
+pub use regulatory_reporting::RegulatoryReporting;
+pub use regulatory_reporting::ReportTemplate;
+pub use regulatory_reporting::TemplateSection;
+pub use regulatory_reporting::ReportSection;
+pub use regulatory_reporting::ReportField;
+pub use regulatory_reporting::RegulatoryReport;
+pub use regulatory_reporting::SARReport;
+pub use regulatory_reporting::ReportSchedule;
+pub use regulatory_reporting::TransactionReport;
+pub use regulatory_reporting::ExportSnapshot;
+pub use regulatory_reporting::PaginatedReports;
+pub use regulatory_reporting::PaginatedSARs;
+pub use regulatory_reporting::RegulatoryReportingError;
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -179,9 +199,48 @@ pub fn clamp_page_size(page_size: u32) -> u32 {
 pub enum StorageKey {
     DidRegistry,
     CredentialIssuer,
+    SchemaRegistry,
+    PresentationManager,
     ReputationScore,
     ZkAttestation,
     ComplianceFilter,
+}
+
+// ---------------------------------------------------------------------------
+// Verifiable Presentation (W3C) — #95
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+#[derive(Clone)]
+pub struct VerifiablePresentation {
+    pub id: Bytes,
+    pub holder: Address,
+    pub credentials: Vec<Bytes>,
+    pub type_: Vec<Bytes>,
+    pub proof: Option<Bytes>,
+    pub created: u64,
+    pub expires_at: Option<u64>,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct PresentationRequest {
+    pub id: Bytes,
+    pub verifier: Address,
+    pub query: Vec<Bytes>,
+    pub challenge: Bytes,
+    pub domain: Option<Bytes>,
+    pub expires_at: Option<u64>,
+    pub created: u64,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct PresentationResponse {
+    pub request_id: Bytes,
+    pub presentation_id: Bytes,
+    pub responder: Address,
+    pub created: u64,
 }
 
 #[contract]
@@ -194,16 +253,18 @@ impl StellarIdentity {
         did_registry_address: Address,
         credential_issuer_address: Address,
         schema_registry_address: Address,
+        presentation_manager_address: Address,
         reputation_score_address: Address,
         zk_attestation_address: Address,
         compliance_filter_address: Address,
     ) {
-        env.storage().instance().set(&Symbol::new(&env, "did_registry"), &did_registry_address);
-        env.storage().instance().set(&Symbol::new(&env, "credential_issuer"), &credential_issuer_address);
-        env.storage().instance().set(&Symbol::new(&env, "schema_registry"), &schema_registry_address);
-        env.storage().instance().set(&Symbol::new(&env, "reputation_score"), &reputation_score_address);
-        env.storage().instance().set(&Symbol::new(&env, "zk_attestation"), &zk_attestation_address);
-        env.storage().instance().set(&Symbol::new(&env, "compliance_filter"), &compliance_filter_address);
+        env.storage().instance().set(&StorageKey::DidRegistry, &did_registry_address);
+        env.storage().instance().set(&StorageKey::CredentialIssuer, &credential_issuer_address);
+        env.storage().instance().set(&StorageKey::SchemaRegistry, &schema_registry_address);
+        env.storage().instance().set(&StorageKey::PresentationManager, &presentation_manager_address);
+        env.storage().instance().set(&StorageKey::ReputationScore, &reputation_score_address);
+        env.storage().instance().set(&StorageKey::ZkAttestation, &zk_attestation_address);
+        env.storage().instance().set(&StorageKey::ComplianceFilter, &compliance_filter_address);
     }
 
     pub fn get_did_registry_address(env: Env) -> Option<Address> {
@@ -215,7 +276,11 @@ impl StellarIdentity {
     }
 
     pub fn get_schema_registry_address(env: Env) -> Option<Address> {
-        env.storage().instance().get(&Symbol::new(&env, "schema_registry"))
+        env.storage().instance().get(&StorageKey::SchemaRegistry)
+    }
+
+    pub fn get_presentation_manager_address(env: Env) -> Option<Address> {
+        env.storage().instance().get(&StorageKey::PresentationManager)
     }
 
     pub fn get_reputation_score_address(env: Env) -> Option<Address> {

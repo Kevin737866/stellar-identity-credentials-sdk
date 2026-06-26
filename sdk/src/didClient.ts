@@ -25,16 +25,25 @@ import {
   ErrorCode,
   mapContractError,
 } from './errors';
+import { CacheManager, DataType } from './cacheManager';
 
+/**
+ * Client for managing decentralized identifiers (DIDs) on Stellar.
+ * Provides methods for creating, resolving, updating, and deactivating DIDs
+ * using the W3C did:stellar method via Soroban smart contracts.
+ * @category Client
+ */
 export class DIDClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
   private didRegistryContract: Contract;
+  private cache: CacheManager;
 
   constructor(config: StellarIdentityConfig) {
     this.config = config;
     this.rpc = new SorobanRpc.Server(config.rpcUrl || this.getDefaultRpcUrl());
     this.didRegistryContract = new Contract(config.contracts.didRegistry);
+    this.cache = new CacheManager();
   }
 
   private validateInput(condition: boolean, message: string): void {
@@ -43,6 +52,13 @@ export class DIDClient {
     }
   }
 
+  /**
+   * Create a new DID on the Stellar network.
+   * @param keypair - The keypair of the DID controller
+   * @param options - DID creation options including verification methods and services
+   * @param txOptions - Optional transaction parameters (fee, timeout)
+   * @returns The generated DID string (e.g., did:stellar:G...)
+   */
   async createDID(
     keypair: Keypair,
     options: CreateDIDOptions,
@@ -104,7 +120,14 @@ export class DIDClient {
     }
   }
 
+  /**
+   * Resolve a DID to its DID document via on-chain contract call.
+   * @param did - The DID to resolve (e.g., did:stellar:G...)
+   * @returns Resolution result containing the DID document and metadata
+   */
   async resolveDID(did: string): Promise<DIDResolutionResult> {
+    const cached = this.cache.get<DIDResolutionResult>(DataType.DID_DOCUMENT, did);
+    if (cached) return cached;
     try {
       const retval = await this.simulateRead('resolve_did', [
         nativeToScVal(new TextEncoder().encode(did), { type: 'bytes' }),
@@ -112,7 +135,7 @@ export class DIDClient {
       const raw = scValToNative(retval) as Record<string, unknown>;
       const didDocument = this.parseDIDDocument(raw, did);
 
-      return {
+      const result: DIDResolutionResult = {
         didDocument,
         resolverMetadata: { method: 'stellar', network: this.config.network },
         documentMetadata: {
@@ -120,6 +143,8 @@ export class DIDClient {
           updated: didDocument.updated,
         },
       };
+      this.cache.set(DataType.DID_DOCUMENT, did, result);
+      return result;
     } catch (error) {
       throw this.handleError(error);
     }
@@ -170,11 +195,17 @@ export class DIDClient {
       const prepared = await this.rpc.prepareTransaction(tx);
       prepared.sign(keypair);
       await this.rpc.sendTransaction(prepared);
+      this.cache.invalidate(DataType.DID_DOCUMENT, this.generateDID(address));
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
+  /**
+   * Deactivate a DID, preventing further use.
+   * @param keypair - The keypair of the DID controller
+   * @param txOptions - Optional transaction parameters
+   */
   async deactivateDID(keypair: Keypair, txOptions?: TransactionOptions): Promise<void> {
     try {
       const address = keypair.publicKey();

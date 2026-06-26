@@ -264,7 +264,7 @@ impl ReputationScore {
         env: Env,
         address: Address,
     ) -> Result<u32, ReputationScoreError> {
-        let target = Self::load_profile(&env, &address)?.score;
+        let target = Self::load_profile(&env, address.clone())?.score;
         let population: Vec<Address> = env
             .storage()
             .persistent()
@@ -278,7 +278,7 @@ impl ReputationScore {
 
         let mut below_or_equal = 0u32;
         for subject in population.iter() {
-            if let Ok(candidate) = Self::load_profile(&env, &subject) {
+            if let Ok(candidate) = Self::load_profile(&env, subject.clone()) {
                 if candidate.score <= target {
                     below_or_equal += 1;
                 }
@@ -296,7 +296,7 @@ impl ReputationScore {
         address: Address,
         threshold: u32,
     ) -> Result<bool, ReputationScoreError> {
-        let profile = Self::load_profile(&env, &address)?;
+        let profile = Self::load_profile(&env, address.clone())?;
         let scaled = threshold.saturating_mul(SCORE_SCALE);
         Ok(profile.score >= scaled)
     }
@@ -311,7 +311,7 @@ impl ReputationScore {
         amount: i128,
     ) -> Result<u32, ReputationScoreError> {
         let config = Self::get_config(&env);
-        let mut profile = Self::load_profile(&env, &address)?;
+        let mut profile = Self::load_profile(&env, address.clone())?;
 
         profile.total_transactions += 1;
         if success {
@@ -343,7 +343,7 @@ impl ReputationScore {
         );
 
         env.events().publish(
-            (Symbol::new(&env, "rep_updated"), address),
+            (Symbol::new(&env, "ReputationScoreUpdated"), address),
             (profile.score, success),
         );
 
@@ -362,7 +362,7 @@ impl ReputationScore {
         }
 
         let config = Self::get_config(&env);
-        let mut profile = Self::load_profile(&env, &address)?;
+        let mut profile = Self::load_profile(&env, address.clone())?;
 
         profile.total_credentials += 1;
         if valid {
@@ -380,7 +380,12 @@ impl ReputationScore {
 
         profile.last_updated = env.ledger().timestamp();
         Self::save_profile(&env, &address, &profile);
-        Self::append_history(&env, &address, profile.score, credential_type);
+        Self::append_history(&env, &address, profile.score, credential_type.clone());
+
+        env.events().publish(
+            (Symbol::new(&env, "ReputationScoreUpdated"), address),
+            (profile.score, credential_type, valid),
+        );
 
         Ok(profile.score)
     }
@@ -502,6 +507,12 @@ impl ReputationScore {
         env.storage()
             .instance()
             .set(&Symbol::new(&env, KEY_CONFIG), &config);
+
+        env.events().publish(
+            (Symbol::new(&env, "TierThresholdsConfigured"),),
+            (config.max_score, config.transaction_success_weight, config.credential_valid_weight),
+        );
+
         Ok(())
     }
 
@@ -530,7 +541,7 @@ impl ReputationScore {
 
     pub fn load_profile(
         env: &Env,
-        address: &Address,
+        address: Address,
     ) -> Result<ReputationData, ReputationScoreError> {
         env.storage()
             .persistent()
@@ -728,7 +739,7 @@ mod tests {
             .unwrap();
         ReputationScore::update_transaction_reputation(env.clone(), user.clone(), true, 300)
             .unwrap();
-        let profile = ReputationScore::load_profile(&env, &user).unwrap();
+        let profile = ReputationScore::load_profile(&env, user.clone()).unwrap();
         assert_eq!(profile.volume, 800);
     }
 
@@ -1074,8 +1085,71 @@ mod tests {
         let env = setup_env();
         bootstrap(&env);
         let intruder = Address::generate(&env);
-        let result =
-            ReputationScore::update_config(env.clone(), intruder, default_config());
+        let result = ReputationScore::update_config(env.clone(), intruder, default_config());
         assert_eq!(result.unwrap_err(), ReputationScoreError::NotAdmin);
+    }
+
+    // ── Issue #41: Event emission tests ──────────────────────────────────
+
+    #[test]
+    fn test_reputation_score_updated_event_on_txn() {
+        let env = setup_env();
+        let (_, user) = bootstrap(&env);
+
+        ReputationScore::update_transaction_reputation(env.clone(), user, true, 100).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "ReputationScoreUpdated",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_reputation_score_updated_event_on_credential() {
+        let env = setup_env();
+        let (_, user) = bootstrap(&env);
+        let cred_type = Bytes::from_slice(&env, b"KYC");
+
+        ReputationScore::update_credential_reputation(
+            env.clone(),
+            user,
+            true,
+            cred_type,
+        )
+        .unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "ReputationScoreUpdated",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_tier_thresholds_configured_event_emitted() {
+        let env = setup_env();
+        let (admin, _) = bootstrap(&env);
+        let new_config = Config {
+            max_score: MAX_SCORE / 2,
+            ..default_config()
+        };
+
+        ReputationScore::update_config(env.clone(), admin, new_config).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "TierThresholdsConfigured",
+            )))
+        }));
     }
 }
