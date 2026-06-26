@@ -1,14 +1,20 @@
 extern crate alloc;
 
+pub mod admin;
+pub mod audit_trail;
 pub mod compliance_filter;
 pub mod credential_issuer;
 pub mod credential_offer;
 pub mod did_recovery;
 pub mod did_registry;
 pub mod gas_benchmark;
+pub mod performance_optimizer;
+pub mod rate_limiter;
+pub mod reentrancy_guard;
 pub mod reputation_oracle;
 pub mod reputation_score;
 pub mod schema_registry;
+pub mod status_list;
 pub mod storage_optimization;
 pub mod zk_attestation;
 
@@ -47,14 +53,18 @@ pub use reputation_oracle::PaginatedFeeds;
 pub use reputation_oracle::ReputationOracle;
 pub use reputation_oracle::ReputationOracleError;
 pub use reputation_score::ReputationScore;
+pub use admin::AdminError;
 pub use schema_registry::CredentialSchemaRegistry;
+pub use status_list::BitstringStatusList;
+pub use status_list::StatusListError;
+pub use status_list::StatusListMeta;
 pub use zk_attestation::ZKAttestationContract;
 pub use zk_attestation::ZKAttestationContractClient;
 pub use zk_attestation::ZKAttestationRecord;
 
-// ---------------------------------------------------------------------------
-// Shared types
-// ---------------------------------------------------------------------------
+pub use status_list::BitstringStatusList;
+pub use status_list::StatusListError;
+pub use status_list::StatusListMeta;
 
 #[contracttype]
 #[derive(Clone)]
