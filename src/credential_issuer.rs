@@ -3,6 +3,8 @@ use soroban_sdk::{
 };
 
 use crate::{clamp_page_size, PaginatedCredentials, VerifiableCredential};
+use crate::rate_limiter::{check_rate_limit, defaults};
+use crate::reentrancy_guard::ReentrancyGuard;
 
 // ---------------------------------------------------------------------------
 // Delegated Credential Issuance Types (#92)
@@ -121,6 +123,8 @@ pub enum CredentialIssuerError {
     DelegationRevoked = 14,
     RegistryNotFound = 15,
     InvalidNonce = 16,
+    /// Caller has exceeded the allowed request rate.
+    RateLimitExceeded = 17,
     AlreadyExists = 17,
 }
 
@@ -142,6 +146,20 @@ impl CredentialIssuer {
         proof: Bytes,
     ) -> Result<Bytes, CredentialIssuerError> {
         issuer.require_auth();
+
+        // Rate limit: max 10 credential issuances per issuer per 60 seconds
+        check_rate_limit(
+            &env,
+            &issuer,
+            Symbol::new(&env, "issue_cred"),
+            defaults::ISSUE_CREDENTIAL_MAX,
+            defaults::ISSUE_CREDENTIAL_WINDOW,
+        )
+        .map_err(|_| CredentialIssuerError::RateLimitExceeded)?;
+
+        // Reentrancy guard: prevent callback loops via cross-contract calls
+        ReentrancyGuard::acquire(&env, "issue_cred")
+            .map_err(|_| CredentialIssuerError::Unauthorized)?;
 
         if credential_type.is_empty() {
             return Err(CredentialIssuerError::InvalidCredential);
@@ -206,6 +224,7 @@ impl CredentialIssuer {
             (credential_id.clone(), issuer.clone()),
         );
 
+        ReentrancyGuard::release(&env, "issue_cred");
         Ok(credential_id)
     }
 

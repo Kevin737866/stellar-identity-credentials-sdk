@@ -3,6 +3,8 @@ use soroban_sdk::{
 };
 
 use crate::{clamp_page_size, PaginatedReputationHistory};
+use crate::rate_limiter::{check_rate_limit, defaults};
+use crate::reentrancy_guard::ReentrancyGuard;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -106,6 +108,8 @@ pub enum ReputationScoreError {
     Unauthorized = 7,
     /// The same truster has already attested this subject.
     DuplicateAttestation = 8,
+    /// Caller has exceeded the allowed request rate.
+    RateLimitExceeded = 9,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -310,6 +314,20 @@ impl ReputationScore {
         success: bool,
         amount: i128,
     ) -> Result<u32, ReputationScoreError> {
+        // Rate limit: max 20 updates per address per 60 seconds
+        check_rate_limit(
+            &env,
+            &address,
+            Symbol::new(&env, "update_rep"),
+            defaults::UPDATE_REPUTATION_MAX,
+            defaults::UPDATE_REPUTATION_WINDOW,
+        )
+        .map_err(|_| ReputationScoreError::RateLimitExceeded)?;
+
+        // Reentrancy guard: prevent score inflation via cross-contract callback loops
+        ReentrancyGuard::acquire(&env, "update_rep")
+            .map_err(|_| ReputationScoreError::Unauthorized)?;
+
         let config = Self::get_config(&env);
         let mut profile = Self::load_profile(&env, address.clone())?;
 
@@ -347,6 +365,7 @@ impl ReputationScore {
             (profile.score, success),
         );
 
+        ReentrancyGuard::release(&env, "update_rep");
         Ok(profile.score)
     }
 
