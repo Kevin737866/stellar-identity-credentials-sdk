@@ -39,6 +39,20 @@ export type {
   AttributeExpiration 
 } from './dataMinimization';
 
+export { ComplianceClient } from './compliance';
+export type {
+  ScreeningStatus,
+  ScreeningResult,
+  TransactionRisk,
+  ComplianceReport,
+  TravelRulePayload,
+  AlertSubscription,
+  ComplianceReportOptions,
+  JurisdictionRule,
+  RiskLevel,
+  EnrichedProfile,
+} from './compliance';
+
 export { RegulatoryReportingClient } from './regulatoryReporting';
 export type {
   TemplateSection,
@@ -56,6 +70,20 @@ export type {
   ExportFormat,
 } from './regulatoryReporting';
 export { DEFAULT_TEMPLATES } from './regulatoryReporting';
+
+export { NetworkMonitor } from './networkMonitor';
+export type {
+  MonitorConfig,
+  AlertChannel,
+  AlertThreshold,
+  AlertEvent,
+  AlertSeverity,
+  AlertChannelType,
+  TransactionMetrics,
+  ContractStateChange,
+  AnomalyResult,
+  MonitorHealth,
+} from './networkMonitor';
 
 export {
   ErrorCode,

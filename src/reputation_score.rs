@@ -3,6 +3,8 @@ use soroban_sdk::{
 };
 
 use crate::{clamp_page_size, PaginatedReputationHistory};
+use crate::rate_limiter::{check_rate_limit, defaults};
+use crate::reentrancy_guard::ReentrancyGuard;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -106,6 +108,8 @@ pub enum ReputationScoreError {
     Unauthorized = 7,
     /// The same truster has already attested this subject.
     DuplicateAttestation = 8,
+    /// Caller has exceeded the allowed request rate.
+    RateLimitExceeded = 9,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -310,8 +314,22 @@ impl ReputationScore {
         success: bool,
         amount: i128,
     ) -> Result<u32, ReputationScoreError> {
+        // Rate limit: max 20 updates per address per 60 seconds
+        check_rate_limit(
+            &env,
+            &address,
+            Symbol::new(&env, "update_rep"),
+            defaults::UPDATE_REPUTATION_MAX,
+            defaults::UPDATE_REPUTATION_WINDOW,
+        )
+        .map_err(|_| ReputationScoreError::RateLimitExceeded)?;
+
+        // Reentrancy guard: prevent score inflation via cross-contract callback loops
+        ReentrancyGuard::acquire(&env, "update_rep")
+            .map_err(|_| ReputationScoreError::Unauthorized)?;
+
         let config = Self::get_config(&env);
-        let mut profile = Self::load_profile(&env, &address)?;
+        let mut profile = Self::load_profile(&env, address.clone())?;
 
         profile.total_transactions += 1;
         if success {
@@ -343,10 +361,11 @@ impl ReputationScore {
         );
 
         env.events().publish(
-            (Symbol::new(&env, "rep_updated"), address),
+            (Symbol::new(&env, "ReputationScoreUpdated"), address),
             (profile.score, success),
         );
 
+        ReentrancyGuard::release(&env, "update_rep");
         Ok(profile.score)
     }
 
@@ -380,9 +399,33 @@ impl ReputationScore {
 
         profile.last_updated = env.ledger().timestamp();
         Self::save_profile(&env, &address, &profile);
-        Self::append_history(&env, &address, profile.score, credential_type);
+        Self::append_history(&env, &address, profile.score, credential_type.clone());
+
+        env.events().publish(
+            (Symbol::new(&env, "ReputationScoreUpdated"), address),
+            (profile.score, credential_type, valid),
+        );
 
         Ok(profile.score)
+    }
+
+    /// Batch update transaction reputation for multiple addresses (#84).
+    /// More gas-efficient than individual calls: one ledger read/write per address.
+    pub fn batch_update_transaction_reputation(
+        env: Env,
+        updates: Vec<(Address, bool, i128)>,
+    ) -> Result<Vec<u32>, ReputationScoreError> {
+        let mut scores = Vec::new(&env);
+        for (address, success, amount) in updates.iter() {
+            let score = Self::update_transaction_reputation(
+                env.clone(),
+                address.clone(),
+                success,
+                amount,
+            )?;
+            scores.push_back(score);
+        }
+        Ok(scores)
     }
 
     // ── Trust graph ───────────────────────────────────────────────────────────
@@ -502,6 +545,12 @@ impl ReputationScore {
         env.storage()
             .instance()
             .set(&Symbol::new(&env, KEY_CONFIG), &config);
+
+        env.events().publish(
+            (Symbol::new(&env, "TierThresholdsConfigured"),),
+            (config.max_score, config.transaction_success_weight, config.credential_valid_weight),
+        );
+
         Ok(())
     }
 
@@ -1076,5 +1125,69 @@ mod tests {
         let intruder = Address::generate(&env);
         let result = ReputationScore::update_config(env.clone(), intruder, default_config());
         assert_eq!(result.unwrap_err(), ReputationScoreError::NotAdmin);
+    }
+
+    // ── Issue #41: Event emission tests ──────────────────────────────────
+
+    #[test]
+    fn test_reputation_score_updated_event_on_txn() {
+        let env = setup_env();
+        let (_, user) = bootstrap(&env);
+
+        ReputationScore::update_transaction_reputation(env.clone(), user, true, 100).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "ReputationScoreUpdated",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_reputation_score_updated_event_on_credential() {
+        let env = setup_env();
+        let (_, user) = bootstrap(&env);
+        let cred_type = Bytes::from_slice(&env, b"KYC");
+
+        ReputationScore::update_credential_reputation(
+            env.clone(),
+            user,
+            true,
+            cred_type,
+        )
+        .unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "ReputationScoreUpdated",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_tier_thresholds_configured_event_emitted() {
+        let env = setup_env();
+        let (admin, _) = bootstrap(&env);
+        let new_config = Config {
+            max_score: MAX_SCORE / 2,
+            ..default_config()
+        };
+
+        ReputationScore::update_config(env.clone(), admin, new_config).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "TierThresholdsConfigured",
+            )))
+        }));
     }
 }

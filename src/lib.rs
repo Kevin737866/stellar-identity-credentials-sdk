@@ -13,15 +13,23 @@ pub mod gas_benchmark;
 pub mod credential_offer;
 pub mod did_recovery;
 pub mod reputation_oracle;
+pub mod rate_limiter;
+pub mod reentrancy_guard;
 pub mod dif_interop;
 pub mod regulatory_reporting;
 pub mod audit_trail;
+pub mod contract_upgrade_governance;
 
 #[cfg(test)]
 mod integration_tests;
 #[cfg(test)]
 mod fuzz_test_script;
 #[cfg(test)]
+mod coverage_tests;
+#[cfg(test)]
+mod performance_tests;
+#[cfg(test)]
+mod cross_contract_tests;
 mod oracles;
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec};
@@ -58,6 +66,20 @@ pub use reputation_oracle::OracleDispute;
 pub use reputation_oracle::DisputeStatus;
 pub use reputation_oracle::ReputationOracleError;
 pub use reputation_oracle::PaginatedFeeds;
+pub use contract_upgrade_governance::ContractUpgradeGovernance;
+pub use contract_upgrade_governance::GovernanceConfig;
+pub use contract_upgrade_governance::Governor;
+pub use contract_upgrade_governance::UpgradeProposal;
+pub use contract_upgrade_governance::ProposalType;
+pub use contract_upgrade_governance::ProposalStatus;
+pub use contract_upgrade_governance::VoteType;
+pub use contract_upgrade_governance::VoteRecord;
+pub use contract_upgrade_governance::ExecutedUpgrade;
+pub use contract_upgrade_governance::SimulationResult;
+pub use contract_upgrade_governance::RollbackSnapshot;
+pub use contract_upgrade_governance::PaginatedProposals;
+pub use contract_upgrade_governance::PaginatedGovernors;
+pub use contract_upgrade_governance::GovernanceError;
 pub use regulatory_reporting::RegulatoryReporting;
 pub use regulatory_reporting::ReportTemplate;
 pub use regulatory_reporting::TemplateSection;

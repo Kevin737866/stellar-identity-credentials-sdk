@@ -3,6 +3,8 @@ use soroban_sdk::{
 };
 
 use crate::{clamp_page_size, PaginatedCredentials, VerifiableCredential};
+use crate::rate_limiter::{check_rate_limit, defaults};
+use crate::reentrancy_guard::ReentrancyGuard;
 
 // ---------------------------------------------------------------------------
 // Delegated Credential Issuance Types (#92)
@@ -66,6 +68,21 @@ pub struct BatchRevocationRecord {
 }
 
 // ---------------------------------------------------------------------------
+// Batch Issuance Types (#81)
+// ---------------------------------------------------------------------------
+
+/// A single credential to issue in a batch.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BatchIssuanceItem {
+    pub subject: Address,
+    pub credential_type: Vec<Bytes>,
+    pub credential_data: Bytes,
+    pub expiration_date: Option<u64>,
+    pub proof: Bytes,
+}
+
+// ---------------------------------------------------------------------------
 // Namespaced storage keys (#58)
 // ---------------------------------------------------------------------------
 
@@ -84,6 +101,7 @@ enum CredKey {
     RevocationRegistry(Bytes),
     RevocationProof(Bytes),
     BatchRevocation(Bytes),
+    AuthorizedIssuers,
 }
 
 #[contracterror]
@@ -105,6 +123,9 @@ pub enum CredentialIssuerError {
     DelegationRevoked = 14,
     RegistryNotFound = 15,
     InvalidNonce = 16,
+    /// Caller has exceeded the allowed request rate.
+    RateLimitExceeded = 17,
+    AlreadyExists = 17,
 }
 
 #[contract]
@@ -125,6 +146,20 @@ impl CredentialIssuer {
         proof: Bytes,
     ) -> Result<Bytes, CredentialIssuerError> {
         issuer.require_auth();
+
+        // Rate limit: max 10 credential issuances per issuer per 60 seconds
+        check_rate_limit(
+            &env,
+            &issuer,
+            Symbol::new(&env, "issue_cred"),
+            defaults::ISSUE_CREDENTIAL_MAX,
+            defaults::ISSUE_CREDENTIAL_WINDOW,
+        )
+        .map_err(|_| CredentialIssuerError::RateLimitExceeded)?;
+
+        // Reentrancy guard: prevent callback loops via cross-contract calls
+        ReentrancyGuard::acquire(&env, "issue_cred")
+            .map_err(|_| CredentialIssuerError::Unauthorized)?;
 
         if credential_type.is_empty() {
             return Err(CredentialIssuerError::InvalidCredential);
@@ -189,6 +224,7 @@ impl CredentialIssuer {
             (credential_id.clone(), issuer.clone()),
         );
 
+        ReentrancyGuard::release(&env, "issue_cred");
         Ok(credential_id)
     }
 
@@ -296,6 +332,11 @@ impl CredentialIssuer {
         if let Some(ref proof) = credential.proof {
             Self::verify_proof(&env, proof, &credential)?;
         }
+
+        env.events().publish(
+            (Symbol::new(&env, "CredentialVerified"),),
+            (credential_id, credential.issuer, credential.subject),
+        );
 
         Ok(true)
     }
@@ -427,10 +468,122 @@ impl CredentialIssuer {
         results
     }
 
+    /// Issue multiple credentials in a single transaction (#81).
+    /// Returns the list of generated credential IDs in order.
+    pub fn batch_issue_credentials(
+        env: Env,
+        issuer: Address,
+        items: Vec<BatchIssuanceItem>,
+    ) -> Result<Vec<Bytes>, CredentialIssuerError> {
+        issuer.require_auth();
+
+        let mut issued_ids = Vec::new(&env);
+
+        for item in items.iter() {
+            let credential_id = Self::issue_credential(
+                env.clone(),
+                issuer.clone(),
+                item.subject.clone(),
+                item.credential_type.clone(),
+                item.credential_data.clone(),
+                item.expiration_date,
+                item.proof.clone(),
+            )?;
+            issued_ids.push_back(credential_id);
+        }
+
+        Ok(issued_ids)
+    }
+
     pub fn get_revocation_reason(env: Env, credential_id: Bytes) -> Option<Bytes> {
         env.storage()
             .persistent()
             .get(&CredKey::Reason(credential_id))
+    }
+
+    // -----------------------------------------------------------------------
+    // Issuer Authorization (#41)
+    // -----------------------------------------------------------------------
+
+    /// Authorize an address to issue credentials. Emits IssuerAuthorized event.
+    pub fn authorize_issuer(
+        env: Env,
+        admin: Address,
+        issuer: Address,
+    ) -> Result<(), CredentialIssuerError> {
+        admin.require_auth();
+
+        let mut issuers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&CredKey::AuthorizedIssuers)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if issuers.iter().any(|i| i == issuer) {
+            return Err(CredentialIssuerError::AlreadyExists);
+        }
+
+        issuers.push_back(issuer.clone());
+        env.storage()
+            .persistent()
+            .set(&CredKey::AuthorizedIssuers, &issuers);
+
+        env.events().publish(
+            (Symbol::new(&env, "IssuerAuthorized"),),
+            (issuer.clone(), admin),
+        );
+
+        Ok(())
+    }
+
+    /// Revoke an address's authorization to issue credentials. Emits IssuerDeauthorized event.
+    pub fn deauthorize_issuer(
+        env: Env,
+        admin: Address,
+        issuer: Address,
+    ) -> Result<(), CredentialIssuerError> {
+        admin.require_auth();
+
+        let issuers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&CredKey::AuthorizedIssuers)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut found = false;
+        let mut new_issuers: Vec<Address> = Vec::new(&env);
+        for i in issuers.iter() {
+            if i == issuer {
+                found = true;
+            } else {
+                new_issuers.push_back(i);
+            }
+        }
+
+        if !found {
+            return Err(CredentialIssuerError::NotFound);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&CredKey::AuthorizedIssuers, &new_issuers);
+
+        env.events().publish(
+            (Symbol::new(&env, "IssuerDeauthorized"),),
+            (issuer.clone(), admin),
+        );
+
+        Ok(())
+    }
+
+    /// Check whether an address is an authorized issuer.
+    pub fn is_authorized_issuer(env: Env, issuer: Address) -> bool {
+        let issuers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&CredKey::AuthorizedIssuers)
+            .unwrap_or_else(|| Vec::new(&env));
+        issuers.iter().any(|i| i == issuer)
     }
 
     pub fn search_credentials_by_type(
@@ -640,7 +793,7 @@ impl CredentialIssuer {
         issuer_creds.push_back(credential_id.clone());
         env.storage()
             .persistent()
-            .set(&CredKey::IssuerCreds(issuer.clone()), &issuer_creds);
+            .set(&CredKey::IssuerCreds(auth.delegator.clone()), &issuer_creds);
 
         let mut subject_creds: Vec<Bytes> = env
             .storage()
@@ -1047,5 +1200,181 @@ impl CredentialIssuer {
             total,
             has_more: (start + size) < total,
         }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
+    use soroban_sdk::{vec, Bytes, Env, Symbol};
+
+    fn setup_env() -> Env {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set(LedgerInfo {
+            timestamp: 1_700_000_000,
+            protocol_version: 22,
+            sequence_number: 1000,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 50_000,
+            min_persistent_entry_ttl: 50_000,
+            max_entry_ttl: 50_000,
+        });
+        env
+    }
+
+    fn make_cred_type(env: &Env) -> Vec<Bytes> {
+        vec![env, Bytes::from_slice(env, b"VerifiableCredential")]
+    }
+
+    // ── Event tests (#41) ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_credential_issued_event_emitted() {
+        let env = setup_env();
+        let issuer = Address::generate(&env);
+        let subject = Address::generate(&env);
+        let proof = Bytes::from_slice(&env, b"valid_proof");
+
+        let result = CredentialIssuer::issue_credential(
+            env.clone(),
+            issuer,
+            subject,
+            make_cred_type(&env),
+            Bytes::from_slice(&env, b"{\"name\":\"Alice\"}"),
+            None,
+            proof,
+        );
+        assert!(result.is_ok());
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "CredentialIssued",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_credential_verified_event_emitted() {
+        let env = setup_env();
+        let issuer = Address::generate(&env);
+        let subject = Address::generate(&env);
+        let proof = Bytes::from_slice(&env, b"valid_proof");
+
+        let cred_id = CredentialIssuer::issue_credential(
+            env.clone(),
+            issuer,
+            subject,
+            make_cred_type(&env),
+            Bytes::from_slice(&env, b"{\"name\":\"Alice\"}"),
+            None,
+            proof,
+        )
+        .unwrap();
+
+        let result = CredentialIssuer::verify_credential(env.clone(), cred_id);
+        assert!(result.is_ok());
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "CredentialVerified",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_credential_revoked_event_emitted() {
+        let env = setup_env();
+        let issuer = Address::generate(&env);
+        let subject = Address::generate(&env);
+        let proof = Bytes::from_slice(&env, b"valid_proof");
+
+        let cred_id = CredentialIssuer::issue_credential(
+            env.clone(),
+            issuer.clone(),
+            subject,
+            make_cred_type(&env),
+            Bytes::from_slice(&env, b"{\"name\":\"Alice\"}"),
+            None,
+            proof,
+        )
+        .unwrap();
+
+        CredentialIssuer::revoke_credential(
+            env.clone(),
+            issuer,
+            cred_id,
+            Some(Bytes::from_slice(&env, b"reason")),
+        )
+        .unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "CredentialRevoked",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_issuer_authorized_event_emitted() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let issuer = Address::generate(&env);
+
+        CredentialIssuer::authorize_issuer(env.clone(), admin, issuer).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "IssuerAuthorized",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_issuer_deauthorized_event_emitted() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let issuer = Address::generate(&env);
+
+        CredentialIssuer::authorize_issuer(env.clone(), admin.clone(), issuer.clone()).unwrap();
+        CredentialIssuer::deauthorize_issuer(env.clone(), admin, issuer).unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "IssuerDeauthorized",
+            )))
+        }));
+    }
+
+    #[test]
+    fn test_is_authorized_issuer() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        CredentialIssuer::authorize_issuer(env.clone(), admin, issuer.clone()).unwrap();
+
+        assert!(CredentialIssuer::is_authorized_issuer(env.clone(), issuer));
+        assert!(!CredentialIssuer::is_authorized_issuer(env.clone(), other));
     }
 }
