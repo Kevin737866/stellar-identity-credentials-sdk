@@ -66,6 +66,21 @@ pub struct BatchRevocationRecord {
 }
 
 // ---------------------------------------------------------------------------
+// Batch Issuance Types (#81)
+// ---------------------------------------------------------------------------
+
+/// A single credential to issue in a batch.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BatchIssuanceItem {
+    pub subject: Address,
+    pub credential_type: Vec<Bytes>,
+    pub credential_data: Bytes,
+    pub expiration_date: Option<u64>,
+    pub proof: Bytes,
+}
+
+// ---------------------------------------------------------------------------
 // Namespaced storage keys (#58)
 // ---------------------------------------------------------------------------
 
@@ -432,6 +447,33 @@ impl CredentialIssuer {
             results.push_back(is_valid);
         }
         results
+    }
+
+    /// Issue multiple credentials in a single transaction (#81).
+    /// Returns the list of generated credential IDs in order.
+    pub fn batch_issue_credentials(
+        env: Env,
+        issuer: Address,
+        items: Vec<BatchIssuanceItem>,
+    ) -> Result<Vec<Bytes>, CredentialIssuerError> {
+        issuer.require_auth();
+
+        let mut issued_ids = Vec::new(&env);
+
+        for item in items.iter() {
+            let credential_id = Self::issue_credential(
+                env.clone(),
+                issuer.clone(),
+                item.subject.clone(),
+                item.credential_type.clone(),
+                item.credential_data.clone(),
+                item.expiration_date,
+                item.proof.clone(),
+            )?;
+            issued_ids.push_back(credential_id);
+        }
+
+        Ok(issued_ids)
     }
 
     pub fn get_revocation_reason(env: Env, credential_id: Bytes) -> Option<Bytes> {
