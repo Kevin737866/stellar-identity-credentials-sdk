@@ -57,6 +57,20 @@ export type {
 } from './regulatoryReporting';
 export { DEFAULT_TEMPLATES } from './regulatoryReporting';
 
+export { NetworkMonitor } from './networkMonitor';
+export type {
+  MonitorConfig,
+  AlertChannel,
+  AlertThreshold,
+  AlertEvent,
+  AlertSeverity,
+  AlertChannelType,
+  TransactionMetrics,
+  ContractStateChange,
+  AnomalyResult,
+  MonitorHealth,
+} from './networkMonitor';
+
 export {
   ErrorCode,
   StellarIdentityError,
