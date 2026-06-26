@@ -1,0 +1,127 @@
+name: Deploy to Stellar Futurenet
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry-run mode (build only, no deploy)"
+        required: false
+        default: "false"
+        type: boolean
+
+env:
+  SOROBAN_RPC_URL: "https://rpc-futurenet.stellar.org"
+  SOROBAN_NETWORK_PASSPHRASE: "Test SDF Future Network ; October 2022"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build WASM Binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Soroban CLI
+        run: cargo install --locked soroban-cli
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-futurenet-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build all contracts
+        run: soroban contract build
+
+      - name: Optimize WASM binaries
+        run: |
+          for wasm in target/wasm32-unknown-unknown/release/*.wasm; do
+            soroban contract optimize --wasm "$wasm"
+          done
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-binaries-futurenet
+          path: target/wasm32-unknown-unknown/release/*.optimized.wasm
+          retention-days: 14
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run tests
+        run: cargo test --release -- --nocapture
+
+  deploy:
+    name: Deploy to Futurenet
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.dry_run != 'true' }}
+    environment: futurenet
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Soroban CLI
+        run: cargo install --locked soroban-cli
+
+      - name: Download WASM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-binaries-futurenet
+          path: wasm/
+
+      - name: Configure Soroban identity
+        run: soroban keys add deployer --secret-key "${{ secrets.FUTURENET_SECRET_KEY }}"
+
+      - name: Deploy contracts
+        run: |
+          for wasm in wasm/*.optimized.wasm; do
+            name=$(basename "$wasm" .optimized.wasm)
+            echo "Deploying $name..."
+            addr=$(soroban contract deploy \
+              --wasm "$wasm" \
+              --source deployer \
+              --rpc-url "$SOROBAN_RPC_URL" \
+              --network-passphrase "$SOROBAN_NETWORK_PASSPHRASE")
+            echo "$name=$addr"
+          done
+
+      - name: Notify via webhook
+        if: always()
+        run: |
+          if [ -n "${{ secrets.NOTIFICATION_WEBHOOK_URL }}" ]; then
+            curl -s -X POST "${{ secrets.NOTIFICATION_WEBHOOK_URL }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\":\"Futurenet deployment ${{ job.status }} for ${{ github.repository }} (${{ github.sha }})\"}" || true
+          fi

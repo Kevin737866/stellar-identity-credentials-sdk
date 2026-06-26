@@ -1,3 +1,9 @@
+/**
+ * Error codes for the Stellar Identity SDK.
+ * Organized by domain: DID (1xxx), Credential (2xxx), Reputation (3xxx),
+ * ZK Proof (4xxx), Compliance (5xxx), Config (6xxx), Network (7xxx).
+ * @category Errors
+ */
 export enum ErrorCode {
   // DID errors (maps to DIDRegistryError)
   DIDAlreadyExists = 1001,
@@ -107,6 +113,11 @@ const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.NetworkSimulationError]: 'Contract simulation error',
 };
 
+/**
+ * Base error class for all Stellar Identity SDK errors.
+ * Contains an error code and optional details for debugging.
+ * @category Errors
+ */
 export class StellarIdentityError extends Error {
   public readonly code: ErrorCode;
   public readonly details: Record<string, unknown>;
@@ -231,6 +242,14 @@ const ERROR_CODE_MAP: Record<string, [ErrorCode, ErrorClass]> = {
 const RUST_REVERT_PATTERN = /Error\(Contract\(#(\d+)\),?.*?\)/;
 const RUST_ERROR_NAME_PATTERN = /(?<name>[A-Za-z]+Error):(?<variant>[A-Za-z]+)/;
 
+/**
+ * Maps a contract error (from Soroban transaction results) to the appropriate
+ * StellarIdentityError subclass. Handles Rust revert patterns, error name
+ * matching, and fallback to network errors.
+ * @param error - The error to map
+ * @returns A typed StellarIdentityError
+ * @category Errors
+ */
 export function mapContractError(error: unknown): StellarIdentityError {
   if (error instanceof StellarIdentityError) {
     return error;
