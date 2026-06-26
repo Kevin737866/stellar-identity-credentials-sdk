@@ -1,0 +1,44 @@
+_format_version: "3.0"
+
+services:
+  - name: off-chain-services
+    # Routing to backend on host machine
+    url: http://host.docker.internal:3000
+    routes:
+      - name: v1-api
+        paths:
+          - /api/v1
+    plugins:
+      # API Key Authentication
+      - name: key-auth
+        config:
+          key_names: ["x-api-key"]
+          hide_credentials: true
+
+      # Rate Limiting per Consumer
+      - name: rate-limiting
+        config:
+          minute: 100
+          limit_by: consumer
+          policy: local
+          fault_tolerant: true
+
+      # Request Validation & Security (Basic)
+      - name: bot-detection
+      - name: cors
+        config:
+          origins: ["*"]
+          methods: ["GET", "POST", "PUT", "DELETE"]
+          headers: ["Accept", "Content-Type", "x-api-key"]
+
+      # Usage Analytics (Prometheus Metrics)
+      - name: prometheus
+        config:
+          per_consumer: true
+          status_code_metrics: true
+          latency_metrics: true
+
+consumers:
+  - username: demo-developer
+    keyauth_credentials:
+      - key: "sk_test_12345"

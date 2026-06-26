@@ -10,7 +10,7 @@ use crate::{
     credential_issuer::CredentialIssuer,
     credential_schema::{CredentialSchema, FieldValidation},
     did_registry::DIDRegistry,
-    reputation_score::{ReputationScore, Config},
+    reputation_score::{Config, ReputationScore},
     zk_attestation::{CircuitType, ZKAttestation},
     Service, VerificationMethod,
 };
@@ -50,7 +50,7 @@ fn bench_create_did() {
     let controller = Address::generate(&env);
     let did = make_did_bytes(&env);
     let vm = make_vm(&env, "#key-1", &[1u8; 32]);
-    let services = vec![
+    let services = soroban_sdk::vec![
         &env,
         Service {
             id: Bytes::from_slice(&env, b"#hub"),
@@ -59,13 +59,7 @@ fn bench_create_did() {
         },
     ];
 
-    let result = DIDRegistry::create_did(
-        env.clone(),
-        controller,
-        did,
-        vec![&env, vm],
-        services,
-    );
+    let result = DIDRegistry::create_did(env.clone(), controller, did, soroban_sdk::vec![&env, vm], services);
     assert!(result.is_ok());
     std::println!("[BENCH] create_did            OK");
 }
@@ -80,7 +74,7 @@ fn bench_resolve_did() {
         env.clone(),
         controller,
         did.clone(),
-        vec![&env, vm],
+        soroban_sdk::vec![&env, vm],
         Vec::new(&env),
     );
 
@@ -99,7 +93,7 @@ fn bench_issue_credential() {
         env.clone(),
         issuer,
         subject,
-        vec![&env, Bytes::from_slice(&env, b"KYCVerification")],
+        soroban_sdk::vec![&env, Bytes::from_slice(&env, b"KYCVerification")],
         Bytes::from_slice(&env, b"{\"name\":\"Alice\"}"),
         None,
         Bytes::from_slice(&env, b"proof"),
@@ -117,7 +111,7 @@ fn bench_verify_credential() {
         env.clone(),
         issuer,
         subject,
-        vec![&env, Bytes::from_slice(&env, b"KYC")],
+        soroban_sdk::vec![&env, Bytes::from_slice(&env, b"KYC")],
         Bytes::from_slice(&env, b"{\"v\":1}"),
         None,
         Bytes::from_slice(&env, b"proof"),
@@ -182,7 +176,7 @@ fn bench_register_circuit() {
         2,
         3,
         CircuitType::RangeProof,
-        vec![&env, Symbol::new(&env, "attr")],
+        soroban_sdk::vec![&env, Symbol::new(&env, "attr")],
     );
     assert!(result.is_ok());
     std::println!("[BENCH] register_circuit      OK");
@@ -194,9 +188,20 @@ fn bench_screen_address() {
     let admin = Address::generate(&env);
     let source = Bytes::from_slice(&env, b"OFAC_SDN");
     let hash = BytesN::from_array(&env, &[2u8; 32]);
-    let _ = ComplianceFilter::update_sanctions_list(env.clone(), admin.clone(), source.clone(), hash, 1);
+    let _ = ComplianceFilter::update_sanctions_list(
+        env.clone(),
+        admin.clone(),
+        source.clone(),
+        hash,
+        1,
+    );
     let sanctioned = Address::generate(&env);
-    let _ = ComplianceFilter::load_list_entries(env.clone(), admin, source, vec![&env, sanctioned.clone()]);
+    let _ = ComplianceFilter::load_list_entries(
+        env.clone(),
+        admin,
+        source,
+        soroban_sdk::vec![&env, sanctioned.clone()],
+    );
 
     let clean = Address::generate(&env);
     let result = ComplianceFilter::screen_address(env.clone(), clean);
@@ -215,7 +220,7 @@ fn bench_paginated_credentials() {
             env.clone(),
             issuer.clone(),
             subject.clone(),
-            vec![&env, Bytes::from_slice(&env, b"Test")],
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"Test")],
             Bytes::from_slice(&env, b"data"),
             None,
             Bytes::from_slice(&env, b"proof"),
@@ -234,12 +239,12 @@ fn bench_register_schema() {
     let env = setup_env();
     let admin = Address::generate(&env);
 
-    let required = vec![
+    let required = soroban_sdk::vec![
         &env,
         Bytes::from_slice(&env, b"name"),
         Bytes::from_slice(&env, b"dob"),
     ];
-    let optional = vec![&env, Bytes::from_slice(&env, b"middle_name")];
+    let optional = soroban_sdk::vec![&env, Bytes::from_slice(&env, b"middle_name")];
     let validations: Map<Bytes, FieldValidation> = Map::new(&env);
 
     let result = CredentialSchema::register_schema(

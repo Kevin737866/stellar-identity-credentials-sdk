@@ -20,6 +20,8 @@ export { CacheManager, DataType } from './cacheManager';
 export { compressPayload, decompressPayload, compressionRatio } from './compression';
 export { EventSubscriber } from './eventSubscriber';
 export { Logger, LogLevel } from './logger';
+export { GDPREngine } from './gdpr';
+export type { ConsentRecord, ProcessingRecord, GDPRComplianceOptions } from './gdpr';
 export { DataMinimizationEngine } from './dataMinimization';
 export type { 
   MinimalDisclosurePolicy, 
@@ -165,7 +167,7 @@ import { ReputationClient } from './reputation';
 import { ZKProofsClient } from './zkProofs';
 import { CacheManager } from './cacheManager';
 import { EventSubscriber } from './eventSubscriber';
-import { RegulatoryReportingClient } from './regulatoryReporting';
+import { GDPREngine } from './gdpr';
 import { StellarIdentityConfig } from './types';
 import {
   validateConfig,
@@ -211,6 +213,7 @@ export class StellarIdentitySDK {
     this.zkProofs = new ZKProofsClient(config);
     this.cache = new CacheManager();
     this.events = new EventSubscriber(config);
+    this.gdpr = new GDPREngine(this.did, this.credentials);
   }
 
   /**
