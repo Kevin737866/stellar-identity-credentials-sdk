@@ -2,6 +2,7 @@
 
 [![TypeScript CI](https://github.com/Kevin737866/stellar-identity-credentials-sdk/actions/workflows/typescript-ci.yml/badge.svg)](https://github.com/Kevin737866/stellar-identity-credentials-sdk/actions/workflows/typescript-ci.yml)
 [![CI](https://github.com/Kevin737866/stellar-identity-credentials-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/Kevin737866/stellar-identity-credentials-sdk/actions/workflows/ci.yml)
+[![Rust Contracts CI](https://github.com/Kevin737866/stellar-identity-credentials-sdk/actions/workflows/rust-contracts-ci.yml/badge.svg)](https://github.com/Kevin737866/stellar-identity-credentials-sdk/actions/workflows/rust-contracts-ci.yml)
 
 A comprehensive SDK for building decentralized identity and verifiable credentials solutions on the Stellar network using Soroban smart contracts.
 
