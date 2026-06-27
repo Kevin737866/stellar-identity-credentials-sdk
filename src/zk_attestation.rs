@@ -34,6 +34,10 @@ pub enum ZKAttestationError {
     InvalidPublicInputs = 8,
     CircuitDeactivated = 9,
     RevokedCredential = 10,
+    PredicateMismatch = 11,
+    AttributeNotFound = 12,
+    DisclosureConflict = 13,
+    CombiningFailed = 14,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,6 +81,7 @@ pub enum CircuitType {
     CredentialOwnership,
     CompositeProof,
     EqualityProof,
+    SelectiveDisclosure,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,6 +103,59 @@ pub struct NullifierRecord {
     pub used_at: u64,
     pub context: Bytes,
     pub proof_id: Bytes,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum PredicateType {
+    GreaterThan,
+    LessThan,
+    GreaterThanOrEqual,
+    LessThanOrEqual,
+    Equality,
+    Range,
+    InSet,
+    NotInSet,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct SelectiveDisclosureProof {
+    pub proof_id: Bytes,
+    pub credential_id: Bytes,
+    pub circuit_id: Symbol,
+    pub public_inputs: Vec<Bytes>,
+    pub proof_bytes: Bytes,
+    pub nullifier: Bytes,
+    pub verifier_address: Address,
+    pub created_at: u64,
+    pub expires_at: Option<u64>,
+    pub revealed_attributes: Vec<Symbol>,
+    pub hidden_attributes: Vec<Symbol>,
+    pub predicates: Vec<PredicateInfo>,
+    pub metadata: Map<Symbol, Bytes>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct PredicateInfo {
+    pub attribute_name: Symbol,
+    pub predicate_type: PredicateType,
+    pub threshold: Option<Bytes>,
+    pub range_min: Option<Bytes>,
+    pub range_max: Option<Bytes>,
+    pub allowed_values: Option<Vec<Bytes>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct CombinedDisclosureProof {
+    pub proof_id: Bytes,
+    pub child_proof_ids: Vec<Bytes>,
+    pub combined_predicates: Vec<PredicateInfo>,
+    pub created_at: u64,
+    pub expires_at: Option<u64>,
+    pub metadata: Map<Symbol, Bytes>,
 }
 
 #[contract]
@@ -139,7 +197,7 @@ impl ZKAttestationContract {
             verifying_key_hash,
             public_input_count,
             private_input_count,
-            created_by: creator,
+            created_by: admin_address,
             created_at: env.ledger().timestamp(),
             active: true,
             circuit_type,
@@ -413,6 +471,242 @@ impl ZKAttestationContract {
     }
 
     // -----------------------------------------------------------------------
+    // Selective Disclosure methods (#111)
+    // -----------------------------------------------------------------------
+
+    pub fn create_selective_disclosure_proof(
+        env: Env,
+        credential_id: Bytes,
+        circuit_id: Symbol,
+        public_inputs: Vec<Bytes>,
+        proof_bytes: Bytes,
+        nullifier: Bytes,
+        revealed_attributes: Vec<Symbol>,
+        hidden_attributes: Vec<Symbol>,
+        predicates: Vec<PredicateInfo>,
+        expires_at: Option<u64>,
+        metadata: Map<Symbol, Bytes>,
+    ) -> Result<Bytes, ZKAttestationError> {
+        let circuit: ZKCircuit = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::Circuit(circuit_id.clone()))
+            .ok_or(ZKAttestationError::InvalidCircuit)?;
+
+        if !circuit.active {
+            return Err(ZKAttestationError::CircuitDeactivated);
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .has(&ZkKey::Nullifier(nullifier.clone()))
+        {
+            return Err(ZKAttestationError::NullifierAlreadyUsed);
+        }
+
+        // Validate predicates match supported circuit attributes
+        for pred in predicates.iter() {
+            let attr = pred.attribute_name;
+            if !circuit.supported_attributes.contains(attr.clone()) {
+                return Err(ZKAttestationError::AttributeNotFound);
+            }
+            // Validate no conflict: an attribute cannot be both revealed and hidden
+            if revealed_attributes.contains(attr.clone())
+                && hidden_attributes.contains(attr.clone())
+            {
+                return Err(ZKAttestationError::DisclosureConflict);
+            }
+        }
+
+        let is_valid =
+            Self::verify_zk_proof(&env, &circuit.verifier_key, &public_inputs, &proof_bytes)?;
+
+        if !is_valid {
+            return Err(ZKAttestationError::VerificationFailed);
+        }
+
+        let proof_id = Self::generate_proof_id(&env, &circuit_id);
+
+        let nullifier_record = NullifierRecord {
+            nullifier: nullifier.clone(),
+            used_at: env.ledger().timestamp(),
+            context: metadata
+                .get(Symbol::new(&env, "context"))
+                .unwrap_or_else(|| Bytes::from_slice(&env, b"selective_disclosure")),
+            proof_id: proof_id.clone(),
+        };
+        env.storage()
+            .persistent()
+            .set(&ZkKey::Nullifier(nullifier.clone()), &nullifier_record);
+
+        let disclosure = SelectiveDisclosureProof {
+            proof_id: proof_id.clone(),
+            credential_id,
+            circuit_id: circuit_id.clone(),
+            public_inputs: public_inputs.clone(),
+            proof_bytes: proof_bytes.clone(),
+            nullifier: nullifier.clone(),
+            verifier_address: env.current_contract_address(),
+            created_at: env.ledger().timestamp(),
+            expires_at,
+            revealed_attributes: revealed_attributes.clone(),
+            hidden_attributes: hidden_attributes.clone(),
+            predicates: predicates.clone(),
+            metadata: metadata.clone(),
+        };
+
+        env.storage()
+            .persistent()
+            .set(&ZkKey::Proof(proof_id.clone()), &disclosure);
+
+        let mut circuit_proofs: Vec<Bytes> = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::CircuitProofs(circuit_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        circuit_proofs.push_back(proof_id.clone());
+        env.storage()
+            .persistent()
+            .set(&ZkKey::CircuitProofs(circuit_id.clone()), &circuit_proofs);
+
+        env.events().publish(
+            (Symbol::new(&env, "SelectiveDisclosureCreated"),),
+            (proof_id.clone(), circuit_id, nullifier),
+        );
+
+        Ok(proof_id)
+    }
+
+    pub fn verify_selective_disclosure(
+        env: Env,
+        proof_id: Bytes,
+        expected_predicates: Vec<PredicateInfo>,
+    ) -> Result<bool, ZKAttestationError> {
+        let disclosure: SelectiveDisclosureProof = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::Proof(proof_id.clone()))
+            .ok_or(ZKAttestationError::NotFound)?;
+
+        if let Some(expires_at) = disclosure.expires_at {
+            if env.ledger().timestamp() > expires_at {
+                return Ok(false);
+            }
+        }
+
+        // Verify each expected predicate matches the disclosure
+        for expected in expected_predicates.iter() {
+            let found = disclosure.predicates.iter().any(|actual| {
+                actual.attribute_name == expected.attribute_name
+                    && actual.predicate_type == expected.predicate_type
+                    && actual.threshold == expected.threshold
+                    && actual.range_min == expected.range_min
+                    && actual.range_max == expected.range_max
+            });
+            if !found {
+                return Err(ZKAttestationError::PredicateMismatch);
+            }
+        }
+
+        let circuit: ZKCircuit = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::Circuit(disclosure.circuit_id))
+            .ok_or(ZKAttestationError::InvalidCircuit)?;
+
+        let result = Self::verify_zk_proof(
+            &env,
+            &circuit.verifier_key,
+            &disclosure.public_inputs,
+            &disclosure.proof_bytes,
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "SelectiveDisclosureVerified"),),
+            (proof_id, disclosure.circuit_id, result.unwrap_or(false)),
+        );
+
+        result
+    }
+
+    pub fn combine_selective_disclosures(
+        env: Env,
+        proof_ids: Vec<Bytes>,
+        metadata: Map<Symbol, Bytes>,
+    ) -> Result<Bytes, ZKAttestationError> {
+        if proof_ids.is_empty() {
+            return Err(ZKAttestationError::CombiningFailed);
+        }
+
+        let mut combined_predicates: Vec<PredicateInfo> = Vec::new(&env);
+        let mut seen_attributes: Map<Symbol, bool> = Map::new(&env);
+
+        for proof_id in proof_ids.iter() {
+            let disclosure: SelectiveDisclosureProof = env
+                .storage()
+                .persistent()
+                .get(&ZkKey::Proof(proof_id.clone()))
+                .ok_or(ZKAttestationError::NotFound)?;
+
+            if let Some(expires_at) = disclosure.expires_at {
+                if env.ledger().timestamp() > expires_at {
+                    return Err(ZKAttestationError::Expired);
+                }
+            }
+
+            for pred in disclosure.predicates.iter() {
+                if seen_attributes.contains(pred.attribute_name.clone()) {
+                    return Err(ZKAttestationError::DisclosureConflict);
+                }
+                seen_attributes.set(pred.attribute_name.clone(), true);
+                combined_predicates.push_back(pred);
+            }
+        }
+
+        let combined_id = Bytes::from_slice(&env, b"combined:");
+        let combined = CombinedDisclosureProof {
+            proof_id: combined_id.clone(),
+            child_proof_ids: proof_ids,
+            combined_predicates,
+            created_at: env.ledger().timestamp(),
+            expires_at: None,
+            metadata,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&ZkKey::Proof(combined_id.clone()), &combined);
+
+        env.events().publish(
+            (Symbol::new(&env, "DisclosuresCombined"),),
+            (combined_id.clone(),),
+        );
+
+        Ok(combined_id)
+    }
+
+    pub fn get_selective_disclosure(
+        env: Env,
+        proof_id: Bytes,
+    ) -> Result<SelectiveDisclosureProof, ZKAttestationError> {
+        env.storage()
+            .persistent()
+            .get(&ZkKey::Proof(proof_id))
+            .ok_or(ZKAttestationError::NotFound)
+    }
+
+    pub fn get_combined_disclosure(
+        env: Env,
+        proof_id: Bytes,
+    ) -> Result<CombinedDisclosureProof, ZKAttestationError> {
+        env.storage()
+            .persistent()
+            .get(&ZkKey::Proof(proof_id))
+            .ok_or(ZKAttestationError::NotFound)
+    }
+
+    // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
 
@@ -618,6 +912,433 @@ mod tests {
             topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
                 &env,
                 "ProofVerified",
+            )))
+        }));
+    }
+
+    // ── Selective Disclosure tests (#111) ──────────────────────────────
+
+    fn register_sd_test_circuit(env: &Env) -> Symbol {
+        let circuit_id = Symbol::new(env, "sd_circuit");
+        let admin = env.current_contract_address();
+        ZKAttestation::register_circuit(
+            env.clone(),
+            admin,
+            circuit_id.clone(),
+            Bytes::from_slice(env, b"Selective Disclosure"),
+            Bytes::from_slice(env, b"Test selective disclosure circuit"),
+            Bytes::from_slice(env, b"sd_verifier_key_32_bytes_long!!"),
+            3,
+            4,
+            CircuitType::SelectiveDisclosure,
+            vec![
+                env,
+                Symbol::new(env, "age"),
+                Symbol::new(env, "income"),
+                Symbol::new(env, "credit_score"),
+            ],
+        )
+        .unwrap();
+        circuit_id
+    }
+
+    #[test]
+    fn test_create_selective_disclosure_proof() {
+        let env = setup_env();
+        let circuit_id = register_sd_test_circuit(&env);
+
+        let public_inputs = vec![
+            &env,
+            Bytes::from_slice(&env, b"commitment_1"),
+            Bytes::from_slice(&env, b"18"),
+            Bytes::from_slice(&env, b"65"),
+        ];
+        let proof_bytes = Bytes::from_slice(&env, b"valid_zk_proof_data");
+        let nullifier = Bytes::from_slice(&env, b"sd_nullifier_1");
+        let revealed = vec![&env, Symbol::new(&env, "credit_score")];
+        let hidden = vec![&env, Symbol::new(&env, "age")];
+        let predicates = vec![
+            &env,
+            PredicateInfo {
+                attribute_name: Symbol::new(&env, "age"),
+                predicate_type: PredicateType::Range,
+                threshold: None,
+                range_min: Some(Bytes::from_slice(&env, b"18")),
+                range_max: Some(Bytes::from_slice(&env, b"65")),
+                allowed_values: None,
+            },
+        ];
+        let mut metadata = Map::new(&env);
+        metadata.set(
+            Symbol::new(&env, "context"),
+            Bytes::from_slice(&env, b"age_verification"),
+        );
+
+        let result = ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_123"),
+            circuit_id,
+            public_inputs,
+            proof_bytes,
+            nullifier,
+            revealed,
+            hidden,
+            predicates,
+            None,
+            metadata,
+        );
+
+        assert!(result.is_ok());
+        let proof_id = result.unwrap();
+        assert!(!proof_id.is_empty());
+    }
+
+    #[test]
+    fn test_selective_disclosure_rejects_conflicting_attributes() {
+        let env = setup_env();
+        let circuit_id = register_sd_test_circuit(&env);
+
+        let predicates = vec![
+            &env,
+            PredicateInfo {
+                attribute_name: Symbol::new(&env, "age"),
+                predicate_type: PredicateType::GreaterThan,
+                threshold: Some(Bytes::from_slice(&env, b"18")),
+                range_min: None,
+                range_max: None,
+                allowed_values: None,
+            },
+        ];
+
+        let result = ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_123"),
+            circuit_id,
+            vec![&env, Bytes::from_slice(&env, b"input_1")],
+            Bytes::from_slice(&env, b"proof_data"),
+            Bytes::from_slice(&env, b"nullifier_2"),
+            vec![&env, Symbol::new(&env, "age")],   // revealed
+            vec![&env, Symbol::new(&env, "age")],   // hidden (conflict)
+            predicates,
+            None,
+            Map::new(&env),
+        );
+
+        assert_eq!(result, Err(ZKAttestationError::DisclosureConflict));
+    }
+
+    #[test]
+    fn test_verify_selective_disclosure_success() {
+        let env = setup_env();
+        let circuit_id = register_sd_test_circuit(&env);
+
+        let predicates = vec![
+            &env,
+            PredicateInfo {
+                attribute_name: Symbol::new(&env, "age"),
+                predicate_type: PredicateType::Range,
+                threshold: None,
+                range_min: Some(Bytes::from_slice(&env, b"18")),
+                range_max: Some(Bytes::from_slice(&env, b"65")),
+                allowed_values: None,
+            },
+        ];
+
+        let proof_id = ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_123"),
+            circuit_id.clone(),
+            vec![
+                &env,
+                Bytes::from_slice(&env, b"commitment_1"),
+                Bytes::from_slice(&env, b"18"),
+                Bytes::from_slice(&env, b"65"),
+            ],
+            Bytes::from_slice(&env, b"valid_proof"),
+            Bytes::from_slice(&env, b"nullifier_3"),
+            vec![&env, Symbol::new(&env, "credit_score")],
+            vec![&env, Symbol::new(&env, "age")],
+            predicates.clone(),
+            None,
+            Map::new(&env),
+        )
+        .unwrap();
+
+        let result = ZKAttestation::verify_selective_disclosure(
+            env.clone(),
+            proof_id,
+            predicates,
+        );
+
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    #[test]
+    fn test_verify_selective_disclosure_predicate_mismatch() {
+        let env = setup_env();
+        let circuit_id = register_sd_test_circuit(&env);
+
+        let predicates = vec![
+            &env,
+            PredicateInfo {
+                attribute_name: Symbol::new(&env, "age"),
+                predicate_type: PredicateType::Range,
+                threshold: None,
+                range_min: Some(Bytes::from_slice(&env, b"18")),
+                range_max: Some(Bytes::from_slice(&env, b"65")),
+                allowed_values: None,
+            },
+        ];
+
+        let proof_id = ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_123"),
+            circuit_id.clone(),
+            vec![
+                &env,
+                Bytes::from_slice(&env, b"commitment_1"),
+                Bytes::from_slice(&env, b"18"),
+                Bytes::from_slice(&env, b"65"),
+            ],
+            Bytes::from_slice(&env, b"valid_proof"),
+            Bytes::from_slice(&env, b"nullifier_4"),
+            vec![&env, Symbol::new(&env, "credit_score")],
+            vec![&env, Symbol::new(&env, "age")],
+            predicates,
+            None,
+            Map::new(&env),
+        )
+        .unwrap();
+
+        let wrong_predicates = vec![
+            &env,
+            PredicateInfo {
+                attribute_name: Symbol::new(&env, "income"),
+                predicate_type: PredicateType::GreaterThan,
+                threshold: Some(Bytes::from_slice(&env, b"100000")),
+                range_min: None,
+                range_max: None,
+                allowed_values: None,
+            },
+        ];
+
+        let result = ZKAttestation::verify_selective_disclosure(
+            env.clone(),
+            proof_id,
+            wrong_predicates,
+        );
+
+        assert_eq!(result, Err(ZKAttestationError::PredicateMismatch));
+    }
+
+    #[test]
+    fn test_combine_selective_disclosures() {
+        let env = setup_env();
+        let circuit_id = register_sd_test_circuit(&env);
+
+        let age_predicates = vec![
+            &env,
+            PredicateInfo {
+                attribute_name: Symbol::new(&env, "age"),
+                predicate_type: PredicateType::Range,
+                threshold: None,
+                range_min: Some(Bytes::from_slice(&env, b"18")),
+                range_max: Some(Bytes::from_slice(&env, b"65")),
+                allowed_values: None,
+            },
+        ];
+
+        let income_predicates = vec![
+            &env,
+            PredicateInfo {
+                attribute_name: Symbol::new(&env, "income"),
+                predicate_type: PredicateType::GreaterThan,
+                threshold: Some(Bytes::from_slice(&env, b"50000")),
+                range_min: None,
+                range_max: None,
+                allowed_values: None,
+            },
+        ];
+
+        let proof_id_1 = ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_123"),
+            circuit_id.clone(),
+            vec![&env, Bytes::from_slice(&env, b"c1")],
+            Bytes::from_slice(&env, b"proof_1"),
+            Bytes::from_slice(&env, b"nullifier_5"),
+            vec![&env],
+            vec![&env, Symbol::new(&env, "age")],
+            age_predicates,
+            None,
+            Map::new(&env),
+        )
+        .unwrap();
+
+        let proof_id_2 = ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_123"),
+            circuit_id.clone(),
+            vec![&env, Bytes::from_slice(&env, b"c2")],
+            Bytes::from_slice(&env, b"proof_2"),
+            Bytes::from_slice(&env, b"nullifier_6"),
+            vec![&env],
+            vec![&env, Symbol::new(&env, "income")],
+            income_predicates,
+            None,
+            Map::new(&env),
+        )
+        .unwrap();
+
+        let combined = ZKAttestation::combine_selective_disclosures(
+            env.clone(),
+            vec![&env, proof_id_1, proof_id_2],
+            Map::new(&env),
+        );
+
+        assert!(combined.is_ok());
+    }
+
+    #[test]
+    fn test_combine_selective_disclosures_empty_fails() {
+        let env = setup_env();
+        let result = ZKAttestation::combine_selective_disclosures(
+            env.clone(),
+            vec![&env],
+            Map::new(&env),
+        );
+        assert_eq!(result, Err(ZKAttestationError::CombiningFailed));
+    }
+
+    #[test]
+    fn test_selective_disclosure_getters() {
+        let env = setup_env();
+        let circuit_id = register_sd_test_circuit(&env);
+
+        let predicates = vec![
+            &env,
+            PredicateInfo {
+                attribute_name: Symbol::new(&env, "age"),
+                predicate_type: PredicateType::Range,
+                threshold: None,
+                range_min: Some(Bytes::from_slice(&env, b"18")),
+                range_max: Some(Bytes::from_slice(&env, b"65")),
+                allowed_values: None,
+            },
+        ];
+
+        let proof_id = ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_123"),
+            circuit_id.clone(),
+            vec![&env, Bytes::from_slice(&env, b"c1")],
+            Bytes::from_slice(&env, b"proof_data"),
+            Bytes::from_slice(&env, b"nullifier_7"),
+            vec![&env, Symbol::new(&env, "credit_score")],
+            vec![&env, Symbol::new(&env, "age")],
+            predicates,
+            None,
+            Map::new(&env),
+        )
+        .unwrap();
+
+        let fetched = ZKAttestation::get_selective_disclosure(env.clone(), proof_id);
+        assert!(fetched.is_ok());
+        let disclosure = fetched.unwrap();
+        assert_eq!(disclosure.hidden_attributes.len(), 1);
+        assert_eq!(disclosure.revealed_attributes.len(), 1);
+        assert_eq!(disclosure.predicates.len(), 1);
+    }
+
+    #[test]
+    fn test_selective_disclosure_rejects_nullifier_reuse() {
+        let env = setup_env();
+        let circuit_id = register_sd_test_circuit(&env);
+
+        let predicates = vec![
+            &env,
+            PredicateInfo {
+                attribute_name: Symbol::new(&env, "age"),
+                predicate_type: PredicateType::GreaterThan,
+                threshold: Some(Bytes::from_slice(&env, b"18")),
+                range_min: None,
+                range_max: None,
+                allowed_values: None,
+            },
+        ];
+
+        let nullifier = Bytes::from_slice(&env, b"reuse_nullifier");
+
+        // First use succeeds
+        let first = ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_123"),
+            circuit_id.clone(),
+            vec![&env, Bytes::from_slice(&env, b"c1")],
+            Bytes::from_slice(&env, b"proof_data"),
+            nullifier.clone(),
+            vec![&env],
+            vec![&env, Symbol::new(&env, "age")],
+            predicates.clone(),
+            None,
+            Map::new(&env),
+        );
+        assert!(first.is_ok());
+
+        // Second use with same nullifier fails
+        let second = ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_456"),
+            circuit_id.clone(),
+            vec![&env, Bytes::from_slice(&env, b"c2")],
+            Bytes::from_slice(&env, b"proof_data_2"),
+            nullifier,
+            vec![&env],
+            vec![&env, Symbol::new(&env, "age")],
+            predicates,
+            None,
+            Map::new(&env),
+        );
+        assert_eq!(second, Err(ZKAttestationError::NullifierAlreadyUsed));
+    }
+
+    #[test]
+    fn test_selective_disclosure_event_emitted() {
+        let env = setup_env();
+        let circuit_id = register_sd_test_circuit(&env);
+
+        ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_123"),
+            circuit_id,
+            vec![&env, Bytes::from_slice(&env, b"c1")],
+            Bytes::from_slice(&env, b"proof_data"),
+            Bytes::from_slice(&env, b"event_nullifier"),
+            vec![&env],
+            vec![&env, Symbol::new(&env, "age")],
+            vec![
+                &env,
+                PredicateInfo {
+                    attribute_name: Symbol::new(&env, "age"),
+                    predicate_type: PredicateType::Range,
+                    threshold: None,
+                    range_min: Some(Bytes::from_slice(&env, b"18")),
+                    range_max: Some(Bytes::from_slice(&env, b"65")),
+                    allowed_values: None,
+                },
+            ],
+            None,
+            Map::new(&env),
+        )
+        .unwrap();
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
+                &env,
+                "SelectiveDisclosureCreated",
             )))
         }));
     }

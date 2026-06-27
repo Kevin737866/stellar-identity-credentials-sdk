@@ -42,6 +42,7 @@ export { ComplianceCheck } from './components/ComplianceCheck';
 export { RegulatoryDashboard } from './components/RegulatoryDashboard';
 export { DIDRecoveryWizard } from './components/DIDRecoveryWizard';
 export type { DIDRecoveryWizardProps, RecoveryMethod, RecoveryConfig, Guardian } from './components/DIDRecoveryWizard';
+export { SelectiveDisclosure } from './components/SelectiveDisclosure';
 
 // Pages
 export { Dashboard } from './pages/Dashboard';

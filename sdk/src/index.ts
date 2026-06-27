@@ -160,6 +160,12 @@ export type {
   ReputationScoreResult,
   ZKVerificationResult,
   ComplianceResult,
+  PredicateType,
+  PredicateInfo,
+  SelectiveDisclosureOptions,
+  SelectiveDisclosureProof,
+  SelectiveDisclosureVerificationResult,
+  CombinedDisclosureProof,
 } from './types';
 
 import { DIDClient } from './didClient';

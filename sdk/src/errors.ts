@@ -40,6 +40,10 @@ export enum ErrorCode {
   ZKInvalidPublicInputs = 4008,
   ZKCircuitDeactivated = 4009,
   ZKRevokedCredential = 4010,
+  ZKPredicateMismatch = 4011,
+  ZKAttributeNotFound = 4012,
+  ZKDisclosureConflict = 4013,
+  ZKCombiningFailed = 4014,
 
   // Compliance errors (maps to ComplianceFilterError)
   ComplianceAddressBlocked = 5001,
@@ -338,6 +342,10 @@ export function mapErrorCode(code: number): StellarIdentityError | null {
       case 308: return new ZKProofError(ErrorCode.ZKInvalidPublicInputs);
       case 309: return new ZKProofError(ErrorCode.ZKCircuitDeactivated);
       case 310: return new ZKProofError(ErrorCode.ZKRevokedCredential);
+      case 311: return new ZKProofError(ErrorCode.ZKPredicateMismatch);
+      case 312: return new ZKProofError(ErrorCode.ZKAttributeNotFound);
+      case 313: return new ZKProofError(ErrorCode.ZKDisclosureConflict);
+      case 314: return new ZKProofError(ErrorCode.ZKCombiningFailed);
     }
   }
 

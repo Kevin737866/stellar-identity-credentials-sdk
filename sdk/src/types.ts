@@ -8,6 +8,18 @@ export enum CircuitType {
   CredentialOwnership = 'CredentialOwnership',
   CompositeProof = 'CompositeProof',
   EqualityProof = 'EqualityProof',
+  SelectiveDisclosure = 'SelectiveDisclosure',
+}
+
+export enum PredicateType {
+  GreaterThan = 'GreaterThan',
+  LessThan = 'LessThan',
+  GreaterThanOrEqual = 'GreaterThanOrEqual',
+  LessThanOrEqual = 'LessThanOrEqual',
+  Equality = 'Equality',
+  Range = 'Range',
+  InSet = 'InSet',
+  NotInSet = 'NotInSet',
 }
 
 /**
@@ -365,6 +377,66 @@ export interface ZKVerificationResult {
   valid: boolean;
   circuitId: string;
   proofId: string;
+  verifiedAt: number;
+  expiresAt?: number;
+}
+
+// ---- Selective Disclosure Types (#111) ----
+
+export interface PredicateInfo {
+  attributeName: string;
+  predicateType: PredicateType;
+  threshold?: string;
+  rangeMin?: string;
+  rangeMax?: string;
+  allowedValues?: string[];
+}
+
+export interface SelectiveDisclosureOptions {
+  circuitId: string;
+  credentialId: string;
+  publicInputs: string[];
+  proofBytes: string;
+  nullifier: string;
+  revealedAttributes: string[];
+  hiddenAttributes: string[];
+  predicates: PredicateInfo[];
+  expiresAt?: number;
+  metadata?: Record<string, string>;
+  context?: string;
+  txOptions?: TransactionOptions;
+}
+
+export interface SelectiveDisclosureProof {
+  proofId: string;
+  credentialId: string;
+  circuitId: string;
+  publicInputs: string[];
+  proofBytes: string;
+  nullifier: string;
+  verifierAddress: string;
+  createdAt: number;
+  expiresAt?: number;
+  revealedAttributes: string[];
+  hiddenAttributes: string[];
+  predicates: PredicateInfo[];
+  metadata: Record<string, string>;
+}
+
+export interface CombinedDisclosureProof {
+  proofId: string;
+  childProofIds: string[];
+  combinedPredicates: PredicateInfo[];
+  createdAt: number;
+  expiresAt?: number;
+  metadata: Record<string, string>;
+}
+
+export interface SelectiveDisclosureVerificationResult {
+  valid: boolean;
+  proofId: string;
+  circuitId: string;
+  predicates: PredicateInfo[];
   verifiedAt: number;
   expiresAt?: number;
 }
