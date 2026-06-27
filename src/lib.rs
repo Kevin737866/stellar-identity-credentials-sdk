@@ -16,6 +16,8 @@ pub mod zk_attestation;
 mod fuzz_test_script;
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+mod e2e_identity_lifecycle;
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec};
 
