@@ -1,14 +1,20 @@
 extern crate alloc;
 
+pub mod admin;
+pub mod audit_trail;
 pub mod compliance_filter;
 pub mod credential_issuer;
 pub mod credential_offer;
 pub mod did_recovery;
 pub mod did_registry;
 pub mod gas_benchmark;
+pub mod performance_optimizer;
+pub mod rate_limiter;
+pub mod reentrancy_guard;
 pub mod reputation_oracle;
 pub mod reputation_score;
 pub mod schema_registry;
+pub mod status_list;
 pub mod storage_optimization;
 pub mod zk_attestation;
 
@@ -16,10 +22,15 @@ pub mod zk_attestation;
 mod fuzz_test_script;
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+mod e2e_identity_lifecycle;
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec};
 
 pub use compliance_filter::ComplianceFilter;
+pub use compliance_filter::RiskAssessment;
+pub use compliance_filter::RiskFactor;
+pub use compliance_filter::RiskLevel;
 pub use credential_issuer::CredentialIssuer;
 pub use credential_offer::CredentialOffer;
 pub use credential_offer::CredentialOfferContract;
@@ -47,14 +58,18 @@ pub use reputation_oracle::PaginatedFeeds;
 pub use reputation_oracle::ReputationOracle;
 pub use reputation_oracle::ReputationOracleError;
 pub use reputation_score::ReputationScore;
+pub use admin::AdminError;
 pub use schema_registry::CredentialSchemaRegistry;
+pub use status_list::BitstringStatusList;
+pub use status_list::StatusListError;
+pub use status_list::StatusListMeta;
 pub use zk_attestation::ZKAttestationContract;
 pub use zk_attestation::ZKAttestationContractClient;
 pub use zk_attestation::ZKAttestationRecord;
 
-// ---------------------------------------------------------------------------
-// Shared types
-// ---------------------------------------------------------------------------
+pub use status_list::BitstringStatusList;
+pub use status_list::StatusListError;
+pub use status_list::StatusListMeta;
 
 #[contracttype]
 #[derive(Clone)]

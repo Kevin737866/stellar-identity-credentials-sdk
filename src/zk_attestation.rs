@@ -4,6 +4,7 @@ use soroban_sdk::{
 };
 
 use crate::{clamp_page_size, PaginatedCircuits};
+use crate::admin;
 
 // ---------------------------------------------------------------------------
 // Namespaced storage keys (#58)
@@ -106,6 +107,7 @@ pub struct ZKAttestation;
 impl ZKAttestationContract {
     pub fn register_circuit(
         env: Env,
+        admin_address: Address,
         circuit_id: Symbol,
         name: Bytes,
         description: Bytes,
@@ -115,7 +117,9 @@ impl ZKAttestationContract {
         circuit_type: CircuitType,
         supported_attributes: Vec<Symbol>,
     ) -> Result<(), ZKAttestationError> {
-        let creator = env.current_contract_address();
+        admin_address.require_auth();
+        admin::only_admin(&env, &admin_address)
+            .map_err(|_| ZKAttestationError::Unauthorized)?;
 
         if env
             .storage()
@@ -485,8 +489,10 @@ mod tests {
 
     fn register_test_circuit(env: &Env) -> Symbol {
         let circuit_id = Symbol::new(env, "test_circuit");
+        let admin = env.current_contract_address();
         ZKAttestation::register_circuit(
             env.clone(),
+            admin,
             circuit_id.clone(),
             Bytes::from_slice(env, b"Test Circuit"),
             Bytes::from_slice(env, b"Test Description"),
@@ -506,9 +512,11 @@ mod tests {
     fn test_circuit_registered_event_emitted() {
         let env = setup_env();
         let circuit_id = Symbol::new(&env, "test_circuit");
+        let admin = env.current_contract_address();
 
         ZKAttestation::register_circuit(
             env.clone(),
+            admin,
             circuit_id,
             Bytes::from_slice(&env, b"Test Circuit"),
             Bytes::from_slice(&env, b"Test Description"),

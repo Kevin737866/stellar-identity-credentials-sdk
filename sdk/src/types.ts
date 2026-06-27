@@ -232,6 +232,11 @@ export interface CreateDIDOptions {
   services: Service[];
 }
 
+export interface UpdateDIDOptions {
+  verificationMethods?: VerificationMethod[];
+  services?: Service[];
+}
+
 export interface IssueCredentialOptions {
   subject: string;
   credentialType: string[];
