@@ -22,6 +22,9 @@ mod e2e_identity_lifecycle;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec};
 
 pub use compliance_filter::ComplianceFilter;
+pub use compliance_filter::RiskAssessment;
+pub use compliance_filter::RiskFactor;
+pub use compliance_filter::RiskLevel;
 pub use credential_issuer::CredentialIssuer;
 pub use credential_offer::CredentialOffer;
 pub use credential_offer::CredentialOfferContract;
