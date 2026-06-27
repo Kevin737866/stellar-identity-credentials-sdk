@@ -66,6 +66,10 @@ pub use status_list::StatusListMeta;
 pub use zk_attestation::ZKAttestationContract;
 pub use zk_attestation::ZKAttestationContractClient;
 pub use zk_attestation::ZKAttestationRecord;
+pub use zk_attestation::SelectiveDisclosureProof;
+pub use zk_attestation::PredicateType;
+pub use zk_attestation::PredicateInfo;
+pub use zk_attestation::CombinedDisclosureProof;
 
 pub use status_list::BitstringStatusList;
 pub use status_list::StatusListError;
