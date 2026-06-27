@@ -6,3 +6,41 @@ node_modules/
 **/dist/
 **/build/
 .env
+.env.*
+!.env.example
+
+# Generated files
+target/
+*.wasm
+*.d
+
+# Snapshots
+**/__snapshots__/
+**/*.snap
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.bak
+*.swp
+*.swo
+
+# Test coverage & reports
+coverage/
+**/coverage/
+*.lcov
+lcov.info
+benchmark-results*.json
+vulnerability-report*.json
+quality-report*.json
+
+# Cargo
+Cargo.lock
+
+# TypeDoc
+docs/api/
+
+# OS
+.DS_Store
+Thumbs.db
