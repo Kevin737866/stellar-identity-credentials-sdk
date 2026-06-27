@@ -1,6 +1,19 @@
 /**
- * Corporate credential issuance and verification for businesses
- * This example demonstrates B2B identity verification and credential management
+ * Business Verification Example (#40)
+ *
+ * Demonstrates corporate credential issuance, multi-jurisdictional compliance,
+ * and entity verification using the Stellar Identity SDK.
+ *
+ * Flow:
+ *   1. Creates a business DID using a corporate keypair
+ *   2. Issues business verification credential (registration number,
+ *      jurisdiction, tax ID)
+ *   3. Verifies the business credential
+ *   4. Runs compliance screening against multiple jurisdictions
+ *   5. Assesses the business's risk profile
+ *   6. Shows reputation score for the business entity
+ *
+ * Runnable via:  npm run example:business
  */
 
 import { 
@@ -17,6 +30,7 @@ interface BusinessEntity {
   incorporationDate: string;
   businessType: string;
   address: string;
+  taxId?: string;
   directors: string[];
   authorizedSignatories: string[];
 }
@@ -90,7 +104,7 @@ async function main() {
     });
     console.log(`✅ Corporate DID created: ${businessDID}\n`);
 
-    // Step 2: Define business entity
+    // Step 2: Define business entity with multi-jurisdictional data
     console.log('📋 Step 2: Defining Business Entity...');
     const businessEntity: BusinessEntity = {
       name: 'TechCorp Solutions Inc.',
@@ -99,12 +113,15 @@ async function main() {
       incorporationDate: '2020-01-15',
       businessType: 'Technology Services',
       address: '123 Business Ave, Wilmington, DE 19801',
+      taxId: 'US-TAX-987654321',
       directors: ['Director One', 'Director Two'],
       authorizedSignatories: ['CEO Signature', 'CFO Signature']
     };
     console.log(`   Business: ${businessEntity.name}`);
     console.log(`   Registration: ${businessEntity.registrationNumber}`);
-    console.log(`   Jurisdiction: ${businessEntity.jurisdiction}\n`);
+    // Multi-jurisdictional compliance
+  const jurisdictions = ['US', 'EU', 'UK', 'SG'];
+  console.log(`   Jurisdictions: ${jurisdictions.join(', ')}\n`);
 
     // Step 3: Regulator issues business registration credential
     console.log('🏛️ Step 3: Regulator Issues Business Registration...');

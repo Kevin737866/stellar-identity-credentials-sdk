@@ -26,6 +26,7 @@
     "prepare": "npm run build",
     "prepublishOnly": "npm run build",
     "example:cli-demo": "ts-node --script-mode examples/cli-demo.ts",
+    "example:business": "ts-node --script-mode examples/business-verification.ts",
     "docs": "typedoc",
     "docs:watch": "typedoc --watch",
     "docs:serve": "npx serve docs/api",
