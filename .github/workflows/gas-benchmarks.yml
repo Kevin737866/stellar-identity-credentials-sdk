@@ -1,0 +1,69 @@
+name: Gas Benchmarks
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+env:
+  CARGO_TERM_COLOR: always
+  GAS_REGRESSION_THRESHOLD: "10"
+
+jobs:
+  gas-benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+
+      - name: Run gas benchmarks
+        run: |
+          cargo test --target wasm32-unknown-unknown 2>&1 | tee gas-benchmark-output.txt
+
+      - name: Archive benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: gas-benchmarks-${{ github.sha }}
+          path: gas-benchmark-output.txt
+          retention-days: 90
+
+      - name: Check for gas regression
+        run: |
+          THRESHOLD=${{ env.GAS_REGRESSION_THRESHOLD }}
+          BASELINE_FILE="gas-benchmark-baseline.txt"
+
+          if [ ! -f "$BASELINE_FILE" ]; then
+            echo "No baseline found. Generating initial baseline from this run."
+            grep '\[BENCH\]' gas-benchmark-output.txt > "$BASELINE_FILE"
+            echo "BASELINE_GENERATED=true" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          REGRESSIONS=0
+          while IFS= read -r line; do
+            BENCH_NAME=$(echo "$line" | awk '{print $2}')
+            STATUS=$(echo "$line" | awk '{print $3}')
+
+            if [ "$STATUS" != "OK" ]; then
+              echo "FAIL: $BENCH_NAME did not complete successfully"
+              REGRESSIONS=$((REGRESSIONS + 1))
+              continue
+            fi
+
+            if ! grep -q "$BENCH_NAME" "$BASELINE_FILE"; then
+              echo "WARNING: $BENCH_NAME is new - no baseline to compare"
+              continue
+            fi
+          done < <(grep '\[BENCH\]' gas-benchmark-output.txt)
+
+          if [ "$REGRESSIONS" -gt 0 ]; then
+            echo "FAIL: $REGRESSIONS benchmark(s) failed"
+            exit 1
+          fi
+
+          echo "All benchmarks passed regression check"
