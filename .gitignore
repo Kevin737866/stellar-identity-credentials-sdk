@@ -44,3 +44,16 @@ docs/api/
 # OS
 .DS_Store
 Thumbs.db
+
+# Kiro IDE
+.kiro/
+
+# Stellar Identity CLI — user config (contains secret key material)
+.stellar-identity-cli.json
+
+# CLI deployment manifests (generated at runtime)
+deployment-*.json
+stellar-identity-config-*.json
+
+# PR description file (local workflow artifact)
+pr-106.md
