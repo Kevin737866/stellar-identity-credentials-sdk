@@ -92,7 +92,9 @@ export type {
 } from './networkMonitor';
 
 export {
+  // Error codes
   ErrorCode,
+  // Error classes
   StellarIdentityError,
   DIDError,
   CredentialError,
@@ -101,8 +103,12 @@ export {
   ComplianceError,
   ConfigurationError,
   NetworkError,
+  ValidationError,
+  RateLimitError,
+  // Mapping utilities
   mapContractError,
   mapErrorCode,
+  // Type guards
   isDIDError,
   isCredentialError,
   isReputationError,
@@ -110,7 +116,45 @@ export {
   isComplianceError,
   isConfigurationError,
   isNetworkError,
+  isValidationError,
+  isRateLimitError,
+  isRetryableError,
+  // Convenience builders
+  missingField,
+  fieldTooLong,
+  invalidAddress,
+  invalidDID,
+  // Recovery hints map
+  RECOVERY_HINTS,
 } from './errors';
+export type { ErrorClass } from './errors';
+
+export {
+  withRetry,
+  calculateDelay,
+  CircuitBreaker,
+  withRetryAndCircuitBreaker,
+} from './retry';
+export type {
+  RetryOptions,
+  RetryContext,
+  OnRetryCallback,
+  CircuitState,
+  CircuitBreakerOptions,
+} from './retry';
+
+export {
+  ErrorMonitor,
+  ConsoleErrorReporter,
+  NoOpErrorReporter,
+} from './errorMonitor';
+export type {
+  ErrorEvent,
+  ErrorStats,
+  ErrorHook,
+  ErrorReporter,
+  ErrorMonitorOptions,
+} from './errorMonitor';
 
 export {
   WalletConnector,
