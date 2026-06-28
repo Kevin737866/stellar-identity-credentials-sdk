@@ -55,5 +55,6 @@ Thumbs.db
 deployment-*.json
 stellar-identity-config-*.json
 
-# PR description file (local workflow artifact)
+# PR description files (local workflow artifacts)
 pr-106.md
+pr-110.md
