@@ -238,10 +238,32 @@ export interface StellarIdentityConfig {
     reputationScore: string;
     zkAttestation: string;
     complianceFilter: string;
+    schemaRegistry: string;
   };
   rpcUrl?: string;
   horizonUrl?: string;
   keypair?: any; // Use any for now to avoid importing Keypair if not needed here
+}
+
+export interface CredentialSchema {
+  id: string;
+  issuer: string;
+  version: number;
+  definition: string;
+  created: number;
+  updated: number;
+}
+
+export interface SchemaValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+export interface SchemaVersion {
+  version: number;
+  schemaId: string;
+  definition: string;
+  updated: number;
 }
 
 export interface CreateDIDOptions {

@@ -15,6 +15,7 @@ export const DEFAULT_CONFIGS = {
       reputationScore: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822c',
       zkAttestation: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822d',
       complianceFilter: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822e',
+      schemaRegistry: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822f',
     },
   },
 };
@@ -27,6 +28,7 @@ export { DIDClient } from './didClient';
 export { CredentialClient } from './credentialClient';
 export { ReputationClient } from './reputation';
 export { ZKProofsClient } from './zkProofs';
+export { SchemaRegistryClient } from './schemaClient';
 export { CacheManager, DataType } from './cacheManager';
 export { compressPayload, decompressPayload, compressionRatio } from './compression';
 export { EventSubscriber } from './eventSubscriber';
@@ -153,12 +155,16 @@ export type {
   ReputationScoreResult,
   ZKVerificationResult,
   ComplianceResult,
+  CredentialSchema,
+  SchemaValidationResult,
+  SchemaVersion,
 } from './types';
 
 import { DIDClient } from './didClient';
 import { CredentialClient } from './credentialClient';
 import { ReputationClient } from './reputation';
 import { ZKProofsClient } from './zkProofs';
+import { SchemaRegistryClient } from './schemaClient';
 import { CacheManager } from './cacheManager';
 import { EventSubscriber } from './eventSubscriber';
 import { RegulatoryReportingClient } from './regulatoryReporting';
@@ -184,6 +190,7 @@ export class StellarIdentitySDK {
   public credentials: CredentialClient;
   public reputation: ReputationClient;
   public zkProofs: ZKProofsClient;
+  public schemaRegistry: SchemaRegistryClient;
   public cache: CacheManager;
   public events: EventSubscriber;
 
@@ -192,6 +199,7 @@ export class StellarIdentitySDK {
     this.credentials = new CredentialClient(config);
     this.reputation = new ReputationClient(config);
     this.zkProofs = new ZKProofsClient(config);
+    this.schemaRegistry = new SchemaRegistryClient(config);
     this.cache = new CacheManager();
     this.events = new EventSubscriber(config);
   }
