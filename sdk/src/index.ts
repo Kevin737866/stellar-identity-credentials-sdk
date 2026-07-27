@@ -11,6 +11,15 @@ export { ReputationClient } from './reputation';
 export { ZKProofsClient } from './zkProofs';
 export { CacheManager, DataType } from './cacheManager';
 export { EventSubscriber } from './eventSubscriber';
+export type {
+  EventType,
+  EventFilter,
+  Subscription,
+  ContractEvent,
+  ContractEventHandler,
+  PollingOptions,
+  SDKEvent,
+} from './eventSubscriber';
 
 export {
   ErrorCode,
