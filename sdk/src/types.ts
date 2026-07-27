@@ -79,6 +79,51 @@ export interface TrustEdge {
   timestamp: number;
 }
 
+/**
+ * A single trust attestation event as recorded by the on-chain contract.
+ * Structurally identical to {@link TrustEdge} but represents the point-in-time
+ * emission rather than the current aggregate state. Kept distinct so callers
+ * that iterate over an attestation history do not silently consume the
+ * flattened graph view.
+ */
+export interface TrustAttestation {
+  truster: string;
+  subject: string;
+  weight: number;
+  reason: string;
+  timestamp: number;
+  /** Optional human-readable note attached at emit time. */
+  note?: string;
+}
+
+/**
+ * A trust-graph snapshot rooted at a subject, bounded by a hop count. Mirrors
+ * the return value of reputation.getTrustGraph(subject, depth).
+ */
+export interface TrustGraph {
+  subject: string;
+  depth: number;
+  edges: TrustEdge[];
+  /** Convenience: distinct truster addresses reached within `depth` hops. */
+  nodes: string[];
+}
+
+/**
+ * One trust path between two DIDs. Multiple paths can be returned for a
+ * single (from, to) pair; each carries its own cumulative trust weight so
+ * callers can pick the strongest one without re-reading the graph.
+ */
+export interface TrustPath {
+  from: string;
+  to: string;
+  /** Ordered list of addresses along the path, including both endpoints. */
+  path: string[];
+  /** Sum of edge weights along the path. */
+  cumulativeWeight: number;
+  /** Number of edges in `path` (always path.length - 1). */
+  hops: number;
+}
+
 export interface ReputationBreakdown {
   did: string;
   score: number;

@@ -41,6 +41,12 @@ export type {
   DereferencingResult,
 } from './didResolver';
 
+export {
+  findTrustPathsBFS,
+  aggregateTrustWeight,
+  recommendTrustEntities,
+} from './trustGraph';
+
 export type {
   DIDDocument,
   VerificationMethod,
@@ -53,6 +59,9 @@ export type {
   ReputationComparison,
   ReputationTierProof,
   TrustEdge,
+  TrustAttestation,
+  TrustGraph,
+  TrustPath,
   ZKProof,
   ZKCircuit,
   ComplianceRecord,
