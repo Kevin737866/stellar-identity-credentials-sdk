@@ -468,4 +468,49 @@ export class CredentialClient {
     this.logger.error('CredentialClient error occurred', error);
     return mapContractError(error);
   }
+
+  async onExpiration(
+    credentialId: string,
+    callback: (credential: VerifiableCredential) => void,
+  ): Promise<void> {
+    const cred = await this.getCredential(credentialId);
+    if (cred.expirationDate && cred.expirationDate <= Date.now()) {
+      callback(cred);
+    }
+  }
+
+  async checkExpiringCredentials(windowDays: number): Promise<VerifiableCredential[]> {
+    const now = Date.now();
+    const threshold = now + windowDays * 24 * 60 * 60 * 1000;
+    const ids = await this.getSubjectCredentials('');
+    const credentials = await Promise.all(
+      ids.map(id => this.getCredential(id).catch(() => null)),
+    );
+    return credentials.filter((c): c is VerifiableCredential =>
+      c !== null && c.expirationDate != null && c.expirationDate <= threshold,
+    );
+  }
+
+  async getExpiredCredentials(address: string): Promise<VerifiableCredential[]> {
+    const now = Date.now();
+    const ids = await this.getSubjectCredentials(address);
+    const credentials = await Promise.all(
+      ids.map(id => this.getCredential(id).catch(() => null)),
+    );
+    return credentials.filter((c): c is VerifiableCredential =>
+      c !== null && c.expirationDate != null && c.expirationDate <= now,
+    );
+  }
+
+  startExpirationPolling(intervalMs: number = 3600000): void {
+    setInterval(async () => {
+      const expiring = await this.checkExpiringCredentials(30);
+      for (const cred of expiring) {
+        this.logger.info('Credential expiring soon', { id: cred.id, expirationDate: cred.expirationDate });
+      }
+    }, intervalMs);
+  }
+
+  stopExpirationPolling(): void {
+  }
 }

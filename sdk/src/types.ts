@@ -389,3 +389,20 @@ export interface ComplianceResult {
   lastChecked: number;
   recommendations: string[];
 }
+
+export interface ExpirationEvent {
+  credentialId: string;
+  subject: string;
+  issuer: string;
+  expirationDate: number;
+  daysUntilExpiry: number;
+  expired: boolean;
+  timestamp: number;
+}
+
+export type ExpirationHandler = (event: ExpirationEvent) => void;
+
+export interface EventListener {
+  on(event: string, handler: (...args: any[]) => void): void;
+  off(event: string, handler: (...args: any[]) => void): void;
+}
