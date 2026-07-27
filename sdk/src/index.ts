@@ -69,6 +69,9 @@ export type {
   ReputationScoreResult,
   ZKVerificationResult,
   ComplianceResult,
+  ComplianceRule,
+  ComplianceRuleEnforcement,
+  RuleEvaluationResult,
 } from './types';
 
 import { DIDClient } from './didClient';

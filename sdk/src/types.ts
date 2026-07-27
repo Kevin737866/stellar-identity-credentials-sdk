@@ -344,3 +344,39 @@ export interface ComplianceResult {
   lastChecked: number;
   recommendations: string[];
 }
+
+/**
+ * On-chain compliance rule for a jurisdiction.
+ *
+ * Rules form a hierarchy addressed by dotted paths, e.g.
+ *   "GLOBAL", "US", "US-CA", "US-CA-SF"
+ * A child jurisdiction inherits from its nearest defined ancestor unless it
+ * overrides a field of the parent rule.
+ */
+export interface ComplianceRule {
+  /** Hierarchical jurisdiction path, segments separated by '-'. */
+  jurisdiction: string;
+  /** Free-form requirement key (e.g. "KYC_REQUIRED", "HIGH_RISK_THRESHOLD:70"). */
+  requirement: string;
+  enforcement: ComplianceRuleEnforcement;
+  /** Whether the rule is currently enforced on-chain. */
+  active: boolean;
+  /** Ledger timestamp (unix seconds) when the rule was last updated. */
+  updatedAt?: number;
+}
+
+export type ComplianceRuleEnforcement = 'mandatory' | 'advisory';
+
+/** Outcome of running compliance rule evaluation against an address. */
+export interface RuleEvaluationResult {
+  /** The jurisdiction that was evaluated (defaults to "GLOBAL" when none given). */
+  jurisdiction: string;
+  /** Address whose compliance was evaluated. */
+  address: string;
+  /** True when none of the active mandatory rules are violated. */
+  compliant: boolean;
+  /** Active mandatory rules that the address does not currently satisfy. */
+  violations: ComplianceRule[];
+  /** Optional screening result used as the source of truth. */
+  screening?: ComplianceResult;
+}

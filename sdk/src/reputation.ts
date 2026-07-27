@@ -27,12 +27,18 @@ import { StellarIdentityError, mapContractError } from './errors';
 export class ReputationClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
-  private reputationScoreContract: Contract;
+  /** Lazily constructed so unit tests do not need a valid StrKey contract id. */
+  private _reputationScoreContract?: Contract;
+  private get reputationScoreContract(): Contract {
+    if (!this._reputationScoreContract) {
+      this._reputationScoreContract = new Contract(this.config.contracts.reputationScore);
+    }
+    return this._reputationScoreContract;
+  }
 
   constructor(config: StellarIdentityConfig) {
     this.config = config;
     this.rpc = new SorobanRpc.Server(config.rpcUrl || this.getDefaultRpcUrl());
-    this.reputationScoreContract = new Contract(config.contracts.reputationScore);
   }
 
   async initializeReputation(keypair: Keypair, txOptions?: TransactionOptions): Promise<ReputationData> {
