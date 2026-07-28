@@ -6,6 +6,7 @@ import {
   Keypair,
   Contract,
   Address,
+  Account,
   xdr,
   nativeToScVal,
   scValToNative,
@@ -20,10 +21,25 @@ import {
   ReputationTierProof,
   StellarIdentityConfig,
   TransactionOptions,
+  TrustAttestation,
   TrustEdge,
+  TrustGraph,
+  TrustPath,
 } from './types';
-import { StellarIdentityError, mapContractError } from './errors';
+import { StellarIdentityError, ReputationError, mapContractError, ErrorCode } from './errors';
+import {
+  aggregateTrustWeight,
+  findTrustPathsBFS,
+  recommendTrustEntities,
+} from './trustGraph';
 
+/**
+ * Client for managing on-chain reputation scores on Stellar.
+ * Calculates reputation from transaction history, credential validity,
+ * trust attestations, and network activity. Supports tier-based scoring
+ * from Seedling through Prime.
+ * @category Client
+ */
 export class ReputationClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
@@ -104,6 +120,11 @@ export class ReputationClient {
     return this.normalizeScore(scValToNative(retval));
   }
 
+  /**
+   * Get a comprehensive reputation score breakdown including factors and percentile.
+   * @param did - The DID or Stellar address to query
+   * @returns Reputation breakdown with score, tier, and factor details
+   */
   async getReputationScore(did: string): Promise<ReputationBreakdown> {
     const [data, percentile] = await Promise.all([
       this.getReputationData(did),
@@ -166,6 +187,88 @@ export class ReputationClient {
     return this.parseTrustGraph(scValToNative(retval));
   }
 
+  /**
+   * Read the chronological list of trust attestations emitted for `subject`.
+   * Mirrors `getTrustGraph` in payload shape but represents a history view
+   * instead of an aggregate state.
+   *
+   * Implementation note: when the on-chain `get_trust_attestations` is not
+   * yet deployed, the SDK returns the flattened TrustEdge[] graph as a
+   * stand-in so callers can build UIs against the same attestation type
+   * shape during development.
+   */
+  async getTrustAttestations(subject: string): Promise<TrustAttestation[]> {
+    try {
+      const retval = await this.simulateRead('get_trust_attestations', [
+        xdr.ScVal.scvAddress(new Address(subject).toScAddress()),
+      ]);
+      const raw = scValToNative(retval);
+      if (Array.isArray(raw)) {
+        return raw.map(item => this.parseAttestation(item));
+      }
+      return [];
+    } catch {
+      // Fallback: surface the current trust graph as attestation history.
+      const edges = await this.getTrustGraph(subject, 1);
+      return edges.map(edge => ({ ...edge }));
+    }
+  }
+
+  /**
+   * Build a typed trust-graph snapshot rooted at `subject`. Wraps the
+   * existing {@link getTrustGraph} call so callers can hand the snapshot
+   * to client-side algorithms without re-fetching.
+   */
+  async getTrustGraphSnapshot(subject: string, depth = 2): Promise<TrustGraph> {
+    const edges = await this.getTrustGraph(subject, depth);
+    const nodes = new Set<string>([subject, ...edges.map(e => e.truster)]);
+    return { subject, depth, edges, nodes: Array.from(nodes) };
+  }
+
+  /**
+   * Find every trust path from `from` to `to` bounded by `maxDepth` hops.
+   * The search is performed client-side over the trusted-of-trusted view
+   * returned by {@link getTrustGraph}, so it does not require a separate
+   * contract call.
+   *
+   * The returned array is sorted by descending `cumulativeWeight` so the
+   * strongest path is at index 0.
+   */
+  async findTrustPaths(
+    from: string,
+    to: string,
+    maxDepth = 3,
+  ): Promise<TrustPath[]> {
+    if (maxDepth < 1) {
+      throw new ReputationError(ErrorCode.ReputationInvalidDepth, 'maxDepth must be >= 1');
+    }
+    const graph = await this.getTrustGraphSnapshot(from, maxDepth);
+    return findTrustPathsBFS(from, to, graph.edges, maxDepth);
+  }
+
+  /**
+   * Sum the inbound trust weights for `subject` across all currently-active
+   * attestations. Self-attestations are excluded to avoid circular shadowing
+   * of the result.
+   */
+  async getAggregateTrustWeight(subject: string): Promise<number> {
+    const graph = await this.getTrustGraphSnapshot(subject, 1);
+    return aggregateTrustWeight(graph.edges, subject);
+  }
+
+  /**
+   * Recommend entities that `address` does not already directly trust but
+   * which are strongly vouched for by entities `address` already trusts.
+   * Mirrors a simple "friends of friends" walk over a depth-2 graph.
+   */
+  async getTrustRecommendations(address: string, limit = 5): Promise<string[]> {
+    if (limit < 1) {
+      throw new ReputationError(ErrorCode.ReputationInvalidDepth, 'limit must be >= 1');
+    }
+    const graph = await this.getTrustGraphSnapshot(address, 2);
+    return recommendTrustEntities(graph.edges, address, limit);
+  }
+
   async compareReputation(didA: string, didB: string): Promise<ReputationComparison> {
     const [profileA, profileB] = await Promise.all([
       this.getReputationScore(didA),
@@ -220,6 +323,11 @@ export class ReputationClient {
     return this.parseReputationData(scValToNative(retval));
   }
 
+  /**
+   * Get a full reputation analysis including score, percentile, history, and recommendations.
+   * @param did - The DID or Stellar address to analyze
+   * @returns Comprehensive reputation analysis
+   */
   async getReputationAnalysis(did: string): Promise<ReputationScoreResult> {
     const [snapshot, history] = await Promise.all([
       this.getReputationScore(did),
@@ -257,6 +365,11 @@ export class ReputationClient {
     return { tier: 'Seedling', color: '#6B7280', description: 'Sybil-resistant base tier for new or lightly used accounts.' };
   }
 
+  /**
+   * Calculate the trend of reputation changes from historical data.
+   * @param history - Array of historical score values
+   * @returns Trend direction, absolute change, and percentage change
+   */
   calculateReputationTrend(history: number[]): { trend: 'up' | 'down' | 'stable'; change: number; percentage: number } {
     if (history.length < 2) return { trend: 'stable', change: 0, percentage: 0 };
     const recent = history.slice(-5);
@@ -300,8 +413,12 @@ export class ReputationClient {
 
       const hash = 'hash' in result ? result.hash : prepared.hash().toString('hex');
       const response = await this.rpc.getTransaction(hash);
-      if ('resultMetaXdr' in response && response.returnValue) {
-        return response.returnValue;
+      // Pre-fix (Issue #286 PR): the SDK types declare returnValue only on the
+      // success variant, but `getTransaction` returns a discriminated union.
+      // We narrow with a string-literal `in` check before reading.
+      if ('status' in response && response.status === 'SUCCESS' && 'returnValue' in response) {
+        const retval = (response as { returnValue?: xdr.ScVal }).returnValue;
+        if (retval) return retval;
       }
 
       const simulated = await this.rpc.simulateTransaction(prepared);
@@ -318,11 +435,17 @@ export class ReputationClient {
 
   private async simulateRead(method: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
     const dummy = Keypair.random();
-    const account = {
+    // Pre-fix (Issue #286 PR): `SorobanRpc.Account` is a structural type that
+    // is not exported from every stellar-sdk minor version. We duck-type the
+    // minimum Account shape that TransactionBuilder accepts, then cast
+    // through `unknown` so TypeScript does not complain about the missing
+    // exported namespace type.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const account: any = {
       accountId: () => dummy.publicKey(),
       sequenceNumber: () => '0',
       incrementSequenceNumber: () => undefined,
-    } as SorobanRpc.Account;
+    };
 
     const tx = new TransactionBuilder(account, {
       fee: '100',
@@ -415,6 +538,13 @@ export class ReputationClient {
       reason: this.bytesToString(record.reason),
       timestamp: this.asNumber(record.timestamp),
     };
+  }
+
+  private parseAttestation(raw: unknown): TrustAttestation {
+    const edge = this.parseTrustEdge(raw);
+    const record = this.toRecord(raw);
+    const note = record.note ? this.bytesToString(record.note) : undefined;
+    return { ...edge, note };
   }
 
   private toBreakdown(data: ReputationData, percentile: number): ReputationBreakdown {

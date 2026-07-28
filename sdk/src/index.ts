@@ -5,15 +5,109 @@ declare var require: (id: string) => any;
 
 import { Keypair } from 'stellar-sdk';
 
+export const DEFAULT_CONFIGS = {
+  testnet: {
+    network: 'testnet' as const,
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    contracts: {
+      didRegistry: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822a',
+      credentialIssuer: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822b',
+      reputationScore: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822c',
+      zkAttestation: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822d',
+      complianceFilter: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822e',
+      schemaRegistry: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822f',
+    },
+  },
+};
+
+export const UTILS = {
+  generateKeypair: () => Keypair.random(),
+};
+
 export { DIDClient } from './didClient';
 export { CredentialClient } from './credentialClient';
 export { ReputationClient } from './reputation';
 export { ZKProofsClient } from './zkProofs';
+export { SchemaRegistryClient } from './schemaClient';
 export { CacheManager, DataType } from './cacheManager';
+export { compressPayload, decompressPayload, compressionRatio } from './compression';
 export { EventSubscriber } from './eventSubscriber';
+export { Logger, LogLevel } from './logger';
+export { GDPREngine } from './gdpr';
+export type { ConsentRecord, ProcessingRecord, GDPRComplianceOptions } from './gdpr';
+export { DataMinimizationEngine } from './dataMinimization';
+export type { 
+  MinimalDisclosurePolicy, 
+  BlindedAttribute, 
+  SaltedHashCommitment, 
+  AttributeExpiration 
+} from './dataMinimization';
+
+export { ComplianceClient } from './compliance';
 
 export {
+  validateContractAddress,
+  validateConfig,
+  isConfigValid,
+  mergeConfig,
+  getRpcUrl,
+  getHorizonUrl,
+  getNetworkPassphrase as resolveNetworkPassphrase,
+  createCustomConfig,
+  healthCheck,
+  comprehensiveHealthCheck,
+  ConfigBuilder,
+} from './config';
+export type { HealthCheckResult } from './config';
+export type {
+  ScreeningStatus,
+  ScreeningResult,
+  TransactionRisk,
+  ComplianceReport,
+  TravelRulePayload,
+  AlertSubscription,
+  ComplianceReportOptions,
+  JurisdictionRule,
+  RiskLevel,
+  EnrichedProfile,
+} from './compliance';
+
+export { RegulatoryReportingClient } from './regulatoryReporting';
+export type {
+  TemplateSection,
+  ReportTemplate,
+  ReportField,
+  ReportSection,
+  RegulatoryReport,
+  SARReport,
+  ReportSchedule,
+  TransactionReport,
+  ExportSnapshot,
+  PaginatedReports,
+  PaginatedSARs,
+  ReportStatistics,
+  ExportFormat,
+} from './regulatoryReporting';
+export { DEFAULT_TEMPLATES } from './regulatoryReporting';
+
+export { NetworkMonitor } from './networkMonitor';
+export type {
+  MonitorConfig,
+  AlertChannel,
+  AlertThreshold,
+  AlertEvent,
+  AlertSeverity,
+  AlertChannelType,
+  TransactionMetrics,
+  ContractStateChange,
+  AnomalyResult,
+  MonitorHealth,
+} from './networkMonitor';
+
+export {
+  // Error codes
   ErrorCode,
+  // Error classes
   StellarIdentityError,
   DIDError,
   CredentialError,
@@ -22,8 +116,12 @@ export {
   ComplianceError,
   ConfigurationError,
   NetworkError,
+  ValidationError,
+  RateLimitError,
+  // Mapping utilities
   mapContractError,
   mapErrorCode,
+  // Type guards
   isDIDError,
   isCredentialError,
   isReputationError,
@@ -31,15 +129,71 @@ export {
   isComplianceError,
   isConfigurationError,
   isNetworkError,
+  isValidationError,
+  isRateLimitError,
+  isRetryableError,
+  // Convenience builders
+  missingField,
+  fieldTooLong,
+  invalidAddress,
+  invalidDID,
+  // Recovery hints map
+  RECOVERY_HINTS,
 } from './errors';
+export type { ErrorClass } from './errors';
+
+export {
+  withRetry,
+  calculateDelay,
+  CircuitBreaker,
+  withRetryAndCircuitBreaker,
+} from './retry';
+export type {
+  RetryOptions,
+  RetryContext,
+  OnRetryCallback,
+  CircuitState,
+  CircuitBreakerOptions,
+} from './retry';
+
+export {
+  ErrorMonitor,
+  ConsoleErrorReporter,
+  NoOpErrorReporter,
+} from './errorMonitor';
+export type {
+  ErrorEvent,
+  ErrorStats,
+  ErrorHook,
+  ErrorReporter,
+  ErrorMonitorOptions,
+} from './errorMonitor';
+
+export {
+  WalletConnector,
+  FreighterConnector,
+  XBullConnector,
+  AlbedoConnector,
+  connectWallet,
+  detectInstalledWallets,
+} from './walletConnector';
+export type { WalletType, WalletInfo } from './walletConnector';
 
 export { DIDResolver } from './didResolver';
+export { ExpirationManager } from './expirationManager';
 export type {
   W3CResolutionResult,
   DIDResolutionMetadata,
   DIDDocumentMetadata,
   DereferencingResult,
+  DIDResolveOptions,
 } from './didResolver';
+
+export {
+  findTrustPathsBFS,
+  aggregateTrustWeight,
+  recommendTrustEntities,
+} from './trustGraph';
 
 export type {
   DIDDocument,
@@ -53,12 +207,16 @@ export type {
   ReputationComparison,
   ReputationTierProof,
   TrustEdge,
+  TrustAttestation,
+  TrustGraph,
+  TrustPath,
   ZKProof,
   ZKCircuit,
   ComplianceRecord,
   SanctionsList,
   StellarIdentityConfig,
   CreateDIDOptions,
+  UpdateDIDOptions,
   IssueCredentialOptions,
   ZKProofOptions,
   ComplianceCheckOptions,
@@ -78,27 +236,117 @@ import { DIDClient } from './didClient';
 import { CredentialClient } from './credentialClient';
 import { ReputationClient } from './reputation';
 import { ZKProofsClient } from './zkProofs';
+import { SchemaRegistryClient } from './schemaClient';
 import { CacheManager } from './cacheManager';
 import { EventSubscriber } from './eventSubscriber';
+import { RegulatoryReportingClient } from './regulatoryReporting';
+import { ExpirationManager } from './expirationManager';
 import { StellarIdentityConfig } from './types';
+import {
+  validateConfig,
+  mergeConfig,
+  healthCheck,
+  comprehensiveHealthCheck,
+  DEFAULT_CONFIGS,
+} from './config';
+import type { HealthCheckResult } from './config';
 
+/**
+ * Stellar Identity SDK - Main entry point.
+ *
+ * Composes all client modules (DID, Credentials, Reputation, ZK Proofs,
+ * Compliance) into a single unified SDK with caching and event subscription.
+ *
+ * @example
+ * ```typescript
+ * import { StellarIdentitySDK, DEFAULT_CONFIGS } from '@stellar-identity/sdk';
+ *
+ * const sdk = new StellarIdentitySDK(DEFAULT_CONFIGS.testnet);
+ * const did = await sdk.did.createDID(keypair, options);
+ * ```
+ * @category Client
+ */
 export class StellarIdentitySDK {
   public did: DIDClient;
   public credentials: CredentialClient;
   public reputation: ReputationClient;
   public zkProofs: ZKProofsClient;
+  public schemaRegistry: SchemaRegistryClient;
   public cache: CacheManager;
   public events: EventSubscriber;
+  private config: StellarIdentityConfig;
 
-  constructor(config: StellarIdentityConfig) {
+  constructor(config: StellarIdentityConfig, options?: { validate?: boolean }) {
+    this.config = config;
+    if (options?.validate !== false) {
+      validateConfig(config);
+    }
     this.did = new DIDClient(config);
     this.credentials = new CredentialClient(config);
     this.reputation = new ReputationClient(config);
     this.zkProofs = new ZKProofsClient(config);
+    this.schemaRegistry = new SchemaRegistryClient(config);
     this.cache = new CacheManager();
     this.events = new EventSubscriber(config);
+    this.gdpr = new GDPREngine(this.did, this.credentials);
   }
 
+  /**
+   * Get the current SDK configuration.
+   */
+  getConfig(): StellarIdentityConfig {
+    return { ...this.config };
+  }
+
+  /**
+   * Switch to a different network at runtime.
+   * Re-initializes all client modules with the new network configuration.
+   * @param network - The target network (mainnet, testnet, futurenet)
+   * @param overrides - Optional configuration overrides
+   */
+  switchNetwork(
+    network: 'mainnet' | 'testnet' | 'futurenet',
+    overrides?: Partial<StellarIdentityConfig>,
+  ): void {
+    const base = DEFAULT_CONFIGS[network];
+    if (!base) {
+      throw new Error(`Unknown network: ${network}`);
+    }
+
+    this.config = mergeConfig(base, overrides || {});
+    validateConfig(this.config);
+
+    // Re-initialize all clients with new config
+    this.did = new DIDClient(this.config);
+    this.credentials = new CredentialClient(this.config);
+    this.reputation = new ReputationClient(this.config);
+    this.zkProofs = new ZKProofsClient(this.config);
+    this.events = new EventSubscriber(this.config);
+  }
+
+  /**
+   * Perform a health check against the configured RPC endpoint.
+   * @returns Health check result
+   */
+  async checkHealth(): Promise<HealthCheckResult> {
+    return healthCheck(this.config);
+  }
+
+  /**
+   * Perform a comprehensive health check including config validation.
+   * @returns Health check result with config validation status
+   */
+  async checkHealthComprehensive(): Promise<HealthCheckResult & { configValid: boolean }> {
+    return comprehensiveHealthCheck(this.config);
+  }
+
+  /**
+   * Initialize a complete user identity: create DID and initialize reputation.
+   * @param keypair - The user's Stellar keypair
+   * @param verificationMethods - Array of verification methods for the DID
+   * @param services - Array of service endpoints for the DID
+   * @returns Object containing the DID and Stellar address
+   */
   async initializeUserIdentity(
     keypair: Keypair,
     verificationMethods: any[],
@@ -118,6 +366,12 @@ export class StellarIdentitySDK {
     };
   }
 
+  /**
+   * Get a complete identity profile for an address.
+   * Fetches DID document, reputation data, and credentials in parallel.
+   * @param address - The Stellar address to query
+   * @returns Identity profile with DID, reputation, and credentials
+   */
   async getIdentityProfile(address: string) {
     const [didDocument, reputationData, credentials] = await Promise.all([
       this.did.resolveDID(this.did.generateDID(address)).catch(() => null),

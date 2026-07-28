@@ -1,4 +1,34 @@
+/**
+ * Enumeration of supported zero-knowledge proof circuit types.
+ * @category Types
+ */
+export enum CircuitType {
+  RangeProof = 'RangeProof',
+  SetMembership = 'SetMembership',
+  CredentialOwnership = 'CredentialOwnership',
+  CompositeProof = 'CompositeProof',
+  EqualityProof = 'EqualityProof',
+  SelectiveDisclosure = 'SelectiveDisclosure',
+}
+
+export enum PredicateType {
+  GreaterThan = 'GreaterThan',
+  LessThan = 'LessThan',
+  GreaterThanOrEqual = 'GreaterThanOrEqual',
+  LessThanOrEqual = 'LessThanOrEqual',
+  Equality = 'Equality',
+  Range = 'Range',
+  InSet = 'InSet',
+  NotInSet = 'NotInSet',
+}
+
+/**
+ * W3C-compliant Decentralized Identifier (DID) document.
+ * Contains the DID's verification methods, services, and metadata.
+ * @category Types
+ */
 export interface DIDDocument {
+
   id: string;
   controller: string;
   verificationMethod: VerificationMethod[];
@@ -21,6 +51,11 @@ export interface Service {
   endpoint: string;
 }
 
+/**
+ * W3C Verifiable Credential (VC) 2.0 data model.
+ * Represents a cryptographically signed credential issued by an authority.
+ * @category Types
+ */
 export interface VerifiableCredential {
   id: string;
   issuer: string;
@@ -79,6 +114,51 @@ export interface TrustEdge {
   timestamp: number;
 }
 
+/**
+ * A single trust attestation event as recorded by the on-chain contract.
+ * Structurally identical to {@link TrustEdge} but represents the point-in-time
+ * emission rather than the current aggregate state. Kept distinct so callers
+ * that iterate over an attestation history do not silently consume the
+ * flattened graph view.
+ */
+export interface TrustAttestation {
+  truster: string;
+  subject: string;
+  weight: number;
+  reason: string;
+  timestamp: number;
+  /** Optional human-readable note attached at emit time. */
+  note?: string;
+}
+
+/**
+ * A trust-graph snapshot rooted at a subject, bounded by a hop count. Mirrors
+ * the return value of reputation.getTrustGraph(subject, depth).
+ */
+export interface TrustGraph {
+  subject: string;
+  depth: number;
+  edges: TrustEdge[];
+  /** Convenience: distinct truster addresses reached within `depth` hops. */
+  nodes: string[];
+}
+
+/**
+ * One trust path between two DIDs. Multiple paths can be returned for a
+ * single (from, to) pair; each carries its own cumulative trust weight so
+ * callers can pick the strongest one without re-reading the graph.
+ */
+export interface TrustPath {
+  from: string;
+  to: string;
+  /** Ordered list of addresses along the path, including both endpoints. */
+  path: string[];
+  /** Sum of edge weights along the path. */
+  cumulativeWeight: number;
+  /** Number of edges in `path` (always path.length - 1). */
+  hops: number;
+}
+
 export interface ReputationBreakdown {
   did: string;
   score: number;
@@ -113,6 +193,11 @@ export interface ReputationTierProof {
   generatedAt: number;
 }
 
+/**
+ * Zero-knowledge proof record stored on-chain.
+ * Contains proof data, circuit info, and verification metadata.
+ * @category Types
+ */
 export interface ZKProof {
   proofId: string;
   circuitId: string;
@@ -142,14 +227,6 @@ export interface ZKCircuit {
   supportedAttributes: string[];
 }
 
-export enum CircuitType {
-  RangeProof = 'RangeProof',
-  SetMembership = 'SetMembership',
-  CredentialOwnership = 'CredentialOwnership',
-  CompositeProof = 'CompositeProof',
-  EqualityProof = 'EqualityProof',
-}
-
 export interface ZKAttestation {
   credentialId: string;
   proofHash: string;
@@ -167,6 +244,11 @@ export interface NullifierRecord {
   proofId: string;
 }
 
+/**
+ * Compliance check record for a Stellar address.
+ * Tracks sanctions screening results and risk assessment.
+ * @category Types
+ */
 export interface ComplianceRecord {
   address: string;
   riskScore: number;
@@ -186,6 +268,8 @@ export interface SanctionsList {
   entries: string[];
 }
 
+import { Keypair } from 'stellar-sdk';
+
 export interface StellarIdentityConfig {
   network: 'mainnet' | 'testnet' | 'futurenet';
   contracts: {
@@ -194,14 +278,42 @@ export interface StellarIdentityConfig {
     reputationScore: string;
     zkAttestation: string;
     complianceFilter: string;
+    schemaRegistry: string;
   };
   rpcUrl?: string;
   horizonUrl?: string;
+  keypair?: Keypair;
+}
+
+export interface CredentialSchema {
+  id: string;
+  issuer: string;
+  version: number;
+  definition: string;
+  created: number;
+  updated: number;
+}
+
+export interface SchemaValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+export interface SchemaVersion {
+  version: number;
+  schemaId: string;
+  definition: string;
+  updated: number;
 }
 
 export interface CreateDIDOptions {
   verificationMethods: VerificationMethod[];
   services: Service[];
+}
+
+export interface UpdateDIDOptions {
+  verificationMethods?: VerificationMethod[];
+  services?: Service[];
 }
 
 export interface IssueCredentialOptions {
@@ -332,6 +444,66 @@ export interface ZKVerificationResult {
   valid: boolean;
   circuitId: string;
   proofId: string;
+  verifiedAt: number;
+  expiresAt?: number;
+}
+
+// ---- Selective Disclosure Types (#111) ----
+
+export interface PredicateInfo {
+  attributeName: string;
+  predicateType: PredicateType;
+  threshold?: string;
+  rangeMin?: string;
+  rangeMax?: string;
+  allowedValues?: string[];
+}
+
+export interface SelectiveDisclosureOptions {
+  circuitId: string;
+  credentialId: string;
+  publicInputs: string[];
+  proofBytes: string;
+  nullifier: string;
+  revealedAttributes: string[];
+  hiddenAttributes: string[];
+  predicates: PredicateInfo[];
+  expiresAt?: number;
+  metadata?: Record<string, string>;
+  context?: string;
+  txOptions?: TransactionOptions;
+}
+
+export interface SelectiveDisclosureProof {
+  proofId: string;
+  credentialId: string;
+  circuitId: string;
+  publicInputs: string[];
+  proofBytes: string;
+  nullifier: string;
+  verifierAddress: string;
+  createdAt: number;
+  expiresAt?: number;
+  revealedAttributes: string[];
+  hiddenAttributes: string[];
+  predicates: PredicateInfo[];
+  metadata: Record<string, string>;
+}
+
+export interface CombinedDisclosureProof {
+  proofId: string;
+  childProofIds: string[];
+  combinedPredicates: PredicateInfo[];
+  createdAt: number;
+  expiresAt?: number;
+  metadata: Record<string, string>;
+}
+
+export interface SelectiveDisclosureVerificationResult {
+  valid: boolean;
+  proofId: string;
+  circuitId: string;
+  predicates: PredicateInfo[];
   verifiedAt: number;
   expiresAt?: number;
 }

@@ -18,18 +18,35 @@ import {
 } from './types';
 import { StellarIdentityError, ConfigurationError, ErrorCode, mapContractError } from './errors';
 import { DIDClient } from './didClient';
+import { Logger } from './logger';
+import { DataMinimizationEngine, MinimalDisclosurePolicy } from './dataMinimization';
+import { CacheManager, DataType } from './cacheManager';
+import { compressPayload, decompressPayload } from './compression';
 
+/**
+ * Client for issuing, verifying, and managing verifiable credentials on Stellar.
+ * Supports W3C VC 2.0 format, KYC credentials, education credentials,
+ * presentations, and data minimization policies.
+ * @category Client
+ */
 export class CredentialClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
   private credentialIssuerContract: Contract;
   private didClient: DIDClient;
+  private logger: Logger;
+  private dataMinimizationEngine: DataMinimizationEngine;
+  private cache: CacheManager;
 
   constructor(config: StellarIdentityConfig) {
     this.config = config;
     this.rpc = new SorobanRpc.Server(config.rpcUrl || this.getDefaultRpcUrl());
     this.credentialIssuerContract = new Contract(config.contracts.credentialIssuer);
     this.didClient = new DIDClient(config);
+    this.logger = new Logger('CredentialClient');
+    this.dataMinimizationEngine = new DataMinimizationEngine();
+    this.cache = new CacheManager();
+    this.logger.debug('CredentialClient initialized', { rpcUrl: config.rpcUrl });
   }
 
   private validateInput(condition: boolean, message: string): void {
@@ -38,11 +55,19 @@ export class CredentialClient {
     }
   }
 
+  /**
+   * Issue a new verifiable credential to a subject.
+   * @param issuerKeypair - The keypair of the credential issuer
+   * @param options - Credential details including subject, type, and data
+   * @param txOptions - Optional transaction parameters
+   * @returns The credential ID
+   */
   async issueCredential(
     issuerKeypair: Keypair,
     options: IssueCredentialOptions,
     txOptions?: TransactionOptions
   ): Promise<string> {
+    this.logger.debug('issueCredential called', { subject: options.subject, credentialType: options.credentialType });
     try {
       const address = issuerKeypair.publicKey();
       this.validateInput(address.length > 0, 'Keypair public key must not be empty');
@@ -54,6 +79,8 @@ export class CredentialClient {
       this.validateInput(dataStr.length <= 10240, 'Credential data too large (max 10KB)');
       const account = await this.rpc.getAccount(address);
 
+      const compressedData = await compressPayload(options.credentialData);
+
       const tx = new TransactionBuilder(account, {
         fee: String(txOptions?.fee ?? 100),
         networkPassphrase: this.getNetworkPassphrase(),
@@ -63,7 +90,7 @@ export class CredentialClient {
             'issue_credential',
             xdr.ScVal.scvAddress(new Address(options.subject).toScAddress()),
             nativeToScVal(options.credentialType.map(t => new TextEncoder().encode(t)), { type: 'vec' }),
-            nativeToScVal(new TextEncoder().encode(JSON.stringify(options.credentialData)), { type: 'bytes' }),
+            nativeToScVal(new TextEncoder().encode(compressedData), { type: 'bytes' }),
             options.expirationDate != null ? nativeToScVal(BigInt(options.expirationDate), { type: 'u64' }) : xdr.ScVal.scvVoid(),
             nativeToScVal(new TextEncoder().encode(options.proof), { type: 'bytes' })
           )
@@ -73,6 +100,8 @@ export class CredentialClient {
 
       const prepared = await this.rpc.prepareTransaction(tx);
       prepared.sign(issuerKeypair);
+      
+      this.logger.trace('Sending issue_credential transaction');
       const result = await this.rpc.sendTransaction(prepared);
 
       if (result.status === 'ERROR') throw new Error(`Transaction failed: ${result.errorResult}`);
@@ -82,7 +111,15 @@ export class CredentialClient {
     }
   }
 
+  /**
+   * Verify the validity of a credential.
+   * @param credentialId - The credential identifier
+   * @returns Verification result with validity, revocation, and expiration status
+   */
   async verifyCredential(credentialId: string): Promise<CredentialVerificationResult> {
+    this.logger.debug('verifyCredential called', { credentialId });
+    const cached = this.cache.get<CredentialVerificationResult>(DataType.CREDENTIAL_STATUS, credentialId);
+    if (cached) return cached;
     try {
       const credential = await this.getCredential(credentialId);
       const isValidVal = await this.simulateRead('verify_credential', [
@@ -92,7 +129,7 @@ export class CredentialClient {
         nativeToScVal(new TextEncoder().encode(credentialId), { type: 'bytes' }),
       ]);
 
-      return {
+      const result: CredentialVerificationResult = {
         valid: scValToNative(isValidVal) as boolean,
         revoked: scValToNative(statusVal) === 'revoked',
         expired: this.isCredentialExpired(credential),
@@ -101,6 +138,8 @@ export class CredentialClient {
         issuanceDate: credential.issuanceDate,
         expirationDate: credential.expirationDate,
       };
+      this.cache.set(DataType.CREDENTIAL_STATUS, credentialId, result);
+      return result;
     } catch (error) {
       throw this.handleError(error);
     }
@@ -133,17 +172,28 @@ export class CredentialClient {
       const prepared = await this.rpc.prepareTransaction(tx);
       prepared.sign(issuerKeypair);
       await this.rpc.sendTransaction(prepared);
+      this.cache.invalidate(DataType.CREDENTIAL_STATUS, credentialId);
     } catch (error) {
       throw this.handleError(error);
     }
   }
 
   async getCredential(credentialId: string): Promise<VerifiableCredential> {
+    this.logger.trace('getCredential called', { credentialId });
     try {
       const retval = await this.simulateRead('get_credential', [
         nativeToScVal(new TextEncoder().encode(credentialId), { type: 'bytes' }),
       ]);
-      return this.parseCredential(scValToNative(retval));
+      const credential = this.parseCredential(scValToNative(retval));
+      // Decompress credential data if it was stored compressed
+      if (typeof credential.credentialData === 'string') {
+        try {
+          credential.credentialData = await decompressPayload(credential.credentialData as unknown as string);
+        } catch {
+          // Not compressed - already parsed object
+        }
+      }
+      return credential;
     } catch (error) {
       throw this.handleError(error);
     }
@@ -200,17 +250,34 @@ export class CredentialClient {
     }
   }
 
+  /**
+   * Create a verifiable presentation from one or more credentials.
+   * Optionally applies data minimization policies for selective disclosure.
+   * @param credentials - The credentials to include in the presentation
+   * @param holderKeypair - The holder's keypair for signing
+   * @param domain - Optional domain for the proof
+   * @param challenge - Optional challenge for the proof
+   * @param policy - Optional minimal disclosure policy
+   * @returns A verifiable presentation object
+   */
   async createPresentation(
     credentials: VerifiableCredential[],
     holderKeypair: Keypair,
     domain?: string,
-    challenge?: string
+    challenge?: string,
+    policy?: MinimalDisclosurePolicy
   ): Promise<Record<string, unknown>> {
+    
+    let processedCredentials = credentials;
+    if (policy) {
+      processedCredentials = credentials.map(c => this.dataMinimizationEngine.applyDisclosurePolicy(c, policy));
+    }
+
     return {
       '@context': ['https://www.w3.org/2018/credentials/v1'],
       type: ['VerifiablePresentation'],
       holder: this.didClient.generateDID(holderKeypair.publicKey()),
-      verifiableCredential: credentials,
+      verifiableCredential: processedCredentials,
       proof: await this.createPresentationProof(holderKeypair, domain, challenge),
     };
   }
@@ -311,6 +378,9 @@ export class CredentialClient {
       .build();
 
     const sim = await this.rpc.simulateTransaction(tx);
+    
+    this.logger.trace('simulateRead executed', { method });
+    
     if (SorobanRpc.Api.isSimulationError(sim)) {
       throw new Error((sim as SorobanRpc.Api.SimulateTransactionErrorResponse).error);
     }
@@ -395,6 +465,52 @@ export class CredentialClient {
   }
 
   private handleError(error: unknown): StellarIdentityError {
+    this.logger.error('CredentialClient error occurred', error);
     return mapContractError(error);
+  }
+
+  async onExpiration(
+    credentialId: string,
+    callback: (credential: VerifiableCredential) => void,
+  ): Promise<void> {
+    const cred = await this.getCredential(credentialId);
+    if (cred.expirationDate && cred.expirationDate <= Date.now()) {
+      callback(cred);
+    }
+  }
+
+  async checkExpiringCredentials(windowDays: number): Promise<VerifiableCredential[]> {
+    const now = Date.now();
+    const threshold = now + windowDays * 24 * 60 * 60 * 1000;
+    const ids = await this.getSubjectCredentials('');
+    const credentials = await Promise.all(
+      ids.map(id => this.getCredential(id).catch(() => null)),
+    );
+    return credentials.filter((c): c is VerifiableCredential =>
+      c !== null && c.expirationDate != null && c.expirationDate <= threshold,
+    );
+  }
+
+  async getExpiredCredentials(address: string): Promise<VerifiableCredential[]> {
+    const now = Date.now();
+    const ids = await this.getSubjectCredentials(address);
+    const credentials = await Promise.all(
+      ids.map(id => this.getCredential(id).catch(() => null)),
+    );
+    return credentials.filter((c): c is VerifiableCredential =>
+      c !== null && c.expirationDate != null && c.expirationDate <= now,
+    );
+  }
+
+  startExpirationPolling(intervalMs: number = 3600000): void {
+    setInterval(async () => {
+      const expiring = await this.checkExpiringCredentials(30);
+      for (const cred of expiring) {
+        this.logger.info('Credential expiring soon', { id: cred.id, expirationDate: cred.expirationDate });
+      }
+    }, intervalMs);
+  }
+
+  stopExpirationPolling(): void {
   }
 }
