@@ -115,7 +115,7 @@ export class NetworkMonitor {
   constructor(config: StellarIdentityConfig, monitorConfig?: Partial<MonitorConfig>) {
     this.config = config;
     this.monitorConfig = { ...DEFAULT_MONITOR_CONFIG, ...monitorConfig };
-    this.logger = new Logger('NetworkMonitor', LogLevel.INFO);
+    this.logger = new Logger('NetworkMonitor', { level: LogLevel.INFO });
 
     this.addDefaultChannels();
     this.addDefaultThresholds();
