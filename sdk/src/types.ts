@@ -1,4 +1,34 @@
+/**
+ * Enumeration of supported zero-knowledge proof circuit types.
+ * @category Types
+ */
+export enum CircuitType {
+  RangeProof = 'RangeProof',
+  SetMembership = 'SetMembership',
+  CredentialOwnership = 'CredentialOwnership',
+  CompositeProof = 'CompositeProof',
+  EqualityProof = 'EqualityProof',
+  SelectiveDisclosure = 'SelectiveDisclosure',
+}
+
+export enum PredicateType {
+  GreaterThan = 'GreaterThan',
+  LessThan = 'LessThan',
+  GreaterThanOrEqual = 'GreaterThanOrEqual',
+  LessThanOrEqual = 'LessThanOrEqual',
+  Equality = 'Equality',
+  Range = 'Range',
+  InSet = 'InSet',
+  NotInSet = 'NotInSet',
+}
+
+/**
+ * W3C-compliant Decentralized Identifier (DID) document.
+ * Contains the DID's verification methods, services, and metadata.
+ * @category Types
+ */
 export interface DIDDocument {
+
   id: string;
   controller: string;
   verificationMethod: VerificationMethod[];
@@ -21,6 +51,11 @@ export interface Service {
   endpoint: string;
 }
 
+/**
+ * W3C Verifiable Credential (VC) 2.0 data model.
+ * Represents a cryptographically signed credential issued by an authority.
+ * @category Types
+ */
 export interface VerifiableCredential {
   id: string;
   issuer: string;
@@ -158,6 +193,11 @@ export interface ReputationTierProof {
   generatedAt: number;
 }
 
+/**
+ * Zero-knowledge proof record stored on-chain.
+ * Contains proof data, circuit info, and verification metadata.
+ * @category Types
+ */
 export interface ZKProof {
   proofId: string;
   circuitId: string;
@@ -187,14 +227,6 @@ export interface ZKCircuit {
   supportedAttributes: string[];
 }
 
-export enum CircuitType {
-  RangeProof = 'RangeProof',
-  SetMembership = 'SetMembership',
-  CredentialOwnership = 'CredentialOwnership',
-  CompositeProof = 'CompositeProof',
-  EqualityProof = 'EqualityProof',
-}
-
 export interface ZKAttestation {
   credentialId: string;
   proofHash: string;
@@ -212,6 +244,11 @@ export interface NullifierRecord {
   proofId: string;
 }
 
+/**
+ * Compliance check record for a Stellar address.
+ * Tracks sanctions screening results and risk assessment.
+ * @category Types
+ */
 export interface ComplianceRecord {
   address: string;
   riskScore: number;
@@ -231,6 +268,8 @@ export interface SanctionsList {
   entries: string[];
 }
 
+import { Keypair } from 'stellar-sdk';
+
 export interface StellarIdentityConfig {
   network: 'mainnet' | 'testnet' | 'futurenet';
   contracts: {
@@ -239,14 +278,42 @@ export interface StellarIdentityConfig {
     reputationScore: string;
     zkAttestation: string;
     complianceFilter: string;
+    schemaRegistry: string;
   };
   rpcUrl?: string;
   horizonUrl?: string;
+  keypair?: Keypair;
+}
+
+export interface CredentialSchema {
+  id: string;
+  issuer: string;
+  version: number;
+  definition: string;
+  created: number;
+  updated: number;
+}
+
+export interface SchemaValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+export interface SchemaVersion {
+  version: number;
+  schemaId: string;
+  definition: string;
+  updated: number;
 }
 
 export interface CreateDIDOptions {
   verificationMethods: VerificationMethod[];
   services: Service[];
+}
+
+export interface UpdateDIDOptions {
+  verificationMethods?: VerificationMethod[];
+  services?: Service[];
 }
 
 export interface IssueCredentialOptions {
@@ -381,6 +448,66 @@ export interface ZKVerificationResult {
   expiresAt?: number;
 }
 
+// ---- Selective Disclosure Types (#111) ----
+
+export interface PredicateInfo {
+  attributeName: string;
+  predicateType: PredicateType;
+  threshold?: string;
+  rangeMin?: string;
+  rangeMax?: string;
+  allowedValues?: string[];
+}
+
+export interface SelectiveDisclosureOptions {
+  circuitId: string;
+  credentialId: string;
+  publicInputs: string[];
+  proofBytes: string;
+  nullifier: string;
+  revealedAttributes: string[];
+  hiddenAttributes: string[];
+  predicates: PredicateInfo[];
+  expiresAt?: number;
+  metadata?: Record<string, string>;
+  context?: string;
+  txOptions?: TransactionOptions;
+}
+
+export interface SelectiveDisclosureProof {
+  proofId: string;
+  credentialId: string;
+  circuitId: string;
+  publicInputs: string[];
+  proofBytes: string;
+  nullifier: string;
+  verifierAddress: string;
+  createdAt: number;
+  expiresAt?: number;
+  revealedAttributes: string[];
+  hiddenAttributes: string[];
+  predicates: PredicateInfo[];
+  metadata: Record<string, string>;
+}
+
+export interface CombinedDisclosureProof {
+  proofId: string;
+  childProofIds: string[];
+  combinedPredicates: PredicateInfo[];
+  createdAt: number;
+  expiresAt?: number;
+  metadata: Record<string, string>;
+}
+
+export interface SelectiveDisclosureVerificationResult {
+  valid: boolean;
+  proofId: string;
+  circuitId: string;
+  predicates: PredicateInfo[];
+  verifiedAt: number;
+  expiresAt?: number;
+}
+
 export interface ComplianceResult {
   address: string;
   status: 'cleared' | 'flagged' | 'blocked';
@@ -388,4 +515,21 @@ export interface ComplianceResult {
   sanctionsLists: string[];
   lastChecked: number;
   recommendations: string[];
+}
+
+export interface ExpirationEvent {
+  credentialId: string;
+  subject: string;
+  issuer: string;
+  expirationDate: number;
+  daysUntilExpiry: number;
+  expired: boolean;
+  timestamp: number;
+}
+
+export type ExpirationHandler = (event: ExpirationEvent) => void;
+
+export interface EventListener {
+  on(event: string, handler: (...args: any[]) => void): void;
+  off(event: string, handler: (...args: any[]) => void): void;
 }

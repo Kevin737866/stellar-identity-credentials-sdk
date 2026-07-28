@@ -1,0 +1,26 @@
+# Theming
+
+The Stellar Identity UI uses CSS custom properties (design tokens) for theming. All tokens are defined in `tokens.css` with both light and dark mode support.
+
+## Usage
+
+```tsx
+import '@stellar-identity/ui/dist/styles/tokens.css';
+```
+
+## Tokens
+
+### Colors
+- `--color-primary-*` — Primary Stellar blue palette
+- `--color-success-*` — Success green
+- `--color-warning-*` — Warning amber
+- `--color-danger-*` — Danger red
+- `--color-info-*` — Info cyan
+
+### Semantic Tokens
+- `--color-bg` — Page background
+- `--color-text` — Primary text color
+- `--color-border` — Border color
+
+### Dark Mode
+Add `data-theme="dark"` to the root `<html>` element, or use the `.dark` class.

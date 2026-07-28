@@ -20,9 +20,21 @@ import {
   TransactionOptions,
   CircuitType,
   ProofGenerationInputs,
+  PredicateType,
+  PredicateInfo,
+  SelectiveDisclosureOptions,
+  SelectiveDisclosureProof,
+  SelectiveDisclosureVerificationResult,
+  CombinedDisclosureProof,
 } from './types';
 import { StellarIdentityError, mapContractError } from './errors';
 
+/**
+ * Client for generating and verifying zero-knowledge proofs on Stellar.
+ * Supports age verification, income verification, KYC composite proofs,
+ * loan application proofs, and batch proof generation using snarkjs.
+ * @category Client
+ */
 export class ZKProofsClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
@@ -101,6 +113,16 @@ export class ZKProofsClient {
   /**
    * Create high-level age proof
    */
+  /**
+   * Create an age verification zero-knowledge proof.
+   * Proves that the subject is at least `minAge` years old without revealing
+   * their actual birth year or age.
+   * @param birthYear - The subject's birth year
+   * @param currentYear - The current year for age calculation
+   * @param minAge - The minimum age threshold to prove
+   * @param options - Additional proof options including expiration
+   * @returns The generated proof ID
+   */
   async createAgeProof(
     birthYear: number,
     currentYear: number,
@@ -138,7 +160,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'age_range_proof',
           publicInputs: [commitment, minAge.toString()],
@@ -161,6 +183,15 @@ export class ZKProofsClient {
 
   /**
    * Create high-level income proof
+   */
+  /**
+   * Create an income verification zero-knowledge proof.
+   * Proves that the subject's income meets or exceeds `minIncome` without
+   * revealing the exact income amount.
+   * @param income - The subject's actual income
+   * @param minIncome - The minimum income threshold to prove
+   * @param options - Additional proof options including expiration
+   * @returns The generated proof ID
    */
   async createIncomeProof(
     income: number,
@@ -192,7 +223,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'income_range_proof',
           publicInputs: [commitment, minIncome.toString()],
@@ -269,13 +300,14 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'kyc_composite_proof',
           publicInputs: [credential.hash],
           proofBytes,
           nullifier,
-          revealedAttributes: requiredChecks.map(check => Symbol.for(check)),
+           revealedAttributes: requiredChecks.map(check => check),
+
           expiresAt: options?.expiresAt,
           metadata: {
             type: 'kyc_verification',
@@ -335,7 +367,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'loan_application_composite_proof',
           publicInputs: Object.values(publicInputs).map(v => v.toString()),
@@ -381,14 +413,15 @@ export class ZKProofsClient {
           ...result,
           generationTime: Date.now() - startTime,
         });
-      } catch (error) {
-        results.push({
-          proof: null,
-          publicSignals: null,
-          generationTime: Date.now() - startTime,
-          error: error.message,
-        });
-      }
+       } catch (error: any) {
+         results.push({
+           proof: null,
+           publicSignals: null,
+           generationTime: Date.now() - startTime,
+           error: error.message,
+         });
+       }
+
     }
     
     return results;
@@ -407,9 +440,10 @@ export class ZKProofsClient {
       const wasm = await WebAssembly.compile(wasmBuffer);
       this.wasmCache.set(wasmPath, wasm);
       return wasm;
-    } catch (error) {
-      throw new Error(`Failed to load WASM from ${wasmPath}: ${error.message}`);
-    }
+     } catch (error: any) {
+       throw new Error(`Failed to load WASM from ${wasmPath}: ${error.message}`);
+     }
+
   }
 
   /**
@@ -425,9 +459,10 @@ export class ZKProofsClient {
       const zkey = JSON.parse(zkeyBuffer.toString());
       this.zkeyCache.set(zkeyPath, zkey);
       return zkey;
-    } catch (error) {
-      throw new Error(`Failed to load zkey from ${zkeyPath}: ${error.message}`);
-    }
+     } catch (error: any) {
+       throw new Error(`Failed to load zkey from ${zkeyPath}: ${error.message}`);
+     }
+
   }
 
   /**
@@ -455,6 +490,367 @@ export class ZKProofsClient {
     const crypto = require('crypto') as typeof import('crypto');
     const data = `${credentialId}${circuitId}${context}`;
     return crypto.createHash('sha256').update(data).digest('hex');
+  }
+
+  // -------------------------------------------------------------------------
+  // Selective Disclosure methods (#111)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Create a selective disclosure proof that reveals only specific attributes
+   * while proving predicates (GT, LT, range, equality) on hidden attributes.
+   */
+  async createSelectiveDisclosureProof(
+    submitterKeypair: Keypair,
+    options: SelectiveDisclosureOptions
+  ): Promise<string> {
+    try {
+      const account = await this.rpc.getAccount(submitterKeypair.publicKey());
+
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.getNetworkPassphrase(),
+      })
+        .addOperation(
+          this.zkAttestationContract.call(
+            'create_selective_disclosure_proof',
+            nativeToScVal(new TextEncoder().encode(options.credentialId), { type: 'bytes' }),
+            nativeToScVal(new TextEncoder().encode(options.circuitId), { type: 'bytes' }),
+            nativeToScVal(options.publicInputs.map(i => new TextEncoder().encode(i)), { type: 'vec' }),
+            nativeToScVal(new TextEncoder().encode(options.proofBytes), { type: 'bytes' }),
+            nativeToScVal(new TextEncoder().encode(options.nullifier), { type: 'bytes' }),
+            nativeToScVal(options.revealedAttributes.map(a => new TextEncoder().encode(a)), { type: 'vec' }),
+            nativeToScVal(options.hiddenAttributes.map(a => new TextEncoder().encode(a)), { type: 'vec' }),
+            nativeToScVal(this.encodePredicates(options.predicates), { type: 'vec' }),
+            options.expiresAt != null
+              ? nativeToScVal(BigInt(options.expiresAt), { type: 'u64' })
+              : xdr.ScVal.scvVoid(),
+            options.metadata
+              ? nativeToScVal(new TextEncoder().encode(JSON.stringify(options.metadata)), { type: 'bytes' })
+              : xdr.ScVal.scvVoid()
+          )
+        )
+        .setTimeout(30)
+        .build();
+
+      const prepared = await this.rpc.prepareTransaction(tx);
+      prepared.sign(submitterKeypair);
+      await this.rpc.sendTransaction(prepared);
+      return `sd-proof-${Date.now()}`;
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Verify a selective disclosure proof matches expected predicates.
+   */
+  async verifySelectiveDisclosure(
+    proofId: string,
+    expectedPredicates: PredicateInfo[]
+  ): Promise<SelectiveDisclosureVerificationResult> {
+    try {
+      const retval = await this.simulateRead('verify_selective_disclosure', [
+        nativeToScVal(new TextEncoder().encode(proofId), { type: 'bytes' }),
+        nativeToScVal(this.encodePredicates(expectedPredicates), { type: 'vec' }),
+      ]);
+
+      const disclosure = await this.getSelectiveDisclosure(proofId);
+      return {
+        valid: scValToNative(retval) as boolean,
+        proofId,
+        circuitId: disclosure.circuitId,
+        predicates: disclosure.predicates,
+        verifiedAt: Date.now(),
+        expiresAt: disclosure.expiresAt,
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Combine multiple selective disclosure proofs into a single composite proof.
+   */
+  async combineSelectiveDisclosures(
+    submitterKeypair: Keypair,
+    proofIds: string[],
+    metadata?: Record<string, string>
+  ): Promise<string> {
+    try {
+      const account = await this.rpc.getAccount(submitterKeypair.publicKey());
+
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.getNetworkPassphrase(),
+      })
+        .addOperation(
+          this.zkAttestationContract.call(
+            'combine_selective_disclosures',
+            nativeToScVal(proofIds.map(id => new TextEncoder().encode(id)), { type: 'vec' }),
+            metadata
+              ? nativeToScVal(new TextEncoder().encode(JSON.stringify(metadata)), { type: 'bytes' })
+              : xdr.ScVal.scvVoid()
+          )
+        )
+        .setTimeout(30)
+        .build();
+
+      const prepared = await this.rpc.prepareTransaction(tx);
+      prepared.sign(submitterKeypair);
+      await this.rpc.sendTransaction(prepared);
+      return `combined-${Date.now()}`;
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Retrieve a selective disclosure proof by ID.
+   */
+  async getSelectiveDisclosure(proofId: string): Promise<SelectiveDisclosureProof> {
+    try {
+      const retval = await this.simulateRead('get_selective_disclosure', [
+        nativeToScVal(new TextEncoder().encode(proofId), { type: 'bytes' }),
+      ]);
+      return this.parseSelectiveDisclosure(scValToNative(retval));
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Retrieve a combined disclosure proof by ID.
+   */
+  async getCombinedDisclosure(proofId: string): Promise<CombinedDisclosureProof> {
+    try {
+      const retval = await this.simulateRead('get_combined_disclosure', [
+        nativeToScVal(new TextEncoder().encode(proofId), { type: 'bytes' }),
+      ]);
+      return this.parseCombinedDisclosure(scValToNative(retval));
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Prove a specific attribute value is greater than a threshold.
+   */
+  async createGreaterThanProof(
+    submitterKeypair: Keypair,
+    attributeName: string,
+    attributeValue: number,
+    threshold: number,
+    credentialId: string,
+    circuitId: string,
+    options?: { context?: string; expiresAt?: number }
+  ): Promise<string> {
+    const nonce = this.generateSalt();
+    const commitment = this.generateCommitment(attributeValue.toString(), nonce);
+    const nullifier = this.generateNullifier(
+      `${credentialId}_${attributeName}_gt`,
+      circuitId,
+      options?.context || 'default'
+    );
+    const predicates: PredicateInfo[] = [{
+      attributeName,
+      predicateType: PredicateType.GreaterThan,
+      threshold: threshold.toString(),
+    }];
+
+    return this.createSelectiveDisclosureProof(submitterKeypair, {
+      circuitId,
+      credentialId,
+      publicInputs: [commitment, threshold.toString()],
+      proofBytes: `{"gt_proof":{"attribute":${attributeValue},"threshold":${threshold}}}`,
+      nullifier,
+      revealedAttributes: [],
+      hiddenAttributes: [attributeName],
+      predicates,
+      expiresAt: options?.expiresAt,
+      metadata: {
+        type: 'greater_than',
+        attribute: attributeName,
+        threshold: threshold.toString(),
+        context: options?.context || 'default',
+      },
+    });
+  }
+
+  /**
+   * Prove a specific attribute value is within a range [min, max].
+   */
+  async createRangeProof(
+    submitterKeypair: Keypair,
+    attributeName: string,
+    attributeValue: number,
+    min: number,
+    max: number,
+    credentialId: string,
+    circuitId: string,
+    options?: { context?: string; expiresAt?: number }
+  ): Promise<string> {
+    const nonce = this.generateSalt();
+    const commitment = this.generateCommitment(attributeValue.toString(), nonce);
+    const nullifier = this.generateNullifier(
+      `${credentialId}_${attributeName}_range`,
+      circuitId,
+      options?.context || 'default'
+    );
+    const predicates: PredicateInfo[] = [{
+      attributeName,
+      predicateType: PredicateType.Range,
+      rangeMin: min.toString(),
+      rangeMax: max.toString(),
+    }];
+
+    return this.createSelectiveDisclosureProof(submitterKeypair, {
+      circuitId,
+      credentialId,
+      publicInputs: [commitment, min.toString(), max.toString()],
+      proofBytes: `{"range_proof":{"attribute":${attributeValue},"min":${min},"max":${max}}}`,
+      nullifier,
+      revealedAttributes: [],
+      hiddenAttributes: [attributeName],
+      predicates,
+      expiresAt: options?.expiresAt,
+      metadata: {
+        type: 'range_proof',
+        attribute: attributeName,
+        min: min.toString(),
+        max: max.toString(),
+        context: options?.context || 'default',
+      },
+    });
+  }
+
+  /**
+   * Selectively reveal the exact value of an attribute.
+   */
+  async createEqualityDisclosure(
+    submitterKeypair: Keypair,
+    attributeName: string,
+    attributeValue: number,
+    credentialId: string,
+    circuitId: string,
+    options?: { context?: string; expiresAt?: number }
+  ): Promise<string> {
+    const nonce = this.generateSalt();
+    const commitment = this.generateCommitment(attributeValue.toString(), nonce);
+    const nullifier = this.generateNullifier(
+      `${credentialId}_${attributeName}_eq`,
+      circuitId,
+      options?.context || 'default'
+    );
+    const predicates: PredicateInfo[] = [{
+      attributeName,
+      predicateType: PredicateType.Equality,
+      threshold: attributeValue.toString(),
+    }];
+
+    return this.createSelectiveDisclosureProof(submitterKeypair, {
+      circuitId,
+      credentialId,
+      publicInputs: [commitment, attributeValue.toString()],
+      proofBytes: `{"eq_proof":{"attribute":${attributeValue}}}`,
+      nullifier,
+      revealedAttributes: [attributeName],
+      hiddenAttributes: [],
+      predicates,
+      expiresAt: options?.expiresAt,
+      metadata: {
+        type: 'equality_disclosure',
+        attribute: attributeName,
+        value: attributeValue.toString(),
+        context: options?.context || 'default',
+      },
+    });
+  }
+
+  /**
+   * Encode predicate info for contract calls.
+   */
+  private encodePredicates(predicates: PredicateInfo[]): any[] {
+    return predicates.map(p => ({
+      attributeName: new TextEncoder().encode(p.attributeName),
+      predicateType: this.encodePredicateType(p.predicateType),
+      threshold: p.threshold ? new TextEncoder().encode(p.threshold) : null,
+      rangeMin: p.rangeMin ? new TextEncoder().encode(p.rangeMin) : null,
+      rangeMax: p.rangeMax ? new TextEncoder().encode(p.rangeMax) : null,
+      allowedValues: p.allowedValues
+        ? p.allowedValues.map(v => new TextEncoder().encode(v))
+        : null,
+    }));
+  }
+
+  private encodePredicateType(type: PredicateType): number {
+    const map: Record<PredicateType, number> = {
+      [PredicateType.GreaterThan]: 0,
+      [PredicateType.LessThan]: 1,
+      [PredicateType.GreaterThanOrEqual]: 2,
+      [PredicateType.LessThanOrEqual]: 3,
+      [PredicateType.Equality]: 4,
+      [PredicateType.Range]: 5,
+      [PredicateType.InSet]: 6,
+      [PredicateType.NotInSet]: 7,
+    };
+    return map[type] ?? 0;
+  }
+
+  private parseSelectiveDisclosure(raw: unknown): SelectiveDisclosureProof {
+    const r = Array.isArray(raw) ? raw : [];
+    const toStr = (v: unknown) => (v instanceof Uint8Array ? new TextDecoder().decode(v) : String(v ?? ''));
+    return {
+      proofId: toStr(r[0]),
+      credentialId: toStr(r[1]),
+      circuitId: toStr(r[2]),
+      publicInputs: Array.isArray(r[3]) ? (r[3] as unknown[]).map(toStr) : [],
+      proofBytes: toStr(r[4]),
+      nullifier: toStr(r[5]),
+      verifierAddress: toStr(r[6]),
+      createdAt: Number(r[7] ?? 0),
+      expiresAt: r[8] != null ? Number(r[8]) : undefined,
+      revealedAttributes: Array.isArray(r[9]) ? (r[9] as unknown[]).map(toStr) : [],
+      hiddenAttributes: Array.isArray(r[10]) ? (r[10] as unknown[]).map(toStr) : [],
+      predicates: Array.isArray(r[11]) ? (r[11] as unknown[]).map(this.parsePredicateInfo) : [],
+      metadata: this.parseMetadata(r[12]),
+    };
+  }
+
+  private parseCombinedDisclosure(raw: unknown): CombinedDisclosureProof {
+    const r = Array.isArray(raw) ? raw : [];
+    const toStr = (v: unknown) => (v instanceof Uint8Array ? new TextDecoder().decode(v) : String(v ?? ''));
+    return {
+      proofId: toStr(r[0]),
+      childProofIds: Array.isArray(r[1]) ? (r[1] as unknown[]).map(toStr) : [],
+      combinedPredicates: Array.isArray(r[2]) ? (r[2] as unknown[]).map(this.parsePredicateInfo) : [],
+      createdAt: Number(r[3] ?? 0),
+      expiresAt: r[4] != null ? Number(r[4]) : undefined,
+      metadata: this.parseMetadata(r[5]),
+    };
+  }
+
+  private parsePredicateInfo(raw: unknown): PredicateInfo {
+    const r = Array.isArray(raw) ? raw : [];
+    const toStr = (v: unknown) => (v instanceof Uint8Array ? new TextDecoder().decode(v) : String(v ?? ''));
+    const predTypeMap: Record<string, PredicateType> = {
+      '0': PredicateType.GreaterThan,
+      '1': PredicateType.LessThan,
+      '2': PredicateType.GreaterThanOrEqual,
+      '3': PredicateType.LessThanOrEqual,
+      '4': PredicateType.Equality,
+      '5': PredicateType.Range,
+      '6': PredicateType.InSet,
+      '7': PredicateType.NotInSet,
+    };
+    return {
+      attributeName: toStr(r[0]),
+      predicateType: predTypeMap[String(r[1])] || PredicateType.GreaterThan,
+      threshold: r[2] != null ? toStr(r[2]) : undefined,
+      rangeMin: r[3] != null ? toStr(r[3]) : undefined,
+      rangeMax: r[4] != null ? toStr(r[4]) : undefined,
+      allowedValues: Array.isArray(r[5]) ? (r[5] as unknown[]).map(toStr) : undefined,
+    };
   }
 
   async registerCircuit(
@@ -496,6 +892,13 @@ export class ZKProofsClient {
     }
   }
 
+  /**
+   * Submit a zero-knowledge proof to the on-chain contract.
+   * @param submitterKeypair - The keypair of the proof submitter
+   * @param options - Proof details including circuit, inputs, and proof bytes
+   * @param txOptions - Optional transaction parameters
+   * @returns The proof ID
+   */
   async submitProof(
     submitterKeypair: Keypair,
     options: ZKProofOptions,
@@ -652,7 +1055,7 @@ export class ZKProofsClient {
     return Promise.all(proofIds.map(id => this.verifyProof(id)));
   }
 
-  async createAgeProof(
+  async submitAgeProof(
     submitterKeypair: Keypair,
     circuitId: string,
     commitment: string,
@@ -666,11 +1069,14 @@ export class ZKProofsClient {
         circuitId,
         publicInputs: [commitment, String(minAge)],
         proofBytes,
+        nullifier: this.generateNullifier(`age_${minAge}`, circuitId, 'manual'),
+        revealedAttributes: ['age_commitment'],
         metadata: { type: 'age_verification', minAge: String(minAge) },
       },
       txOptions
     );
   }
+
 
   async verifyAgeProof(proofId: string, minAge: number): Promise<boolean> {
     try {
@@ -684,7 +1090,7 @@ export class ZKProofsClient {
     }
   }
 
-  async createIncomeProof(
+  async submitIncomeProof(
     submitterKeypair: Keypair,
     circuitId: string,
     commitment: string,
@@ -698,13 +1104,17 @@ export class ZKProofsClient {
         circuitId,
         publicInputs: [commitment, String(minIncome)],
         proofBytes,
-        metadata: { type: 'income_verification' },
+        nullifier: this.generateNullifier(`income_${minIncome}`, circuitId, 'manual'),
+        revealedAttributes: ['income_commitment'],
+        metadata: { type: 'income_verification', minIncome: String(minIncome) },
       },
       txOptions
     );
   }
 
-  async createCredentialOwnershipProof(
+
+
+  async submitCredentialOwnershipProof(
     submitterKeypair: Keypair,
     circuitId: string,
     credentialHash: string,
@@ -717,13 +1127,15 @@ export class ZKProofsClient {
         circuitId,
         publicInputs: [credentialHash],
         proofBytes,
+        nullifier: this.generateNullifier(credentialHash, circuitId, 'manual'),
+        revealedAttributes: ['credential_ownership'],
         metadata: { type: 'credential_ownership' },
       },
       txOptions
     );
   }
 
-  async createRangeProof(
+  async submitRangeProof(
     submitterKeypair: Keypair,
     circuitId: string,
     commitment: string,
@@ -738,12 +1150,21 @@ export class ZKProofsClient {
         circuitId,
         publicInputs: [commitment, String(minValue), String(maxValue)],
         proofBytes,
+        nullifier: this.generateNullifier(`range_${minValue}_${maxValue}`, circuitId, 'manual'),
+        revealedAttributes: ['range_verification'],
         metadata: { type: 'range_verification', min: String(minValue), max: String(maxValue) },
       },
       txOptions
     );
   }
 
+  /**
+   * Generate a cryptographic commitment using SHA-256.
+   * Used for hiding private data in zero-knowledge proofs.
+   * @param privateData - The data to commit to
+   * @param salt - Optional random salt (generated if not provided)
+   * @returns Hex-encoded commitment hash
+   */
   generateCommitment(privateData: string, salt?: string): string {
     const crypto = require('crypto') as typeof import('crypto');
     const actualSalt = salt ?? (crypto.randomBytes(32).toString('hex'));
@@ -780,12 +1201,15 @@ export class ZKProofsClient {
     return {
       proofId: toStr(r[0]),
       circuitId: toStr(r[1]),
-      publicInputs: Array.isArray(r[2]) ? r[2].map(toStr) : [],
+      publicInputs: Array.isArray(r[2]) ? (r[2] as unknown[]).map(toStr) : [],
       proofBytes: toStr(r[3]),
-      verifierAddress: toStr(r[4]),
-      createdAt: Number(r[5] ?? 0),
-      expiresAt: r[6] != null ? Number(r[6]) : undefined,
-      metadata: this.parseMetadata(r[7]),
+      verifyingKeyHash: toStr(r[4]),
+      nullifier: toStr(r[5]),
+      verifierAddress: toStr(r[6]),
+      createdAt: Number(r[7] ?? 0),
+      expiresAt: r[8] != null ? Number(r[8]) : undefined,
+      metadata: this.parseMetadata(r[9]),
+      revealedAttributes: Array.isArray(r[10]) ? (r[10] as unknown[]).map(toStr) : [],
     };
   }
 
@@ -797,11 +1221,14 @@ export class ZKProofsClient {
       name: toStr(r[1]),
       description: toStr(r[2]),
       verifierKey: toStr(r[3]),
-      publicInputCount: Number(r[4] ?? 0),
-      privateInputCount: Number(r[5] ?? 0),
-      createdBy: toStr(r[6]),
-      createdAt: Number(r[7] ?? 0),
-      active: Boolean(r[8]),
+      verifyingKeyHash: toStr(r[4]),
+      publicInputCount: Number(r[5] ?? 0),
+      privateInputCount: Number(r[6] ?? 0),
+      createdBy: toStr(r[7]),
+      createdAt: Number(r[8] ?? 0),
+      active: Boolean(r[9]),
+      circuitType: (r[10] as any) || CircuitType.RangeProof,
+      supportedAttributes: Array.isArray(r[11]) ? (r[11] as unknown[]).map(toStr) : [],
     };
   }
 

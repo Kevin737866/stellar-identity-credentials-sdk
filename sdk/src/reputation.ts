@@ -6,6 +6,7 @@ import {
   Keypair,
   Contract,
   Address,
+  Account,
   xdr,
   nativeToScVal,
   scValToNative,
@@ -32,6 +33,13 @@ import {
   recommendTrustEntities,
 } from './trustGraph';
 
+/**
+ * Client for managing on-chain reputation scores on Stellar.
+ * Calculates reputation from transaction history, credential validity,
+ * trust attestations, and network activity. Supports tier-based scoring
+ * from Seedling through Prime.
+ * @category Client
+ */
 export class ReputationClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
@@ -112,6 +120,11 @@ export class ReputationClient {
     return this.normalizeScore(scValToNative(retval));
   }
 
+  /**
+   * Get a comprehensive reputation score breakdown including factors and percentile.
+   * @param did - The DID or Stellar address to query
+   * @returns Reputation breakdown with score, tier, and factor details
+   */
   async getReputationScore(did: string): Promise<ReputationBreakdown> {
     const [data, percentile] = await Promise.all([
       this.getReputationData(did),
@@ -310,6 +323,11 @@ export class ReputationClient {
     return this.parseReputationData(scValToNative(retval));
   }
 
+  /**
+   * Get a full reputation analysis including score, percentile, history, and recommendations.
+   * @param did - The DID or Stellar address to analyze
+   * @returns Comprehensive reputation analysis
+   */
   async getReputationAnalysis(did: string): Promise<ReputationScoreResult> {
     const [snapshot, history] = await Promise.all([
       this.getReputationScore(did),
@@ -347,6 +365,11 @@ export class ReputationClient {
     return { tier: 'Seedling', color: '#6B7280', description: 'Sybil-resistant base tier for new or lightly used accounts.' };
   }
 
+  /**
+   * Calculate the trend of reputation changes from historical data.
+   * @param history - Array of historical score values
+   * @returns Trend direction, absolute change, and percentage change
+   */
   calculateReputationTrend(history: number[]): { trend: 'up' | 'down' | 'stable'; change: number; percentage: number } {
     if (history.length < 2) return { trend: 'stable', change: 0, percentage: 0 };
     const recent = history.slice(-5);

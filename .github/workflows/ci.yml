@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main, feature/*]
+  pull_request:
+    branches: [master, main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: Format code
+        run: cargo fmt
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+          target: wasm32-unknown-unknown
+      - name: Check clippy
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+      - name: Build
+        run: cargo build --target wasm32-unknown-unknown --release
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-contract
+          path: target/wasm32-unknown-unknown/release/*.wasm
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+      - name: Run tests
+        run: cargo test
+
+  coverage-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin
+      - name: Run coverage
+        run: cargo tarpaulin --out Xml --fail-under 80
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage
+          path: cobertura.xml
+
+  coverage-ts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - name: Install dependencies
+        run: npm ci
+      - name: Run TypeScript SDK coverage
+        run: npm test -- --coverage
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ts-coverage
+          path: coverage/
+
+  complexity-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint TS (complexity + function length)
+        run: npm run lint
+      - name: Check Rust function length
+        run: python3 scripts/check-rust-fn-length.py --max 100 src
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+          target: wasm32-unknown-unknown
+      - name: Clippy (complexity check)
+        run: cargo clippy --target wasm32-unknown-unknown -- -D clippy::cognitive_complexity
