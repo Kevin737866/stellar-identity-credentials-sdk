@@ -227,9 +227,9 @@ export type {
   ReputationScoreResult,
   ZKVerificationResult,
   ComplianceResult,
-  CredentialSchema,
-  SchemaValidationResult,
-  SchemaVersion,
+  ComplianceRule,
+  ComplianceRuleEnforcement,
+  RuleEvaluationResult,
 } from './types';
 
 import { DIDClient } from './didClient';

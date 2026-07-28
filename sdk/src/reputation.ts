@@ -43,7 +43,7 @@ import {
 export class ReputationClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
-  /** Lazily constructed so unit tests do not need a real StrKey contract id. */
+  /** Lazily constructed so unit tests do not need a valid StrKey contract id. */
   private _reputationScoreContract?: Contract;
   private get reputationScoreContract(): Contract {
     if (!this._reputationScoreContract) {
