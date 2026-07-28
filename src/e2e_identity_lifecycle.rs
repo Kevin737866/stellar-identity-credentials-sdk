@@ -1,4 +1,4 @@
-﻿#![cfg(test)]
+#![cfg(test)]
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
@@ -48,7 +48,8 @@ fn make_vm(env: &Env, id: &str, key: &[u8; 32]) -> VerificationMethod {
 }
 
 fn advance_time(env: &Env, seconds: u64) {
-    env.ledger().set_timestamp(env.ledger().timestamp() + seconds);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + seconds);
 }
 
 // ---------------------------------------------------------------------------
@@ -220,9 +221,18 @@ fn e2e_multisig_did_credential_issuance() {
     let multisig = MultiSigConfig {
         signers: soroban_sdk::vec![
             &env,
-            Signer { address: signer1.clone(), weight: 1 },
-            Signer { address: signer2.clone(), weight: 1 },
-            Signer { address: signer3.clone(), weight: 1 },
+            Signer {
+                address: signer1.clone(),
+                weight: 1
+            },
+            Signer {
+                address: signer2.clone(),
+                weight: 1
+            },
+            Signer {
+                address: signer3.clone(),
+                weight: 1
+            },
         ],
         threshold: 2,
     };
@@ -265,7 +275,14 @@ fn e2e_delegated_issuance_revoke() {
     // Delegate issues credential
     let schema = Bytes::from_slice(&env, b"delegated-schema");
     let cred_id = BytesN::from_array(&env, &[5u8; 32]);
-    issuer_c.issue(&delegate, &issuer, &schema, &subject, &cred_id, Bytes::from_slice(&env, b"{}"));
+    issuer_c.issue(
+        &delegate,
+        &issuer,
+        &schema,
+        &subject,
+        &cred_id,
+        Bytes::from_slice(&env, b"{}"),
+    );
     assert_eq!(issuer_c.get_credential(&cred_id).unwrap().status, 1);
 
     // Admin revokes delegation
@@ -315,7 +332,11 @@ fn e2e_full_combined_flow() {
     // 3. Update reputation
     let rep_client = env.register(ReputationScore, ());
     let rep = ReputationScoreClient::new(&env, &rep_client);
-    let config = Config { decay_factor: 100, min_trust_threshold: 50, weights: Default::default() };
+    let config = Config {
+        decay_factor: 100,
+        min_trust_threshold: 50,
+        weights: Default::default(),
+    };
     rep.initialize(&controller, &Address::generate(&env), &config);
     rep.update_transaction_reputation(&controller, 80);
     assert!(rep.get_score(&controller) >= 50);
@@ -325,8 +346,18 @@ fn e2e_full_combined_flow() {
     let zk = ZKAttestationClient::new(&env, &zk_client);
     let circuit_id = Bytes::from_slice(&env, b"circuit-1");
     zk.register_circuit(&controller, &circuit_id, &Bytes::from_slice(&env, b"vk"));
-    zk.submit_proof(&controller, &circuit_id, &Bytes::from_slice(&env, b"proof"), &soroban_sdk::vec![&env, Bytes::from_slice(&env, b"in")]);
-    assert!(zk.verify_proof(&controller, &circuit_id, &Bytes::from_slice(&env, b"proof"), &soroban_sdk::vec![&env, Bytes::from_slice(&env, b"in")]));
+    zk.submit_proof(
+        &controller,
+        &circuit_id,
+        &Bytes::from_slice(&env, b"proof"),
+        &soroban_sdk::vec![&env, Bytes::from_slice(&env, b"in")],
+    );
+    assert!(zk.verify_proof(
+        &controller,
+        &circuit_id,
+        &Bytes::from_slice(&env, b"proof"),
+        &soroban_sdk::vec![&env, Bytes::from_slice(&env, b"in")]
+    ));
 
     // 5. Compliance screen
     let comp = env.register(ComplianceFilter, ());

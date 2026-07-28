@@ -59,11 +59,7 @@ pub fn init(env: &Env, admin: Address) -> Result<(), AdminError> {
 /// - `Ok(())` on success.
 /// - `Err(AdminError::NotInitialized)` if the contract has no admin.
 /// - `Err(AdminError::Unauthorized)` if `caller` is not the current admin.
-pub fn transfer_admin(
-    env: &Env,
-    caller: &Address,
-    new_admin: Address,
-) -> Result<(), AdminError> {
+pub fn transfer_admin(env: &Env, caller: &Address, new_admin: Address) -> Result<(), AdminError> {
     let key = Symbol::new(env, KEY_ADMIN);
     let current: Address = env
         .storage()
@@ -76,10 +72,8 @@ pub fn transfer_admin(
     }
 
     env.storage().instance().set(&key, &new_admin);
-    env.events().publish(
-        (Symbol::new(env, "AdminTransferred"), current),
-        new_admin,
-    );
+    env.events()
+        .publish((Symbol::new(env, "AdminTransferred"), current), new_admin);
     Ok(())
 }
 
@@ -110,9 +104,7 @@ pub fn renounce_admin(env: &Env, caller: &Address) -> Result<(), AdminError> {
 
 /// Return the current admin address, if any.
 pub fn get_admin(env: &Env) -> Option<Address> {
-    env.storage()
-        .instance()
-        .get(&Symbol::new(env, KEY_ADMIN))
+    env.storage().instance().get(&Symbol::new(env, KEY_ADMIN))
 }
 
 /// Guard: returns `Ok(())` if `caller` is the admin, `Err(AdminError::Unauthorized)` otherwise.

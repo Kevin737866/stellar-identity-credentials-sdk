@@ -2,10 +2,10 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
 };
 
-use crate::{clamp_page_size, PaginatedCredentials, VerifiableCredential};
 use crate::admin;
 use crate::rate_limiter::{check_rate_limit, defaults};
 use crate::reentrancy_guard::ReentrancyGuard;
+use crate::{clamp_page_size, PaginatedCredentials, VerifiableCredential};
 
 // ---------------------------------------------------------------------------
 // Delegated Credential Issuance Types (#92)
@@ -514,8 +514,7 @@ impl CredentialIssuer {
         issuer: Address,
     ) -> Result<(), CredentialIssuerError> {
         admin.require_auth();
-        admin::only_admin(&env, &admin)
-            .map_err(|_| CredentialIssuerError::Unauthorized)?;
+        admin::only_admin(&env, &admin).map_err(|_| CredentialIssuerError::Unauthorized)?;
 
         let mut issuers: Vec<Address> = env
             .storage()
@@ -548,8 +547,7 @@ impl CredentialIssuer {
         issuer: Address,
     ) -> Result<(), CredentialIssuerError> {
         admin.require_auth();
-        admin::only_admin(&env, &admin)
-            .map_err(|_| CredentialIssuerError::Unauthorized)?;
+        admin::only_admin(&env, &admin).map_err(|_| CredentialIssuerError::Unauthorized)?;
 
         let issuers: Vec<Address> = env
             .storage()
@@ -639,10 +637,7 @@ impl CredentialIssuer {
 
             if let Some(cred) = credential {
                 // Check expiration
-                let expired = cred
-                    .expiration_date
-                    .map(|exp| now > exp)
-                    .unwrap_or(false);
+                let expired = cred.expiration_date.map(|exp| now > exp).unwrap_or(false);
 
                 if !expired {
                     continue;
@@ -660,8 +655,7 @@ impl CredentialIssuer {
 
                 // Revoke
                 let mut mutable_cred = cred;
-                mutable_cred.revocation =
-                    Some(Bytes::from_slice(&env, now.to_string().as_bytes()));
+                mutable_cred.revocation = Some(Bytes::from_slice(&env, now.to_string().as_bytes()));
                 env.storage()
                     .persistent()
                     .set(&CredKey::Credential(cred_id.clone()), &mutable_cred);
@@ -1528,12 +1522,8 @@ mod tests {
         )
         .unwrap();
 
-        let revoked = CredentialIssuer::revoke_expired_credentials(
-            env.clone(),
-            issuer,
-            10,
-        )
-        .unwrap();
+        let revoked =
+            CredentialIssuer::revoke_expired_credentials(env.clone(), issuer, 10).unwrap();
         assert_eq!(revoked, 1);
 
         let status = CredentialIssuer::get_credential_status(env.clone(), cred_id);
@@ -1560,12 +1550,8 @@ mod tests {
         )
         .unwrap();
 
-        let revoked = CredentialIssuer::revoke_expired_credentials(
-            env.clone(),
-            issuer,
-            10,
-        )
-        .unwrap();
+        let revoked =
+            CredentialIssuer::revoke_expired_credentials(env.clone(), issuer, 10).unwrap();
         assert_eq!(revoked, 0);
     }
 

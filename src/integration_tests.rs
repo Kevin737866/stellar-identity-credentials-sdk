@@ -293,17 +293,19 @@ fn test_zk_proof_lifecycle() {
     let circuit_type = CircuitType::RangeProof;
     let supported_attributes = soroban_sdk::vec![&env, Symbol::new(&env, "age_commitment")];
 
-    let register_result = ZKAttestationContractClient::new(&env, &env.register(ZKAttestationContract, ())).register_circuit(
-        env.clone(),
-        circuit_id.clone(),
-        name,
-        description,
-        verifier_key,
-        public_input_count,
-        private_input_count,
-        circuit_type,
-        supported_attributes,
-    );
+    let register_result =
+        ZKAttestationContractClient::new(&env, &env.register(ZKAttestationContract, ()))
+            .register_circuit(
+                env.clone(),
+                circuit_id.clone(),
+                name,
+                description,
+                verifier_key,
+                public_input_count,
+                private_input_count,
+                circuit_type,
+                supported_attributes,
+            );
     assert!(register_result.is_ok());
 
     let public_inputs = soroban_sdk::vec![
@@ -320,16 +322,17 @@ fn test_zk_proof_lifecycle() {
         Bytes::from_slice(&env, b"age_verification"),
     );
 
-    let proof_id = ZKAttestationContractClient::new(&env, &env.register(ZKAttestationContract, ())).submit_proof(
-        env.clone(),
-        circuit_id.clone(),
-        public_inputs,
-        proof_bytes,
-        nullifier,
-        revealed_attributes,
-        None,
-        metadata,
-    );
+    let proof_id = ZKAttestationContractClient::new(&env, &env.register(ZKAttestationContract, ()))
+        .submit_proof(
+            env.clone(),
+            circuit_id.clone(),
+            public_inputs,
+            proof_bytes,
+            nullifier,
+            revealed_attributes,
+            None,
+            metadata,
+        );
     assert!(proof_id.is_ok());
     let proof_id = proof_id.unwrap();
 
@@ -644,16 +647,15 @@ fn test_verifiable_presentation_lifecycle() {
     assert!(is_valid.unwrap());
 
     // Get holder's presentations
-    let holder_presentations = PresentationManager::get_holder_presentations(env.clone(), holder.clone());
+    let holder_presentations =
+        PresentationManager::get_holder_presentations(env.clone(), holder.clone());
     assert_eq!(holder_presentations.len(), 1);
 
     // Expire the presentation
-    assert!(PresentationManager::expire_presentation(
-        env.clone(),
-        holder.clone(),
-        pres_id.clone(),
-    )
-    .is_ok());
+    assert!(
+        PresentationManager::expire_presentation(env.clone(), holder.clone(), pres_id.clone(),)
+            .is_ok()
+    );
 
     // Verify after expiration
     let is_valid_after = PresentationManager::verify_presentation(env.clone(), pres_id.clone());
@@ -680,9 +682,13 @@ fn test_verifiable_presentation_lifecycle() {
     let sd_pres_id = sd_pres_id.unwrap();
 
     // Get selective disclosures
-    let disclosures_retrieved = PresentationManager::get_selective_disclosures(env.clone(), sd_pres_id.clone());
+    let disclosures_retrieved =
+        PresentationManager::get_selective_disclosures(env.clone(), sd_pres_id.clone());
     assert_eq!(disclosures_retrieved.len(), 1);
-    assert_eq!(disclosures_retrieved.get(0).unwrap().credential_id, cred1_id);
+    assert_eq!(
+        disclosures_retrieved.get(0).unwrap().credential_id,
+        cred1_id
+    );
 
     // Verify selective disclosure presentation
     let sd_valid = PresentationManager::verify_presentation(env.clone(), sd_pres_id.clone());
@@ -772,7 +778,10 @@ fn test_presentation_request_response_protocol() {
         pres_id.clone(),
     );
     assert!(dup_fulfill.is_err());
-    assert_eq!(dup_fulfill.unwrap_err(), PresentationError::RequestAlreadyFulfilled);
+    assert_eq!(
+        dup_fulfill.unwrap_err(),
+        PresentationError::RequestAlreadyFulfilled
+    );
 }
 
 #[test]
@@ -795,7 +804,10 @@ fn test_presentation_validation_errors() {
         None,
     );
     assert!(empty_result.is_err());
-    assert_eq!(empty_result.unwrap_err(), PresentationError::InvalidCredential);
+    assert_eq!(
+        empty_result.unwrap_err(),
+        PresentationError::InvalidCredential
+    );
 
     // Get non-existent presentation
     let non_existent_id = Bytes::from_slice(&env, b"non-existent-vp");
@@ -815,11 +827,8 @@ fn test_presentation_validation_errors() {
     )
     .unwrap();
 
-    let expire_result = PresentationManager::expire_presentation(
-        env.clone(),
-        other.clone(),
-        pres_id.clone(),
-    );
+    let expire_result =
+        PresentationManager::expire_presentation(env.clone(), other.clone(), pres_id.clone());
     assert!(expire_result.is_err());
     assert_eq!(expire_result.unwrap_err(), PresentationError::Unauthorized);
 

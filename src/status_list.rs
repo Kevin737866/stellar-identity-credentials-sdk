@@ -167,9 +167,7 @@ impl BitstringStatusList {
             .get(&SlKey::ListIndex)
             .unwrap_or_else(|| Vec::new(&env));
         global.push_back(list_id.clone());
-        env.storage()
-            .persistent()
-            .set(&SlKey::ListIndex, &global);
+        env.storage().persistent().set(&SlKey::ListIndex, &global);
 
         env.events().publish(
             (Symbol::new(&env, "StatusListCreated"),),
@@ -217,9 +215,7 @@ impl BitstringStatusList {
         let byte_idx = index / BITS_PER_WORD;
         let bit_idx = index % BITS_PER_WORD;
 
-        let current_byte: u8 = list_data
-            .get(byte_idx)
-            .unwrap_or(0);
+        let current_byte: u8 = list_data.get(byte_idx).unwrap_or(0);
 
         let was_revoked = (current_byte & (1 << bit_idx)) != 0;
         let new_byte = if revoked {
@@ -257,11 +253,7 @@ impl BitstringStatusList {
 
     /// Return the revocation status (`true` = revoked) for the credential at
     /// `index` in the specified list.
-    pub fn get_status(
-        env: Env,
-        list_id: Bytes,
-        index: u32,
-    ) -> Result<bool, StatusListError> {
+    pub fn get_status(env: Env, list_id: Bytes, index: u32) -> Result<bool, StatusListError> {
         let meta: StatusListMeta = env
             .storage()
             .persistent()
@@ -304,8 +296,8 @@ impl BitstringStatusList {
         for index in indices.iter() {
             // If one query fails, push false and continue — the caller
             // can re-check specific entries individually.
-            let status = Self::get_status(env.clone(), list_id.clone(), index.clone())
-                .unwrap_or(false);
+            let status =
+                Self::get_status(env.clone(), list_id.clone(), index.clone()).unwrap_or(false);
             results.push_back(status);
         }
         Ok(results)
@@ -365,12 +357,12 @@ impl BitstringStatusList {
 
         meta.active = false;
         meta.last_updated = env.ledger().timestamp();
-        env.storage()
-            .persistent()
-            .set(&SlKey::Meta(list_id), &meta);
+        env.storage().persistent().set(&SlKey::Meta(list_id), &meta);
 
-        env.events()
-            .publish((Symbol::new(&env, "StatusListDeactivated"),), (list_id, admin));
+        env.events().publish(
+            (Symbol::new(&env, "StatusListDeactivated"),),
+            (list_id, admin),
+        );
 
         Ok(())
     }
@@ -405,13 +397,8 @@ mod tests {
     fn bootstrap(env: &Env) -> (Address, Bytes) {
         let admin = Address::generate(env);
         let list_id = Bytes::from_slice(env, b"test-list-001");
-        BitstringStatusList::create_status_list(
-            env.clone(),
-            admin.clone(),
-            list_id.clone(),
-            1024,
-        )
-        .unwrap();
+        BitstringStatusList::create_status_list(env.clone(), admin.clone(), list_id.clone(), 1024)
+            .unwrap();
         (admin, list_id)
     }
 
@@ -440,19 +427,11 @@ mod tests {
             .unwrap();
 
         assert!(BitstringStatusList::get_status(env.clone(), list_id.clone(), 5).unwrap());
-        let meta =
-            BitstringStatusList::get_metadata(env.clone(), list_id.clone()).unwrap();
+        let meta = BitstringStatusList::get_metadata(env.clone(), list_id.clone()).unwrap();
         assert_eq!(meta.revoked_count, 1);
 
         // Un-revoke
-        BitstringStatusList::set_status(
-            env.clone(),
-            admin,
-            list_id.clone(),
-            5,
-            false,
-        )
-        .unwrap();
+        BitstringStatusList::set_status(env.clone(), admin, list_id.clone(), 5, false).unwrap();
         assert!(!BitstringStatusList::get_status(env.clone(), list_id.clone(), 5).unwrap());
     }
 
@@ -462,13 +441,8 @@ mod tests {
         let (admin, list_id) = bootstrap(&env);
 
         // size is 1024, index 1024 is out of bounds
-        let result = BitstringStatusList::set_status(
-            env.clone(),
-            admin,
-            list_id.clone(),
-            1024,
-            true,
-        );
+        let result =
+            BitstringStatusList::set_status(env.clone(), admin, list_id.clone(), 1024, true);
         assert_eq!(result.unwrap_err(), StatusListError::IndexOutOfBounds);
 
         let result = BitstringStatusList::get_status(env.clone(), list_id, 1024);
@@ -505,12 +479,7 @@ mod tests {
     fn duplicate_list_rejected() {
         let env = setup_env();
         let (admin, list_id) = bootstrap(&env);
-        let result = BitstringStatusList::create_status_list(
-            env.clone(),
-            admin,
-            list_id,
-            512,
-        );
+        let result = BitstringStatusList::create_status_list(env.clone(), admin, list_id, 512);
         assert_eq!(result.unwrap_err(), StatusListError::AlreadyExists);
     }
 
@@ -520,13 +489,7 @@ mod tests {
         let (_, list_id) = bootstrap(&env);
         let intruder = Address::generate(&env);
 
-        let result = BitstringStatusList::set_status(
-            env.clone(),
-            intruder,
-            list_id,
-            0,
-            true,
-        );
+        let result = BitstringStatusList::set_status(env.clone(), intruder, list_id, 0, true);
         assert_eq!(result.unwrap_err(), StatusListError::Unauthorized);
     }
 
@@ -535,20 +498,10 @@ mod tests {
         let env = setup_env();
         let (admin, list_id) = bootstrap(&env);
 
-        BitstringStatusList::deactivate_status_list(
-            env.clone(),
-            admin.clone(),
-            list_id.clone(),
-        )
-        .unwrap();
+        BitstringStatusList::deactivate_status_list(env.clone(), admin.clone(), list_id.clone())
+            .unwrap();
 
-        let result = BitstringStatusList::set_status(
-            env.clone(),
-            admin,
-            list_id.clone(),
-            0,
-            true,
-        );
+        let result = BitstringStatusList::set_status(env.clone(), admin, list_id.clone(), 0, true);
         assert_eq!(result.unwrap_err(), StatusListError::ListDeactivated);
     }
 
@@ -559,14 +512,8 @@ mod tests {
 
         // Set some indices as revoked
         for i in [3u32, 7, 15, 99] {
-            BitstringStatusList::set_status(
-                env.clone(),
-                admin.clone(),
-                list_id.clone(),
-                i,
-                true,
-            )
-            .unwrap();
+            BitstringStatusList::set_status(env.clone(), admin.clone(), list_id.clone(), i, true)
+                .unwrap();
         }
 
         let mut indices = Vec::new(&env);
@@ -574,8 +521,7 @@ mod tests {
             indices.push_back(i);
         }
 
-        let results =
-            BitstringStatusList::batch_get_status(env.clone(), list_id, indices).unwrap();
+        let results = BitstringStatusList::batch_get_status(env.clone(), list_id, indices).unwrap();
 
         assert!(!results.get(0).unwrap());
         assert!(results.get(3).unwrap());
@@ -611,14 +557,7 @@ mod tests {
 
         // Set some bits
         for i in [10u32, 20, 30] {
-            BitstringStatusList::set_status(
-                env.clone(),
-                admin,
-                list_id.clone(),
-                i,
-                true,
-            )
-            .unwrap();
+            BitstringStatusList::set_status(env.clone(), admin, list_id.clone(), i, true).unwrap();
         }
 
         let encoded = BitstringStatusList::get_encoded_list(env.clone(), list_id).unwrap();

@@ -2,8 +2,8 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
-use crate::{DIDDocument, Service, VerificationMethod};
 use crate::rate_limiter::{check_rate_limit, defaults};
+use crate::{DIDDocument, Service, VerificationMethod};
 
 // ---------------------------------------------------------------------------
 // Multi-Signature Types (#93)
@@ -916,7 +916,10 @@ mod tests {
                 Vec::new(&env),
             )
         });
-        assert!(result.is_err(), "Expected auth panic when controller auth not provided");
+        assert!(
+            result.is_err(),
+            "Expected auth panic when controller auth not provided"
+        );
     }
 
     // ── Issue #12: resolve_did tests ──
@@ -1119,10 +1122,7 @@ mod tests {
         let events = env.events().all();
         assert!(events.iter().any(|e| {
             let topics = e.0.clone();
-            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
-                &env,
-                "DIDCreated",
-            )))
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(&env, "DIDCreated")))
         }));
     }
 
@@ -1174,7 +1174,8 @@ mod tests {
         )
         .unwrap();
 
-        DIDRegistry::add_authentication(env.clone(), controller.clone(), auth_method.clone()).unwrap();
+        DIDRegistry::add_authentication(env.clone(), controller.clone(), auth_method.clone())
+            .unwrap();
         DIDRegistry::remove_authentication(env.clone(), controller, auth_method).unwrap();
 
         let events = env.events().all();
@@ -1209,10 +1210,7 @@ mod tests {
         let events = env.events().all();
         assert!(events.iter().any(|e| {
             let topics = e.0.clone();
-            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
-                &env,
-                "DIDUpdated",
-            )))
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(&env, "DIDUpdated")))
         }));
     }
 
