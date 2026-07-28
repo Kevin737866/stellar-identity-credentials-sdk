@@ -114,6 +114,51 @@ export interface TrustEdge {
   timestamp: number;
 }
 
+/**
+ * A single trust attestation event as recorded by the on-chain contract.
+ * Structurally identical to {@link TrustEdge} but represents the point-in-time
+ * emission rather than the current aggregate state. Kept distinct so callers
+ * that iterate over an attestation history do not silently consume the
+ * flattened graph view.
+ */
+export interface TrustAttestation {
+  truster: string;
+  subject: string;
+  weight: number;
+  reason: string;
+  timestamp: number;
+  /** Optional human-readable note attached at emit time. */
+  note?: string;
+}
+
+/**
+ * A trust-graph snapshot rooted at a subject, bounded by a hop count. Mirrors
+ * the return value of reputation.getTrustGraph(subject, depth).
+ */
+export interface TrustGraph {
+  subject: string;
+  depth: number;
+  edges: TrustEdge[];
+  /** Convenience: distinct truster addresses reached within `depth` hops. */
+  nodes: string[];
+}
+
+/**
+ * One trust path between two DIDs. Multiple paths can be returned for a
+ * single (from, to) pair; each carries its own cumulative trust weight so
+ * callers can pick the strongest one without re-reading the graph.
+ */
+export interface TrustPath {
+  from: string;
+  to: string;
+  /** Ordered list of addresses along the path, including both endpoints. */
+  path: string[];
+  /** Sum of edge weights along the path. */
+  cumulativeWeight: number;
+  /** Number of edges in `path` (always path.length - 1). */
+  hops: number;
+}
+
 export interface ReputationBreakdown {
   did: string;
   score: number;
@@ -233,10 +278,32 @@ export interface StellarIdentityConfig {
     reputationScore: string;
     zkAttestation: string;
     complianceFilter: string;
+    schemaRegistry: string;
   };
   rpcUrl?: string;
   horizonUrl?: string;
   keypair?: Keypair;
+}
+
+export interface CredentialSchema {
+  id: string;
+  issuer: string;
+  version: number;
+  definition: string;
+  created: number;
+  updated: number;
+}
+
+export interface SchemaValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+export interface SchemaVersion {
+  version: number;
+  schemaId: string;
+  definition: string;
+  updated: number;
 }
 
 export interface CreateDIDOptions {
@@ -448,4 +515,40 @@ export interface ComplianceResult {
   sanctionsLists: string[];
   lastChecked: number;
   recommendations: string[];
+}
+
+/**
+ * On-chain compliance rule for a jurisdiction.
+ *
+ * Rules form a hierarchy addressed by dotted paths, e.g.
+ *   "GLOBAL", "US", "US-CA", "US-CA-SF"
+ * A child jurisdiction inherits from its nearest defined ancestor unless it
+ * overrides a field of the parent rule.
+ */
+export interface ComplianceRule {
+  /** Hierarchical jurisdiction path, segments separated by '-'. */
+  jurisdiction: string;
+  /** Free-form requirement key (e.g. "KYC_REQUIRED", "HIGH_RISK_THRESHOLD:70"). */
+  requirement: string;
+  enforcement: ComplianceRuleEnforcement;
+  /** Whether the rule is currently enforced on-chain. */
+  active: boolean;
+  /** Ledger timestamp (unix seconds) when the rule was last updated. */
+  updatedAt?: number;
+}
+
+export type ComplianceRuleEnforcement = 'mandatory' | 'advisory';
+
+/** Outcome of running compliance rule evaluation against an address. */
+export interface RuleEvaluationResult {
+  /** The jurisdiction that was evaluated (defaults to "GLOBAL" when none given). */
+  jurisdiction: string;
+  /** Address whose compliance was evaluated. */
+  address: string;
+  /** True when none of the active mandatory rules are violated. */
+  compliant: boolean;
+  /** Active mandatory rules that the address does not currently satisfy. */
+  violations: ComplianceRule[];
+  /** Optional screening result used as the source of truth. */
+  screening?: ComplianceResult;
 }
