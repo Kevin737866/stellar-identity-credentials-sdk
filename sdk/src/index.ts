@@ -5,8 +5,20 @@ declare var require: (id: string) => any;
 
 import { Keypair } from 'stellar-sdk';
 
-// Re-export full network-aware configs from the config module
-export { DEFAULT_CONFIGS } from './config';
+export const DEFAULT_CONFIGS = {
+  testnet: {
+    network: 'testnet' as const,
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    contracts: {
+      didRegistry: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822a',
+      credentialIssuer: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822b',
+      reputationScore: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822c',
+      zkAttestation: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822d',
+      complianceFilter: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822e',
+      schemaRegistry: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822f',
+    },
+  },
+};
 
 export const UTILS = {
   generateKeypair: () => Keypair.random(),
@@ -16,6 +28,7 @@ export { DIDClient } from './didClient';
 export { CredentialClient } from './credentialClient';
 export { ReputationClient } from './reputation';
 export { ZKProofsClient } from './zkProofs';
+export { SchemaRegistryClient } from './schemaClient';
 export { CacheManager, DataType } from './cacheManager';
 export { compressPayload, decompressPayload, compressionRatio } from './compression';
 export { EventSubscriber } from './eventSubscriber';
@@ -205,15 +218,16 @@ export type {
   ReputationScoreResult,
   ZKVerificationResult,
   ComplianceResult,
-  ExpirationEvent,
-  ExpirationHandler,
-  EventListener,
+  CredentialSchema,
+  SchemaValidationResult,
+  SchemaVersion,
 } from './types';
 
 import { DIDClient } from './didClient';
 import { CredentialClient } from './credentialClient';
 import { ReputationClient } from './reputation';
 import { ZKProofsClient } from './zkProofs';
+import { SchemaRegistryClient } from './schemaClient';
 import { CacheManager } from './cacheManager';
 import { EventSubscriber } from './eventSubscriber';
 import { RegulatoryReportingClient } from './regulatoryReporting';
@@ -248,7 +262,7 @@ export class StellarIdentitySDK {
   public credentials: CredentialClient;
   public reputation: ReputationClient;
   public zkProofs: ZKProofsClient;
-  public expirationManager: ExpirationManager;
+  public schemaRegistry: SchemaRegistryClient;
   public cache: CacheManager;
   public events: EventSubscriber;
   private config: StellarIdentityConfig;
@@ -262,7 +276,7 @@ export class StellarIdentitySDK {
     this.credentials = new CredentialClient(config);
     this.reputation = new ReputationClient(config);
     this.zkProofs = new ZKProofsClient(config);
-    this.expirationManager = new ExpirationManager(this.credentials);
+    this.schemaRegistry = new SchemaRegistryClient(config);
     this.cache = new CacheManager();
     this.events = new EventSubscriber(config);
     this.gdpr = new GDPREngine(this.did, this.credentials);
