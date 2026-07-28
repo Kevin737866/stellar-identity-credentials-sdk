@@ -33,6 +33,8 @@ export { CacheManager, DataType } from './cacheManager';
 export { compressPayload, decompressPayload, compressionRatio } from './compression';
 export { EventSubscriber } from './eventSubscriber';
 export { Logger, LogLevel } from './logger';
+export { GDPREngine } from './gdpr';
+export type { ConsentRecord, ProcessingRecord, GDPRComplianceOptions } from './gdpr';
 export { DataMinimizationEngine } from './dataMinimization';
 export type { 
   MinimalDisclosurePolicy, 
@@ -42,6 +44,21 @@ export type {
 } from './dataMinimization';
 
 export { ComplianceClient } from './compliance';
+
+export {
+  validateContractAddress,
+  validateConfig,
+  isConfigValid,
+  mergeConfig,
+  getRpcUrl,
+  getHorizonUrl,
+  getNetworkPassphrase as resolveNetworkPassphrase,
+  createCustomConfig,
+  healthCheck,
+  comprehensiveHealthCheck,
+  ConfigBuilder,
+} from './config';
+export type { HealthCheckResult } from './config';
 export type {
   ScreeningStatus,
   ScreeningResult,
@@ -88,7 +105,9 @@ export type {
 } from './networkMonitor';
 
 export {
+  // Error codes
   ErrorCode,
+  // Error classes
   StellarIdentityError,
   DIDError,
   CredentialError,
@@ -97,8 +116,12 @@ export {
   ComplianceError,
   ConfigurationError,
   NetworkError,
+  ValidationError,
+  RateLimitError,
+  // Mapping utilities
   mapContractError,
   mapErrorCode,
+  // Type guards
   isDIDError,
   isCredentialError,
   isReputationError,
@@ -106,7 +129,45 @@ export {
   isComplianceError,
   isConfigurationError,
   isNetworkError,
+  isValidationError,
+  isRateLimitError,
+  isRetryableError,
+  // Convenience builders
+  missingField,
+  fieldTooLong,
+  invalidAddress,
+  invalidDID,
+  // Recovery hints map
+  RECOVERY_HINTS,
 } from './errors';
+export type { ErrorClass } from './errors';
+
+export {
+  withRetry,
+  calculateDelay,
+  CircuitBreaker,
+  withRetryAndCircuitBreaker,
+} from './retry';
+export type {
+  RetryOptions,
+  RetryContext,
+  OnRetryCallback,
+  CircuitState,
+  CircuitBreakerOptions,
+} from './retry';
+
+export {
+  ErrorMonitor,
+  ConsoleErrorReporter,
+  NoOpErrorReporter,
+} from './errorMonitor';
+export type {
+  ErrorEvent,
+  ErrorStats,
+  ErrorHook,
+  ErrorReporter,
+  ErrorMonitorOptions,
+} from './errorMonitor';
 
 export {
   WalletConnector,
@@ -119,6 +180,7 @@ export {
 export type { WalletType, WalletInfo } from './walletConnector';
 
 export { DIDResolver } from './didResolver';
+export { ExpirationManager } from './expirationManager';
 export type {
   W3CResolutionResult,
   DIDResolutionMetadata,
@@ -145,6 +207,7 @@ export type {
   SanctionsList,
   StellarIdentityConfig,
   CreateDIDOptions,
+  UpdateDIDOptions,
   IssueCredentialOptions,
   ZKProofOptions,
   ComplianceCheckOptions,
@@ -168,7 +231,16 @@ import { SchemaRegistryClient } from './schemaClient';
 import { CacheManager } from './cacheManager';
 import { EventSubscriber } from './eventSubscriber';
 import { RegulatoryReportingClient } from './regulatoryReporting';
+import { ExpirationManager } from './expirationManager';
 import { StellarIdentityConfig } from './types';
+import {
+  validateConfig,
+  mergeConfig,
+  healthCheck,
+  comprehensiveHealthCheck,
+  DEFAULT_CONFIGS,
+} from './config';
+import type { HealthCheckResult } from './config';
 
 /**
  * Stellar Identity SDK - Main entry point.
@@ -193,8 +265,13 @@ export class StellarIdentitySDK {
   public schemaRegistry: SchemaRegistryClient;
   public cache: CacheManager;
   public events: EventSubscriber;
+  private config: StellarIdentityConfig;
 
-  constructor(config: StellarIdentityConfig) {
+  constructor(config: StellarIdentityConfig, options?: { validate?: boolean }) {
+    this.config = config;
+    if (options?.validate !== false) {
+      validateConfig(config);
+    }
     this.did = new DIDClient(config);
     this.credentials = new CredentialClient(config);
     this.reputation = new ReputationClient(config);
@@ -202,6 +279,56 @@ export class StellarIdentitySDK {
     this.schemaRegistry = new SchemaRegistryClient(config);
     this.cache = new CacheManager();
     this.events = new EventSubscriber(config);
+    this.gdpr = new GDPREngine(this.did, this.credentials);
+  }
+
+  /**
+   * Get the current SDK configuration.
+   */
+  getConfig(): StellarIdentityConfig {
+    return { ...this.config };
+  }
+
+  /**
+   * Switch to a different network at runtime.
+   * Re-initializes all client modules with the new network configuration.
+   * @param network - The target network (mainnet, testnet, futurenet)
+   * @param overrides - Optional configuration overrides
+   */
+  switchNetwork(
+    network: 'mainnet' | 'testnet' | 'futurenet',
+    overrides?: Partial<StellarIdentityConfig>,
+  ): void {
+    const base = DEFAULT_CONFIGS[network];
+    if (!base) {
+      throw new Error(`Unknown network: ${network}`);
+    }
+
+    this.config = mergeConfig(base, overrides || {});
+    validateConfig(this.config);
+
+    // Re-initialize all clients with new config
+    this.did = new DIDClient(this.config);
+    this.credentials = new CredentialClient(this.config);
+    this.reputation = new ReputationClient(this.config);
+    this.zkProofs = new ZKProofsClient(this.config);
+    this.events = new EventSubscriber(this.config);
+  }
+
+  /**
+   * Perform a health check against the configured RPC endpoint.
+   * @returns Health check result
+   */
+  async checkHealth(): Promise<HealthCheckResult> {
+    return healthCheck(this.config);
+  }
+
+  /**
+   * Perform a comprehensive health check including config validation.
+   * @returns Health check result with config validation status
+   */
+  async checkHealthComprehensive(): Promise<HealthCheckResult & { configValid: boolean }> {
+    return comprehensiveHealthCheck(this.config);
   }
 
   /**

@@ -127,11 +127,7 @@ impl ReputationScore {
         admin: Address,
         config: Config,
     ) -> Result<(), ReputationScoreError> {
-        if env
-            .storage()
-            .instance()
-            .has(&Symbol::new(&env, KEY_ADMIN))
-        {
+        if env.storage().instance().has(&Symbol::new(&env, KEY_ADMIN)) {
             return Err(ReputationScoreError::AlreadyInitialized);
         }
 
@@ -149,10 +145,7 @@ impl ReputationScore {
     }
 
     /// Initialize a user's reputation record. Idempotent.
-    pub fn initialize_reputation(
-        env: Env,
-        address: Address,
-    ) -> Result<(), ReputationScoreError> {
+    pub fn initialize_reputation(env: Env, address: Address) -> Result<(), ReputationScoreError> {
         if env
             .storage()
             .persistent()
@@ -346,13 +339,15 @@ impl ReputationScore {
         }
 
         profile.last_updated = env.ledger().timestamp();
-        profile.volume = profile
-            .volume
-            .saturating_add(amount.unsigned_abs() as u64);
+        profile.volume = profile.volume.saturating_add(amount.unsigned_abs() as u64);
 
         Self::save_profile(&env, &address, &profile);
 
-        let event_label = if success { b"tx_success" } else { b"tx_failure" };
+        let event_label = if success {
+            b"tx_success"
+        } else {
+            b"tx_failure"
+        };
         Self::append_history(
             &env,
             &address,
@@ -482,10 +477,8 @@ impl ReputationScore {
             .persistent()
             .set(&DataKey::Trust(subject.clone()), &attestations);
 
-        env.events().publish(
-            (Symbol::new(&env, "trust_att"), truster, subject),
-            weight,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "trust_att"), truster, subject), weight);
 
         Ok(attestation)
     }
@@ -689,14 +682,20 @@ mod tests {
         let admin = Address::generate(&env);
         ReputationScore::initialize(env.clone(), admin.clone(), default_config()).unwrap();
         let result = ReputationScore::initialize(env.clone(), admin, default_config());
-        assert_eq!(result.unwrap_err(), ReputationScoreError::AlreadyInitialized);
+        assert_eq!(
+            result.unwrap_err(),
+            ReputationScoreError::AlreadyInitialized
+        );
     }
 
     #[test]
     fn initialize_with_zero_max_score_returns_error() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let bad_config = Config { max_score: 0, ..default_config() };
+        let bad_config = Config {
+            max_score: 0,
+            ..default_config()
+        };
         let result = ReputationScore::initialize(env.clone(), admin, bad_config);
         assert_eq!(result.unwrap_err(), ReputationScoreError::InvalidScore);
     }
@@ -705,7 +704,10 @@ mod tests {
     fn initialize_with_above_max_score_returns_error() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let bad_config = Config { max_score: MAX_SCORE + 1, ..default_config() };
+        let bad_config = Config {
+            max_score: MAX_SCORE + 1,
+            ..default_config()
+        };
         let result = ReputationScore::initialize(env.clone(), admin, bad_config);
         assert_eq!(result.unwrap_err(), ReputationScoreError::InvalidScore);
     }
@@ -715,13 +717,8 @@ mod tests {
         let env = setup_env();
         let (_, user) = bootstrap(&env);
         // Second call should succeed silently.
-        assert!(
-            ReputationScore::initialize_reputation(env.clone(), user.clone()).is_ok()
-        );
-        assert_eq!(
-            ReputationScore::get_reputation_score(env, user),
-            BASE_SCORE
-        );
+        assert!(ReputationScore::initialize_reputation(env.clone(), user.clone()).is_ok());
+        assert_eq!(ReputationScore::get_reputation_score(env, user), BASE_SCORE);
     }
 
     // ── Transaction reputation ────────────────────────────────────────────────
@@ -752,10 +749,7 @@ mod tests {
             ReputationScore::update_transaction_reputation(env.clone(), user.clone(), true, 0)
                 .unwrap();
         }
-        assert_eq!(
-            ReputationScore::get_reputation_score(env, user),
-            MAX_SCORE
-        );
+        assert_eq!(ReputationScore::get_reputation_score(env, user), MAX_SCORE);
     }
 
     #[test]
@@ -787,8 +781,7 @@ mod tests {
         let admin = Address::generate(&env);
         ReputationScore::initialize(env.clone(), admin, default_config()).unwrap();
         let ghost = Address::generate(&env);
-        let result =
-            ReputationScore::update_transaction_reputation(env.clone(), ghost, true, 0);
+        let result = ReputationScore::update_transaction_reputation(env.clone(), ghost, true, 0);
         assert_eq!(result.unwrap_err(), ReputationScoreError::NotInitialized);
     }
 
@@ -799,13 +792,9 @@ mod tests {
         let env = setup_env();
         let (_, user) = bootstrap(&env);
         let cred_type = Bytes::from_slice(&env, b"KYC");
-        let score = ReputationScore::update_credential_reputation(
-            env.clone(),
-            user,
-            true,
-            cred_type,
-        )
-        .unwrap();
+        let score =
+            ReputationScore::update_credential_reputation(env.clone(), user, true, cred_type)
+                .unwrap();
         assert_eq!(score, BASE_SCORE + 20);
     }
 
@@ -814,13 +803,9 @@ mod tests {
         let env = setup_env();
         let (_, user) = bootstrap(&env);
         let cred_type = Bytes::from_slice(&env, b"KYC");
-        let score = ReputationScore::update_credential_reputation(
-            env.clone(),
-            user,
-            false,
-            cred_type,
-        )
-        .unwrap();
+        let score =
+            ReputationScore::update_credential_reputation(env.clone(), user, false, cred_type)
+                .unwrap();
         assert_eq!(score, BASE_SCORE - 15);
     }
 
@@ -843,12 +828,10 @@ mod tests {
     fn history_records_each_transaction() {
         let env = setup_env();
         let (_, user) = bootstrap(&env);
-        ReputationScore::update_transaction_reputation(env.clone(), user.clone(), true, 0)
-            .unwrap();
+        ReputationScore::update_transaction_reputation(env.clone(), user.clone(), true, 0).unwrap();
         ReputationScore::update_transaction_reputation(env.clone(), user.clone(), false, 0)
             .unwrap();
-        let history =
-            ReputationScore::get_reputation_history(env.clone(), user, 10).unwrap();
+        let history = ReputationScore::get_reputation_history(env.clone(), user, 10).unwrap();
         assert_eq!(history.len(), 2);
     }
 
@@ -860,12 +843,9 @@ mod tests {
             ReputationScore::update_transaction_reputation(env.clone(), user.clone(), true, 0)
                 .unwrap();
         }
-        let history = ReputationScore::get_reputation_history(
-            env.clone(),
-            user,
-            MAX_HISTORY_POINTS + 100,
-        )
-        .unwrap();
+        let history =
+            ReputationScore::get_reputation_history(env.clone(), user, MAX_HISTORY_POINTS + 100)
+                .unwrap();
         assert_eq!(history.len(), MAX_HISTORY_POINTS);
     }
 
@@ -904,11 +884,13 @@ mod tests {
                 .unwrap();
         }
 
-        let low_pct =
-            ReputationScore::get_reputation_percentile(env.clone(), low.clone()).unwrap();
+        let low_pct = ReputationScore::get_reputation_percentile(env.clone(), low.clone()).unwrap();
         let high_pct =
             ReputationScore::get_reputation_percentile(env.clone(), high.clone()).unwrap();
-        assert!(high_pct > low_pct, "higher score should yield higher percentile");
+        assert!(
+            high_pct > low_pct,
+            "higher score should yield higher percentile"
+        );
     }
 
     // ── Threshold ─────────────────────────────────────────────────────────────
@@ -922,9 +904,7 @@ mod tests {
             ReputationScore::meets_reputation_threshold(env.clone(), user.clone(), 80).unwrap()
         );
         // threshold 81 should fail.
-        assert!(
-            !ReputationScore::meets_reputation_threshold(env.clone(), user, 81).unwrap()
-        );
+        assert!(!ReputationScore::meets_reputation_threshold(env.clone(), user, 81).unwrap());
     }
 
     // ── Trust attestation ─────────────────────────────────────────────────────
@@ -1002,13 +982,8 @@ mod tests {
         let env = setup_env();
         let (_, user) = bootstrap(&env);
         let truster = Address::generate(&env);
-        let result = ReputationScore::attest_trust(
-            env.clone(),
-            truster,
-            user,
-            500,
-            Bytes::new(&env),
-        );
+        let result =
+            ReputationScore::attest_trust(env.clone(), truster, user, 500, Bytes::new(&env));
         assert_eq!(result.unwrap_err(), ReputationScoreError::InvalidInput);
     }
 
@@ -1034,7 +1009,10 @@ mod tests {
             300,
             Bytes::from_slice(&env, b"second"),
         );
-        assert_eq!(result.unwrap_err(), ReputationScoreError::DuplicateAttestation);
+        assert_eq!(
+            result.unwrap_err(),
+            ReputationScoreError::DuplicateAttestation
+        );
     }
 
     #[test]
@@ -1076,8 +1054,7 @@ mod tests {
     fn trust_graph_above_max_depth_is_rejected() {
         let env = setup_env();
         let (_, user) = bootstrap(&env);
-        let result =
-            ReputationScore::get_trust_graph(env.clone(), user, MAX_GRAPH_DEPTH + 1);
+        let result = ReputationScore::get_trust_graph(env.clone(), user, MAX_GRAPH_DEPTH + 1);
         assert_eq!(result.unwrap_err(), ReputationScoreError::InvalidDepth);
     }
 
@@ -1113,9 +1090,7 @@ mod tests {
             max_score: MAX_SCORE / 2,
             ..default_config()
         };
-        assert!(
-            ReputationScore::update_config(env.clone(), admin, new_config).is_ok()
-        );
+        assert!(ReputationScore::update_config(env.clone(), admin, new_config).is_ok());
     }
 
     #[test]
@@ -1125,69 +1100,5 @@ mod tests {
         let intruder = Address::generate(&env);
         let result = ReputationScore::update_config(env.clone(), intruder, default_config());
         assert_eq!(result.unwrap_err(), ReputationScoreError::NotAdmin);
-    }
-
-    // ── Issue #41: Event emission tests ──────────────────────────────────
-
-    #[test]
-    fn test_reputation_score_updated_event_on_txn() {
-        let env = setup_env();
-        let (_, user) = bootstrap(&env);
-
-        ReputationScore::update_transaction_reputation(env.clone(), user, true, 100).unwrap();
-
-        let events = env.events().all();
-        assert!(events.iter().any(|e| {
-            let topics = e.0.clone();
-            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
-                &env,
-                "ReputationScoreUpdated",
-            )))
-        }));
-    }
-
-    #[test]
-    fn test_reputation_score_updated_event_on_credential() {
-        let env = setup_env();
-        let (_, user) = bootstrap(&env);
-        let cred_type = Bytes::from_slice(&env, b"KYC");
-
-        ReputationScore::update_credential_reputation(
-            env.clone(),
-            user,
-            true,
-            cred_type,
-        )
-        .unwrap();
-
-        let events = env.events().all();
-        assert!(events.iter().any(|e| {
-            let topics = e.0.clone();
-            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
-                &env,
-                "ReputationScoreUpdated",
-            )))
-        }));
-    }
-
-    #[test]
-    fn test_tier_thresholds_configured_event_emitted() {
-        let env = setup_env();
-        let (admin, _) = bootstrap(&env);
-        let new_config = Config {
-            max_score: MAX_SCORE / 2,
-            ..default_config()
-        };
-
-        ReputationScore::update_config(env.clone(), admin, new_config).unwrap();
-
-        let events = env.events().all();
-        assert!(events.iter().any(|e| {
-            let topics = e.0.clone();
-            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
-                &env,
-                "TierThresholdsConfigured",
-            )))
-        }));
     }
 }

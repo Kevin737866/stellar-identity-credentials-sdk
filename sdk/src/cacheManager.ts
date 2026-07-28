@@ -166,4 +166,5 @@ export class CacheManager {
   }
 }
 
-export { DataType, CacheEntry, CacheStats, DEFAULT_TTL_MS };
+export { DataType, DEFAULT_TTL_MS };
+export type { CacheEntry, CacheStats };

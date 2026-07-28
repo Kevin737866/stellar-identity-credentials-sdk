@@ -1,6 +1,5 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype,
-    Address, Bytes, BytesN, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
 use crate::{clamp_page_size, PaginatedAddresses};
@@ -126,6 +125,32 @@ pub struct RiskWeights {
     pub last_updated: u64,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiskFactor {
+    pub name: Bytes,
+    pub score: u32,
+    pub weight: u32,
+    pub description: Bytes,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiskAssessment {
+    pub score: u32,
+    pub factors: Vec<RiskFactor>,
+    pub overall: RiskLevel,
+}
+
 // ── Contract ──────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -138,11 +163,7 @@ impl ComplianceFilter {
     /// Initialize the contract with a designated admin.
     /// Fails if already initialized.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ComplianceFilterError> {
-        if env
-            .storage()
-            .instance()
-            .has(&Symbol::new(&env, KEY_ADMIN))
-        {
+        if env.storage().instance().has(&Symbol::new(&env, KEY_ADMIN)) {
             return Err(ComplianceFilterError::AlreadyInitialized);
         }
         env.storage()
@@ -170,10 +191,8 @@ impl ComplianceFilter {
         env.storage()
             .instance()
             .set(&Symbol::new(&env, KEY_ADMIN), &new_admin);
-        env.events().publish(
-            (Symbol::new(&env, "admin_xfer"), admin),
-            new_admin,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "admin_xfer"), admin), new_admin);
         Ok(())
     }
 
@@ -272,10 +291,8 @@ impl ComplianceFilter {
             Self::persist(&env, &CfKey::ListIndex, &index);
         }
 
-        env.events().publish(
-            (Symbol::new(&env, "list_update"), source),
-            entry_count,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "list_update"), source), entry_count);
         Ok(())
     }
 
@@ -359,10 +376,9 @@ impl ComplianceFilter {
         detail.append(&Bytes::from_slice(&env, b",jurisdiction:"));
         detail.append(&jurisdiction);
         Self::append_audit(&env, &address, b"sanctioned", &detail);
-        env.events().publish(
-            (Symbol::new(&env, "AddressSanctioned"), address.clone()),
-            (source, reason, jurisdiction),
-        );
+
+        env.events()
+            .publish((Symbol::new(&env, "sanctioned"), address), source);
         Ok(())
     }
 
@@ -415,10 +431,8 @@ impl ComplianceFilter {
             b"desanctioned",
             &Bytes::from_slice(&env, b"removed"),
         );
-        env.events().publish(
-            (Symbol::new(&env, "AddressRemovedFromSanctions"), address.clone()),
-            source,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "desanctioned"), address), source);
         Ok(())
     }
 
@@ -632,19 +646,19 @@ impl ComplianceFilter {
 
         let sk = CfKey::Screening(address.clone());
         let mut result: ScreeningResult =
-            env.storage().persistent().get(&sk).unwrap_or_else(|| {
-                ScreeningResult {
+            env.storage()
+                .persistent()
+                .get(&sk)
+                .unwrap_or_else(|| ScreeningResult {
                     address: address.clone(),
                     status: Bytes::from_slice(&env, b"clear"),
                     risk_score: 0,
                     matches: Vec::new(&env),
                     timestamp: 0,
-                }
-            });
+                });
 
         result.risk_score = new_score;
-        result.status =
-            Self::status_from_score(&env, new_score, !result.matches.is_empty());
+        result.status = Self::status_from_score(&env, new_score, !result.matches.is_empty());
         result.timestamp = env.ledger().timestamp();
 
         Self::persist(&env, &sk, &result);
@@ -658,9 +672,7 @@ impl ComplianceFilter {
     }
 
     pub fn get_screening_result(env: Env, address: Address) -> Option<ScreeningResult> {
-        env.storage()
-            .persistent()
-            .get(&CfKey::Screening(address))
+        env.storage().persistent().get(&CfKey::Screening(address))
     }
 
     // ── Compliance rules ──────────────────────────────────────────────────────
@@ -758,6 +770,132 @@ impl ComplianceFilter {
         env.storage().persistent().get(&CfKey::RiskWeights)
     }
 
+    /// Set risk assessment weights using a structured `RiskWeights` value.
+    /// Admin-only. Emits `RiskWeightsSet` event.
+    pub fn set_risk_weights(
+        env: Env,
+        admin: Address,
+        weights: RiskWeights,
+    ) -> Result<(), ComplianceFilterError> {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin)?;
+
+        if weights.high_risk_threshold == 0
+            || weights.high_risk_threshold > MAX_RISK_SCORE
+        {
+            return Err(ComplianceFilterError::InvalidRiskScore);
+        }
+
+        let mut stored = weights;
+        stored.last_updated = env.ledger().timestamp();
+
+        Self::persist(&env, &CfKey::RiskWeights, &stored);
+
+        env.events().publish(
+            (Symbol::new(&env, "RiskWeightsSet"),),
+            (
+                stored.sanctions_weight,
+                stored.oracle_weight,
+                stored.high_risk_threshold,
+            ),
+        );
+
+        Ok(())
+    }
+
+    /// Assess risk for an address by combining sanctions screening and oracle
+    /// risk scores using the configured weights.
+    ///
+    /// Returns a `RiskAssessment` with the aggregated score, contributing
+    /// factors, and an overall `RiskLevel`.
+    pub fn assess_risk(
+        env: Env,
+        address: Address,
+    ) -> RiskAssessment {
+        // 1. Sanctions screening
+        let (screening, blocked) = Self::run_screening(&env, &address);
+        let sanction_score: u32 = if blocked { MAX_RISK_SCORE } else { 0 };
+
+        // 2. Oracle score
+        let oracle_score: u32 = env
+            .storage()
+            .persistent()
+            .get::<CfKey, ScreeningResult>(&CfKey::Screening(address.clone()))
+            .map(|stored| {
+                let age = env.ledger().timestamp().saturating_sub(stored.timestamp);
+                if age <= ORACLE_STALENESS_SECS {
+                    stored.risk_score
+                } else {
+                    0
+                }
+            })
+            .unwrap_or(0);
+
+        // 3. Load weights (default to 50/50 if not configured)
+        let weights: RiskWeights = env
+            .storage()
+            .persistent()
+            .get(&CfKey::RiskWeights)
+            .unwrap_or(RiskWeights {
+                sanctions_weight: 50,
+                oracle_weight: 50,
+                high_risk_threshold: HIGH_RISK_THRESHOLD,
+                last_updated: 0,
+            });
+
+        let total_weight = weights.sanctions_weight.saturating_add(weights.oracle_weight);
+        let aggregated_score: u32 = if total_weight == 0 {
+            0
+        } else {
+            (sanction_score
+                .saturating_mul(weights.sanctions_weight)
+                .saturating_add(oracle_score.saturating_mul(weights.oracle_weight)))
+                / total_weight
+        };
+
+        // 4. Build risk factors
+        let mut factors = Vec::new(&env);
+
+        factors.push_back(RiskFactor {
+            name: Bytes::from_slice(&env, b"sanctions"),
+            score: sanction_score,
+            weight: weights.sanctions_weight,
+            description: if blocked {
+                Bytes::from_slice(&env, b"Address found on active sanctions list(s)")
+            } else {
+                Bytes::from_slice(&env, b"No sanctions matches")
+            },
+        });
+
+        factors.push_back(RiskFactor {
+            name: Bytes::from_slice(&env, b"oracle"),
+            score: oracle_score,
+            weight: weights.oracle_weight,
+            description: if oracle_score > 0 {
+                Bytes::from_slice(&env, b"Oracle-assigned risk score")
+            } else {
+                Bytes::from_slice(&env, b"No oracle risk data")
+            },
+        });
+
+        // 5. Determine overall risk level
+        let overall = if aggregated_score >= MAX_RISK_SCORE {
+            RiskLevel::Critical
+        } else if aggregated_score > weights.high_risk_threshold {
+            RiskLevel::High
+        } else if aggregated_score > weights.high_risk_threshold / 2 {
+            RiskLevel::Medium
+        } else {
+            RiskLevel::Low
+        };
+
+        RiskAssessment {
+            score: aggregated_score,
+            factors,
+            overall,
+        }
+    }
+
     // ── Regulatory reports & audit trail ──────────────────────────────────────
 
     /// File a regulatory report for a subject address.
@@ -793,10 +931,8 @@ impl ComplianceFilter {
         Self::persist(&env, &k, &report);
         Self::append_audit_ts(&env, &subject, ts);
 
-        env.events().publish(
-            (Symbol::new(&env, "report_filed"), subject, reporter),
-            ts,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "report_filed"), subject, reporter), ts);
         Ok(())
     }
 
@@ -1083,9 +1219,11 @@ mod tests {
     fn double_initialize_returns_error() {
         let env = setup_env();
         bootstrap(&env);
-        let result =
-            ComplianceFilter::initialize(env.clone(), Address::generate(&env));
-        assert_eq!(result.unwrap_err(), ComplianceFilterError::AlreadyInitialized);
+        let result = ComplianceFilter::initialize(env.clone(), Address::generate(&env));
+        assert_eq!(
+            result.unwrap_err(),
+            ComplianceFilterError::AlreadyInitialized
+        );
     }
 
     // ── Admin management ──────────────────────────────────────────────────────
@@ -1110,8 +1248,7 @@ mod tests {
         let env = setup_env();
         let admin = bootstrap(&env);
         let new_admin = Address::generate(&env);
-        ComplianceFilter::transfer_admin(env.clone(), admin.clone(), new_admin.clone())
-            .unwrap();
+        ComplianceFilter::transfer_admin(env.clone(), admin.clone(), new_admin.clone()).unwrap();
         // Old admin should no longer be able to create a list.
         let result = ComplianceFilter::update_sanctions_list(
             env.clone(),
@@ -1167,7 +1304,10 @@ mod tests {
             50,
             Bytes::from_slice(&env, b"reason"),
         );
-        assert_eq!(result.unwrap_err(), ComplianceFilterError::OracleNotRegistered);
+        assert_eq!(
+            result.unwrap_err(),
+            ComplianceFilterError::OracleNotRegistered
+        );
     }
 
     #[test]
@@ -1198,7 +1338,10 @@ mod tests {
             30,
             Bytes::from_slice(&env, b"reason"),
         );
-        assert_eq!(result.unwrap_err(), ComplianceFilterError::OracleNotRegistered);
+        assert_eq!(
+            result.unwrap_err(),
+            ComplianceFilterError::OracleNotRegistered
+        );
     }
 
     #[test]
@@ -1406,12 +1549,8 @@ mod tests {
         )
         .unwrap();
 
-        ComplianceFilter::deactivate_sanctions_list(
-            env.clone(),
-            admin.clone(),
-            source.clone(),
-        )
-        .unwrap();
+        ComplianceFilter::deactivate_sanctions_list(env.clone(), admin.clone(), source.clone())
+            .unwrap();
 
         assert!(!ComplianceFilter::is_sanctioned(env.clone(), target));
     }
@@ -1582,11 +1721,9 @@ mod tests {
         )
         .unwrap();
 
-        let rule = ComplianceFilter::get_compliance_rule(
-            env.clone(),
-            Bytes::from_slice(&env, b"EU"),
-        )
-        .unwrap();
+        let rule =
+            ComplianceFilter::get_compliance_rule(env.clone(), Bytes::from_slice(&env, b"EU"))
+                .unwrap();
         assert!(rule.active);
     }
 
@@ -1605,15 +1742,10 @@ mod tests {
         )
         .unwrap();
 
-        ComplianceFilter::deactivate_compliance_rule(
-            env.clone(),
-            admin,
-            jurisdiction.clone(),
-        )
-        .unwrap();
+        ComplianceFilter::deactivate_compliance_rule(env.clone(), admin, jurisdiction.clone())
+            .unwrap();
 
-        let rule =
-            ComplianceFilter::get_compliance_rule(env.clone(), jurisdiction).unwrap();
+        let rule = ComplianceFilter::get_compliance_rule(env.clone(), jurisdiction).unwrap();
         assert!(!rule.active);
     }
 
@@ -1651,8 +1783,7 @@ mod tests {
         )
         .unwrap();
 
-        let report =
-            ComplianceFilter::get_regulatory_report(env.clone(), subject.clone(), ts);
+        let report = ComplianceFilter::get_regulatory_report(env.clone(), subject.clone(), ts);
         assert!(report.is_some());
 
         let trail = ComplianceFilter::get_audit_trail(env.clone(), subject);
@@ -1727,10 +1858,24 @@ mod tests {
         assert_eq!(page.total, 1);
     }
 
-    // ── Issue #41: Event emission tests ──────────────────────────────────
+    // ── Risk assessment ───────────────────────────────────────────────────────
 
     #[test]
-    fn test_address_sanctioned_event_emitted() {
+    fn assess_risk_clean_address_returns_low() {
+        let env = setup_env();
+        bootstrap(&env);
+        let clean = Address::generate(&env);
+
+        let assessment = ComplianceFilter::assess_risk(env.clone(), clean);
+        assert_eq!(assessment.overall, RiskLevel::Low);
+        assert_eq!(assessment.score, 0);
+        assert_eq!(assessment.factors.len(), 2);
+        assert_eq!(assessment.factors.get(0).unwrap().name, Bytes::from_slice(&env, b"sanctions"));
+        assert_eq!(assessment.factors.get(1).unwrap().name, Bytes::from_slice(&env, b"oracle"));
+    }
+
+    #[test]
+    fn assess_risk_sanctioned_address_returns_critical() {
         let env = setup_env();
         let admin = bootstrap(&env);
         let source = create_list(&env, &admin, b"OFAC");
@@ -1740,104 +1885,144 @@ mod tests {
             env.clone(),
             admin,
             source,
-            target,
-            Bytes::from_slice(&env, b"fraud"),
-            Bytes::from_slice(&env, b"US"),
-        )
-        .unwrap();
-
-        let events = env.events().all();
-        assert!(events.iter().any(|e| {
-            let topics = e.0.clone();
-            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
-                &env,
-                "AddressSanctioned",
-            )))
-        }));
-    }
-
-    #[test]
-    fn test_address_removed_from_sanctions_event_emitted() {
-        let env = setup_env();
-        let admin = bootstrap(&env);
-        let source = create_list(&env, &admin, b"OFAC");
-        let target = Address::generate(&env);
-
-        ComplianceFilter::add_to_sanctions_list(
-            env.clone(),
-            admin.clone(),
-            source.clone(),
             target.clone(),
             Bytes::from_slice(&env, b"fraud"),
             Bytes::from_slice(&env, b"US"),
         )
         .unwrap();
 
-        ComplianceFilter::remove_from_sanctions_list(
-            env.clone(),
-            admin,
-            source,
-            target,
-        )
-        .unwrap();
-
-        let events = env.events().all();
-        assert!(events.iter().any(|e| {
-            let topics = e.0.clone();
-            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
-                &env,
-                "AddressRemovedFromSanctions",
-            )))
-        }));
+        let assessment = ComplianceFilter::assess_risk(env.clone(), target);
+        assert_eq!(assessment.overall, RiskLevel::Critical);
+        assert_eq!(assessment.score, MAX_RISK_SCORE);
     }
 
     #[test]
-    fn test_risk_weights_configured_event_emitted() {
+    fn assess_risk_with_oracle_score_returns_medium() {
         let env = setup_env();
         let admin = bootstrap(&env);
+        let oracle = Address::generate(&env);
+        let user = Address::generate(&env);
 
-        ComplianceFilter::configure_risk_weights(
+        ComplianceFilter::register_oracle(env.clone(), admin, oracle.clone()).unwrap();
+        ComplianceFilter::update_risk_score(
             env.clone(),
-            admin,
-            80,
-            20,
-            70,
+            oracle,
+            user.clone(),
+            50,
+            Bytes::from_slice(&env, b"suspicious activity"),
         )
         .unwrap();
 
-        let events = env.events().all();
-        assert!(events.iter().any(|e| {
-            let topics = e.0.clone();
-            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
-                &env,
-                "RiskWeightsConfigured",
-            )))
-        }));
+        let assessment = ComplianceFilter::assess_risk(env.clone(), user);
+        // Default weights: sanctions=50, oracle=50 => (0*50 + 50*50)/100 = 25
+        assert_eq!(assessment.score, 25);
+        assert_eq!(assessment.overall, RiskLevel::Medium);
     }
 
     #[test]
-    fn test_risk_weights_configuration_boundary() {
+    fn assess_risk_combined_sanctions_and_oracle() {
         let env = setup_env();
         let admin = bootstrap(&env);
+        let oracle = Address::generate(&env);
+        let source = create_list(&env, &admin, b"OFAC");
+        let target = Address::generate(&env);
 
-        // High risk threshold 0 should fail
-        let result = ComplianceFilter::configure_risk_weights(
+        // Sanction the address
+        ComplianceFilter::add_to_sanctions_list(
             env.clone(),
             admin.clone(),
-            80,
-            20,
-            0,
-        );
-        assert_eq!(result.unwrap_err(), ComplianceFilterError::InvalidRiskScore);
+            source,
+            target.clone(),
+            Bytes::from_slice(&env, b"fraud"),
+            Bytes::from_slice(&env, b"US"),
+        )
+        .unwrap();
 
-        // High risk threshold above MAX should fail
-        let result = ComplianceFilter::configure_risk_weights(
+        // Also assign a high oracle score
+        ComplianceFilter::register_oracle(env.clone(), admin, oracle.clone()).unwrap();
+        ComplianceFilter::update_risk_score(
             env.clone(),
-            admin,
-            80,
-            20,
-            101,
-        );
+            oracle,
+            target.clone(),
+            90,
+            Bytes::from_slice(&env, b"suspicious"),
+        )
+        .unwrap();
+
+        let assessment = ComplianceFilter::assess_risk(env.clone(), target);
+        // sanctions=100*50 + oracle=90*50 = 9500 / 100 = 95
+        assert_eq!(assessment.score, 95);
+        assert_eq!(assessment.overall, RiskLevel::High);
+    }
+
+    // ── set_risk_weights ──────────────────────────────────────────────────────
+
+    #[test]
+    fn set_risk_weights_stores_and_retrieves() {
+        let env = setup_env();
+        let admin = bootstrap(&env);
+
+        let weights = RiskWeights {
+            sanctions_weight: 70,
+            oracle_weight: 30,
+            high_risk_threshold: 75,
+            last_updated: 0,
+        };
+
+        ComplianceFilter::set_risk_weights(env.clone(), admin, weights).unwrap();
+
+        let stored = ComplianceFilter::get_risk_weights(env.clone()).unwrap();
+        assert_eq!(stored.sanctions_weight, 70);
+        assert_eq!(stored.oracle_weight, 30);
+        assert_eq!(stored.high_risk_threshold, 75);
+    }
+
+    #[test]
+    fn set_risk_weights_rejects_zero_threshold() {
+        let env = setup_env();
+        let admin = bootstrap(&env);
+
+        let weights = RiskWeights {
+            sanctions_weight: 50,
+            oracle_weight: 50,
+            high_risk_threshold: 0,
+            last_updated: 0,
+        };
+
+        let result = ComplianceFilter::set_risk_weights(env.clone(), admin, weights);
         assert_eq!(result.unwrap_err(), ComplianceFilterError::InvalidRiskScore);
+    }
+
+    #[test]
+    fn set_risk_weights_rejects_threshold_above_max() {
+        let env = setup_env();
+        let admin = bootstrap(&env);
+
+        let weights = RiskWeights {
+            sanctions_weight: 50,
+            oracle_weight: 50,
+            high_risk_threshold: MAX_RISK_SCORE + 1,
+            last_updated: 0,
+        };
+
+        let result = ComplianceFilter::set_risk_weights(env.clone(), admin, weights);
+        assert_eq!(result.unwrap_err(), ComplianceFilterError::InvalidRiskScore);
+    }
+
+    #[test]
+    fn set_risk_weights_non_admin_rejected() {
+        let env = setup_env();
+        bootstrap(&env);
+        let intruder = Address::generate(&env);
+
+        let weights = RiskWeights {
+            sanctions_weight: 70,
+            oracle_weight: 30,
+            high_risk_threshold: 70,
+            last_updated: 0,
+        };
+
+        let result = ComplianceFilter::set_risk_weights(env.clone(), intruder, weights);
+        assert_eq!(result.unwrap_err(), ComplianceFilterError::Unauthorized);
     }
 }

@@ -254,7 +254,7 @@ export class DIDResolver {
   ): Promise<void> {
     const resolution = await this.resolve(did);
     if (resolution.didResolutionMetadata.error) {
-      throw this.makeError(`DID not found: ${did}`, ErrorCode.DIDNotFound);
+      throw this.makeError(`DID not found: ${did}`, 404);
     }
 
     const doc = resolution.didDocument as DIDDocument;

@@ -1,6 +1,0 @@
-C:\Users\dmanl\OneDrive\Documents\GitHub\stellar-identity-credentials-sdk\target\debug\deps\percent_encoding-e74e21eab3a82da9.d: C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\percent-encoding-2.3.2\src\lib.rs C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\percent-encoding-2.3.2\src\ascii_set.rs
-
-C:\Users\dmanl\OneDrive\Documents\GitHub\stellar-identity-credentials-sdk\target\debug\deps\libpercent_encoding-e74e21eab3a82da9.rmeta: C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\percent-encoding-2.3.2\src\lib.rs C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\percent-encoding-2.3.2\src\ascii_set.rs
-
-C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\percent-encoding-2.3.2\src\lib.rs:
-C:\Users\dmanl\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\percent-encoding-2.3.2\src\ascii_set.rs:

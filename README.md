@@ -1,6 +1,8 @@
 # Stellar Identity and Verifiable Credentials SDK
 
+[![TypeScript CI](https://github.com/Kevin737866/stellar-identity-credentials-sdk/actions/workflows/typescript-ci.yml/badge.svg)](https://github.com/Kevin737866/stellar-identity-credentials-sdk/actions/workflows/typescript-ci.yml)
 [![CI](https://github.com/Kevin737866/stellar-identity-credentials-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/Kevin737866/stellar-identity-credentials-sdk/actions/workflows/ci.yml)
+[![Rust Contracts CI](https://github.com/Kevin737866/stellar-identity-credentials-sdk/actions/workflows/rust-contracts-ci.yml/badge.svg)](https://github.com/Kevin737866/stellar-identity-credentials-sdk/actions/workflows/rust-contracts-ci.yml)
 
 A comprehensive SDK for building decentralized identity and verifiable credentials solutions on the Stellar network using Soroban smart contracts.
 
@@ -14,10 +16,85 @@ A comprehensive SDK for building decentralized identity and verifiable credentia
 - **Compliance Integration**: Built-in sanctions screening and risk assessment
 
 ### Developer Tools
+- **Interactive CLI**: Full-featured terminal tool for deploying and managing all contracts without writing code
 - **TypeScript SDK**: Full-featured client library for web and Node.js environments
 - **React Components**: Pre-built UI components for identity management
 - **Smart Contracts**: Production-ready Soroban contracts
 - **Examples**: Comprehensive use cases and implementation guides
+
+## 🖥️ CLI Tool
+
+The interactive CLI lets you deploy, manage, and interact with all contracts without writing any code.
+
+### Install
+
+```bash
+npm install
+npm install --save-dev ts-node@10.9.2
+```
+
+### Launch
+
+```bash
+# Interactive guided menu (recommended)
+npm run cli
+
+# Automated feature walkthrough
+npm run cli:demo
+
+# Show all commands and options
+npm run cli:help
+```
+
+### Opening screen
+
+```
+  ╔══════════════════════════════════════════════════════════╗
+  ║   ⭐  Stellar Identity Credentials SDK                  ║
+  ║       Interactive CLI — v1.0.0                          ║
+  ╠══════════════════════════════════════════════════════════╣
+  ║  Deploy contracts  ·  Manage DIDs  ·  Issue credentials ║
+  ║  Reputation scoring  ·  ZK proofs  ·  Compliance        ║
+  ╚══════════════════════════════════════════════════════════╝
+```
+
+### Command categories
+
+| Category | What it does |
+|---|---|
+| **Contract Deployment Wizard** | Guided deploy of all 5 contracts to testnet / futurenet / mainnet |
+| **DID Management** | Create, resolve, update, deactivate `did:stellar` identifiers |
+| **Credential Management** | Issue KYC / education / employment credentials; verify; revoke |
+| **Reputation Management** | View scores, update tx/credential reputation, query trust graphs |
+| **Zero-Knowledge Proofs** | Generate age, income, range, and selective-disclosure proofs |
+| **Compliance & Screening** | Screen addresses, generate reports, FATF Travel Rule payloads |
+| **Configuration** | Switch networks, set RPC URL, update contract addresses |
+| **Keypair Manager** | Generate, import, and persist signing keypairs |
+
+### Quick start flow
+
+```
+Opening menu → Quick Start
+  [1] Generate keypair   → saved to ~/.stellar-identity-cli.json
+  [2] Create DID         → did:stellar:<G…address>
+  [3] Initialize reputation → base score 100 (Seedling tier)
+```
+
+### Contract deployment (guided wizard)
+
+```
+Contract Deployment Wizard → Deploy all contracts
+  [1] Select network  (testnet / futurenet / mainnet)
+  [2] Set RPC URL     (defaults auto-filled)
+  [3] Choose keypair  (deployer)
+  [4] Review plan     (5 contracts listed with fee estimates)
+  [5] Confirm         → deploys + initializes all contracts
+  [6] Export manifest → deployment-testnet-<ts>.json
+```
+
+See [`docs/cli-guide.md`](docs/cli-guide.md) for the full command reference.
+
+---
 
 ## 🏗️ Architecture
 
@@ -39,6 +116,7 @@ A comprehensive SDK for building decentralized identity and verifiable credentia
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [CLI Tool](#-cli-tool)
 - [Architecture](#architecture)
 - [Smart Contracts](#smart-contracts)
 - [TypeScript SDK](#typescript-sdk)
@@ -70,6 +148,16 @@ yarn add @stellar-identity/sdk
 pnpm add @stellar-identity/sdk
 ```
 
+The SDK ships with **dual ESM + CommonJS** support and full TypeScript type declarations:
+
+```typescript
+// ESM (recommended)
+import { StellarIdentitySDK, DEFAULT_CONFIGS } from '@stellar-identity/sdk';
+
+// CommonJS
+const { StellarIdentitySDK, DEFAULT_CONFIGS } = require('@stellar-identity/sdk');
+```
+
 ### Install React Components
 
 ```bash
@@ -80,7 +168,7 @@ npm install @stellar-identity/ui react react-dom
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/stellar-identity/sdk.git
+git clone https://github.com/Kevin737866/stellar-identity-credentials-sdk.git
 cd stellar-identity-credentials-sdk
 ```
 

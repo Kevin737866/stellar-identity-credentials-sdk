@@ -8,6 +8,18 @@ export enum CircuitType {
   CredentialOwnership = 'CredentialOwnership',
   CompositeProof = 'CompositeProof',
   EqualityProof = 'EqualityProof',
+  SelectiveDisclosure = 'SelectiveDisclosure',
+}
+
+export enum PredicateType {
+  GreaterThan = 'GreaterThan',
+  LessThan = 'LessThan',
+  GreaterThanOrEqual = 'GreaterThanOrEqual',
+  LessThanOrEqual = 'LessThanOrEqual',
+  Equality = 'Equality',
+  Range = 'Range',
+  InSet = 'InSet',
+  NotInSet = 'NotInSet',
 }
 
 /**
@@ -211,25 +223,8 @@ export interface SanctionsList {
   entries: string[];
 }
 
-/**
- * Main configuration object for the Stellar Identity SDK.
- * Specifies network, contract addresses, and RPC endpoints.
- * @category Types
- * @example
- * ```typescript
- * const config: StellarIdentityConfig = {
- *   network: 'testnet',
- *   contracts: {
- *     didRegistry: '0x...',
- *     credentialIssuer: '0x...',
- *     reputationScore: '0x...',
- *     zkAttestation: '0x...',
- *     complianceFilter: '0x...'
- *   },
- *   rpcUrl: 'https://soroban-testnet.stellar.org'
- * };
- * ```
- */
+import { Keypair } from 'stellar-sdk';
+
 export interface StellarIdentityConfig {
   network: 'mainnet' | 'testnet' | 'futurenet';
   contracts: {
@@ -242,7 +237,7 @@ export interface StellarIdentityConfig {
   };
   rpcUrl?: string;
   horizonUrl?: string;
-  keypair?: any; // Use any for now to avoid importing Keypair if not needed here
+  keypair?: Keypair;
 }
 
 export interface CredentialSchema {
@@ -269,6 +264,11 @@ export interface SchemaVersion {
 export interface CreateDIDOptions {
   verificationMethods: VerificationMethod[];
   services: Service[];
+}
+
+export interface UpdateDIDOptions {
+  verificationMethods?: VerificationMethod[];
+  services?: Service[];
 }
 
 export interface IssueCredentialOptions {
@@ -403,6 +403,66 @@ export interface ZKVerificationResult {
   expiresAt?: number;
 }
 
+// ---- Selective Disclosure Types (#111) ----
+
+export interface PredicateInfo {
+  attributeName: string;
+  predicateType: PredicateType;
+  threshold?: string;
+  rangeMin?: string;
+  rangeMax?: string;
+  allowedValues?: string[];
+}
+
+export interface SelectiveDisclosureOptions {
+  circuitId: string;
+  credentialId: string;
+  publicInputs: string[];
+  proofBytes: string;
+  nullifier: string;
+  revealedAttributes: string[];
+  hiddenAttributes: string[];
+  predicates: PredicateInfo[];
+  expiresAt?: number;
+  metadata?: Record<string, string>;
+  context?: string;
+  txOptions?: TransactionOptions;
+}
+
+export interface SelectiveDisclosureProof {
+  proofId: string;
+  credentialId: string;
+  circuitId: string;
+  publicInputs: string[];
+  proofBytes: string;
+  nullifier: string;
+  verifierAddress: string;
+  createdAt: number;
+  expiresAt?: number;
+  revealedAttributes: string[];
+  hiddenAttributes: string[];
+  predicates: PredicateInfo[];
+  metadata: Record<string, string>;
+}
+
+export interface CombinedDisclosureProof {
+  proofId: string;
+  childProofIds: string[];
+  combinedPredicates: PredicateInfo[];
+  createdAt: number;
+  expiresAt?: number;
+  metadata: Record<string, string>;
+}
+
+export interface SelectiveDisclosureVerificationResult {
+  valid: boolean;
+  proofId: string;
+  circuitId: string;
+  predicates: PredicateInfo[];
+  verifiedAt: number;
+  expiresAt?: number;
+}
+
 export interface ComplianceResult {
   address: string;
   status: 'cleared' | 'flagged' | 'blocked';
@@ -410,4 +470,21 @@ export interface ComplianceResult {
   sanctionsLists: string[];
   lastChecked: number;
   recommendations: string[];
+}
+
+export interface ExpirationEvent {
+  credentialId: string;
+  subject: string;
+  issuer: string;
+  expirationDate: number;
+  daysUntilExpiry: number;
+  expired: boolean;
+  timestamp: number;
+}
+
+export type ExpirationHandler = (event: ExpirationEvent) => void;
+
+export interface EventListener {
+  on(event: string, handler: (...args: any[]) => void): void;
+  off(event: string, handler: (...args: any[]) => void): void;
 }
