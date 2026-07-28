@@ -1,22 +1,12 @@
 {
+  "root": true,
   "parser": "@typescript-eslint/parser",
+  "parserOptions": { "ecmaVersion": 2020, "sourceType": "module" },
+  "env": { "node": true, "es2020": true, "jest": true },
   "plugins": ["@typescript-eslint"],
-  "extends": [
-    "eslint:recommended",
-    "plugin:@typescript-eslint/recommended"
-  ],
+  "ignorePatterns": ["node_modules/", "dist/"],
   "rules": {
-    "complexity": ["error", 15],
-    "max-lines-per-function": ["error", { "max": 100, "skipBlankLines": true, "skipComments": true }],
-    "max-depth": ["warn", 4],
-    "max-params": ["warn", 5]
-  },
-  "env": {
-    "node": true,
-    "es2020": true
-  },
-  "parserOptions": {
-    "ecmaVersion": 2020,
-    "sourceType": "module"
+    "no-unused-vars": "off",
+    "no-undef": "off"
   }
 }

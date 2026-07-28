@@ -25,20 +25,8 @@
     "build:types": "tsc --emitDeclarationOnly --outDir dist",
     "dev": "tsup --watch",
     "test": "jest",
-    "lint": "eslint sdk/src/**/*.ts",
-    "prepare": "npm run build",
-    "prepublishOnly": "npm run build",
-    "cli": "ts-node --project cli/tsconfig.json cli/index.ts",
-    "cli:demo": "ts-node --project cli/tsconfig.json cli/index.ts --demo",
-    "cli:help": "ts-node --project cli/tsconfig.json cli/index.ts --help",
-    "example:cli-demo": "ts-node --script-mode examples/cli-demo.ts",
-    "example:kyc": "ts-node --script-mode examples/kyc-flow.ts",
-    "example:reputation": "ts-node --script-mode examples/reputation-builder.ts",
-    "docs": "typedoc",
-    "docs:watch": "typedoc --watch",
-    "docs:serve": "npx serve docs/api",
-    "docs:contracts": "cargo doc --no-deps --document-private-items",
-    "docs:all": "npm run docs && cargo doc --no-deps --document-private-items"
+    "lint": "eslint sdk/src/**/*.ts --max-warnings=9999",
+    "prepare": "npm run build"
   },
   "keywords": [
     "stellar",

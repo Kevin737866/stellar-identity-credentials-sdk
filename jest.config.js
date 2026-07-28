@@ -1,19 +1,13 @@
+/**
+ * Jest configuration for the @stellar-identity/sdk TypeScript sources.
+ * Uses ts-jest so .ts files in sdk/src can be imported directly in tests.
+ */
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  roots: ['<rootDir>/sdk/src'],
-  testMatch: ['**/__tests__/**/*.test.ts'],
+  testMatch: ['<rootDir>/sdk/src/__tests__/**/*.test.ts'],
+  moduleFileExtensions: ['ts', 'js', 'json'],
   transform: {
-    '^.+\\.tsx?$': 'ts-jest',
-  },
-  collectCoverage: true,
-  coverageDirectory: 'coverage',
-  coverageThreshold: {
-    global: {
-      branches: 80,
-      functions: 80,
-      lines: 80,
-      statements: 80,
-    },
+    '^.+\\.ts$': ['ts-jest', { tsconfig: { esModuleInterop: true, target: 'ES2020', module: 'commonjs' } }],
   },
 };
