@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'kong-gateway'
+    static_configs:
+      - targets: ['kong:8100']
