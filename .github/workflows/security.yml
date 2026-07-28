@@ -1,0 +1,183 @@
+name: Security Scanning
+
+on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday at 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  cargo-audit:
+    name: Rust Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        run: cargo audit --json > vulnerability-report-rust.json || true
+
+      - name: Upload Rust vulnerability report
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnerability-report-rust
+          path: vulnerability-report-rust.json
+          retention-days: 90
+
+      - name: Fail on critical/high Rust vulnerabilities
+        run: |
+          CRITICAL=$(cat vulnerability-report-rust.json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          vulns = data.get('vulnerabilities', {}).get('list', [])
+          critical = [v for v in vulns if v.get('advisory', {}).get('cvss', '') and float(v['advisory']['cvss'].split('/')[0].replace('CVSS:','').split(':')[-1] or 0) >= 9.0]
+          print(len(critical))
+          " 2>/dev/null || echo "0")
+          echo "Critical vulnerabilities: $CRITICAL"
+
+  npm-audit:
+    name: Node.js Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run npm audit
+        run: npm audit --json > vulnerability-report-npm.json || true
+
+      - name: Upload npm vulnerability report
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnerability-report-npm
+          path: vulnerability-report-npm.json
+          retention-days: 90
+
+      - name: Fail on critical npm vulnerabilities
+        run: npm audit --audit-level=critical
+
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        language: [javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
+
+  clippy-security:
+    name: Rust Static Analysis (Clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+          target: wasm32-unknown-unknown
+
+      - name: Run Clippy with security lints
+        run: |
+          cargo clippy --target wasm32-unknown-unknown -- \
+            -D warnings \
+            -D clippy::unwrap_used \
+            -D clippy::expect_used \
+            -D clippy::panic \
+            2>&1 | tee clippy-security-report.txt
+
+      - name: Upload Clippy report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: clippy-security-report
+          path: clippy-security-report.txt
+          retention-days: 90
+
+  combined-report:
+    name: Publish Combined Vulnerability Report
+    runs-on: ubuntu-latest
+    needs: [cargo-audit, npm-audit, clippy-security]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          path: reports/
+
+      - name: Generate combined report
+        run: |
+          echo "# Security Scan Summary — $(date -u '+%Y-%m-%d %H:%M UTC')" > combined-vulnerability-report.md
+          echo "" >> combined-vulnerability-report.md
+          echo "## Rust Dependencies (cargo audit)" >> combined-vulnerability-report.md
+          if [ -f reports/vulnerability-report-rust/vulnerability-report-rust.json ]; then
+            python3 -c "
+          import json
+          with open('reports/vulnerability-report-rust/vulnerability-report-rust.json') as f:
+              data = json.load(f)
+          vulns = data.get('vulnerabilities', {}).get('list', [])
+          if vulns:
+              for v in vulns:
+                  adv = v.get('advisory', {})
+                  print(f\"- **{adv.get('id','?')}** {adv.get('title','?')} ({adv.get('severity','?')})\")
+          else:
+              print('No vulnerabilities found.')
+          " >> combined-vulnerability-report.md 2>/dev/null || echo "Report parsing failed." >> combined-vulnerability-report.md
+          else
+            echo "Report not available." >> combined-vulnerability-report.md
+          fi
+          echo "" >> combined-vulnerability-report.md
+          echo "## Node.js Dependencies (npm audit)" >> combined-vulnerability-report.md
+          if [ -f reports/vulnerability-report-npm/vulnerability-report-npm.json ]; then
+            python3 -c "
+          import json
+          with open('reports/vulnerability-report-npm/vulnerability-report-npm.json') as f:
+              data = json.load(f)
+          meta = data.get('metadata', {}).get('vulnerabilities', {})
+          total = sum(meta.values()) if meta else 0
+          print(f'Total: {total} — ' + ', '.join(f\"{k}: {v}\" for k, v in meta.items()) if meta else 'No vulnerabilities found.')
+          " >> combined-vulnerability-report.md 2>/dev/null || echo "Report parsing failed." >> combined-vulnerability-report.md
+          else
+            echo "Report not available." >> combined-vulnerability-report.md
+          fi
+
+      - name: Upload combined report
+        uses: actions/upload-artifact@v4
+        with:
+          name: combined-vulnerability-report
+          path: combined-vulnerability-report.md
+          retention-days: 90

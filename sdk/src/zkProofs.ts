@@ -20,6 +20,12 @@ import {
   TransactionOptions,
   CircuitType,
   ProofGenerationInputs,
+  PredicateType,
+  PredicateInfo,
+  SelectiveDisclosureOptions,
+  SelectiveDisclosureProof,
+  SelectiveDisclosureVerificationResult,
+  CombinedDisclosureProof,
 } from './types';
 import { StellarIdentityError, mapContractError } from './errors';
 
@@ -154,7 +160,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'age_range_proof',
           publicInputs: [commitment, minAge.toString()],
@@ -217,7 +223,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'income_range_proof',
           publicInputs: [commitment, minIncome.toString()],
@@ -294,7 +300,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'kyc_composite_proof',
           publicInputs: [credential.hash],
@@ -361,7 +367,7 @@ export class ZKProofsClient {
       );
 
       return this.submitProof(
-        this.config.keypair,
+        this.config.keypair!,
         {
           circuitId: 'loan_application_composite_proof',
           publicInputs: Object.values(publicInputs).map(v => v.toString()),
@@ -484,6 +490,367 @@ export class ZKProofsClient {
     const crypto = require('crypto') as typeof import('crypto');
     const data = `${credentialId}${circuitId}${context}`;
     return crypto.createHash('sha256').update(data).digest('hex');
+  }
+
+  // -------------------------------------------------------------------------
+  // Selective Disclosure methods (#111)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Create a selective disclosure proof that reveals only specific attributes
+   * while proving predicates (GT, LT, range, equality) on hidden attributes.
+   */
+  async createSelectiveDisclosureProof(
+    submitterKeypair: Keypair,
+    options: SelectiveDisclosureOptions
+  ): Promise<string> {
+    try {
+      const account = await this.rpc.getAccount(submitterKeypair.publicKey());
+
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.getNetworkPassphrase(),
+      })
+        .addOperation(
+          this.zkAttestationContract.call(
+            'create_selective_disclosure_proof',
+            nativeToScVal(new TextEncoder().encode(options.credentialId), { type: 'bytes' }),
+            nativeToScVal(new TextEncoder().encode(options.circuitId), { type: 'bytes' }),
+            nativeToScVal(options.publicInputs.map(i => new TextEncoder().encode(i)), { type: 'vec' }),
+            nativeToScVal(new TextEncoder().encode(options.proofBytes), { type: 'bytes' }),
+            nativeToScVal(new TextEncoder().encode(options.nullifier), { type: 'bytes' }),
+            nativeToScVal(options.revealedAttributes.map(a => new TextEncoder().encode(a)), { type: 'vec' }),
+            nativeToScVal(options.hiddenAttributes.map(a => new TextEncoder().encode(a)), { type: 'vec' }),
+            nativeToScVal(this.encodePredicates(options.predicates), { type: 'vec' }),
+            options.expiresAt != null
+              ? nativeToScVal(BigInt(options.expiresAt), { type: 'u64' })
+              : xdr.ScVal.scvVoid(),
+            options.metadata
+              ? nativeToScVal(new TextEncoder().encode(JSON.stringify(options.metadata)), { type: 'bytes' })
+              : xdr.ScVal.scvVoid()
+          )
+        )
+        .setTimeout(30)
+        .build();
+
+      const prepared = await this.rpc.prepareTransaction(tx);
+      prepared.sign(submitterKeypair);
+      await this.rpc.sendTransaction(prepared);
+      return `sd-proof-${Date.now()}`;
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Verify a selective disclosure proof matches expected predicates.
+   */
+  async verifySelectiveDisclosure(
+    proofId: string,
+    expectedPredicates: PredicateInfo[]
+  ): Promise<SelectiveDisclosureVerificationResult> {
+    try {
+      const retval = await this.simulateRead('verify_selective_disclosure', [
+        nativeToScVal(new TextEncoder().encode(proofId), { type: 'bytes' }),
+        nativeToScVal(this.encodePredicates(expectedPredicates), { type: 'vec' }),
+      ]);
+
+      const disclosure = await this.getSelectiveDisclosure(proofId);
+      return {
+        valid: scValToNative(retval) as boolean,
+        proofId,
+        circuitId: disclosure.circuitId,
+        predicates: disclosure.predicates,
+        verifiedAt: Date.now(),
+        expiresAt: disclosure.expiresAt,
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Combine multiple selective disclosure proofs into a single composite proof.
+   */
+  async combineSelectiveDisclosures(
+    submitterKeypair: Keypair,
+    proofIds: string[],
+    metadata?: Record<string, string>
+  ): Promise<string> {
+    try {
+      const account = await this.rpc.getAccount(submitterKeypair.publicKey());
+
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.getNetworkPassphrase(),
+      })
+        .addOperation(
+          this.zkAttestationContract.call(
+            'combine_selective_disclosures',
+            nativeToScVal(proofIds.map(id => new TextEncoder().encode(id)), { type: 'vec' }),
+            metadata
+              ? nativeToScVal(new TextEncoder().encode(JSON.stringify(metadata)), { type: 'bytes' })
+              : xdr.ScVal.scvVoid()
+          )
+        )
+        .setTimeout(30)
+        .build();
+
+      const prepared = await this.rpc.prepareTransaction(tx);
+      prepared.sign(submitterKeypair);
+      await this.rpc.sendTransaction(prepared);
+      return `combined-${Date.now()}`;
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Retrieve a selective disclosure proof by ID.
+   */
+  async getSelectiveDisclosure(proofId: string): Promise<SelectiveDisclosureProof> {
+    try {
+      const retval = await this.simulateRead('get_selective_disclosure', [
+        nativeToScVal(new TextEncoder().encode(proofId), { type: 'bytes' }),
+      ]);
+      return this.parseSelectiveDisclosure(scValToNative(retval));
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Retrieve a combined disclosure proof by ID.
+   */
+  async getCombinedDisclosure(proofId: string): Promise<CombinedDisclosureProof> {
+    try {
+      const retval = await this.simulateRead('get_combined_disclosure', [
+        nativeToScVal(new TextEncoder().encode(proofId), { type: 'bytes' }),
+      ]);
+      return this.parseCombinedDisclosure(scValToNative(retval));
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Prove a specific attribute value is greater than a threshold.
+   */
+  async createGreaterThanProof(
+    submitterKeypair: Keypair,
+    attributeName: string,
+    attributeValue: number,
+    threshold: number,
+    credentialId: string,
+    circuitId: string,
+    options?: { context?: string; expiresAt?: number }
+  ): Promise<string> {
+    const nonce = this.generateSalt();
+    const commitment = this.generateCommitment(attributeValue.toString(), nonce);
+    const nullifier = this.generateNullifier(
+      `${credentialId}_${attributeName}_gt`,
+      circuitId,
+      options?.context || 'default'
+    );
+    const predicates: PredicateInfo[] = [{
+      attributeName,
+      predicateType: PredicateType.GreaterThan,
+      threshold: threshold.toString(),
+    }];
+
+    return this.createSelectiveDisclosureProof(submitterKeypair, {
+      circuitId,
+      credentialId,
+      publicInputs: [commitment, threshold.toString()],
+      proofBytes: `{"gt_proof":{"attribute":${attributeValue},"threshold":${threshold}}}`,
+      nullifier,
+      revealedAttributes: [],
+      hiddenAttributes: [attributeName],
+      predicates,
+      expiresAt: options?.expiresAt,
+      metadata: {
+        type: 'greater_than',
+        attribute: attributeName,
+        threshold: threshold.toString(),
+        context: options?.context || 'default',
+      },
+    });
+  }
+
+  /**
+   * Prove a specific attribute value is within a range [min, max].
+   */
+  async createRangeProof(
+    submitterKeypair: Keypair,
+    attributeName: string,
+    attributeValue: number,
+    min: number,
+    max: number,
+    credentialId: string,
+    circuitId: string,
+    options?: { context?: string; expiresAt?: number }
+  ): Promise<string> {
+    const nonce = this.generateSalt();
+    const commitment = this.generateCommitment(attributeValue.toString(), nonce);
+    const nullifier = this.generateNullifier(
+      `${credentialId}_${attributeName}_range`,
+      circuitId,
+      options?.context || 'default'
+    );
+    const predicates: PredicateInfo[] = [{
+      attributeName,
+      predicateType: PredicateType.Range,
+      rangeMin: min.toString(),
+      rangeMax: max.toString(),
+    }];
+
+    return this.createSelectiveDisclosureProof(submitterKeypair, {
+      circuitId,
+      credentialId,
+      publicInputs: [commitment, min.toString(), max.toString()],
+      proofBytes: `{"range_proof":{"attribute":${attributeValue},"min":${min},"max":${max}}}`,
+      nullifier,
+      revealedAttributes: [],
+      hiddenAttributes: [attributeName],
+      predicates,
+      expiresAt: options?.expiresAt,
+      metadata: {
+        type: 'range_proof',
+        attribute: attributeName,
+        min: min.toString(),
+        max: max.toString(),
+        context: options?.context || 'default',
+      },
+    });
+  }
+
+  /**
+   * Selectively reveal the exact value of an attribute.
+   */
+  async createEqualityDisclosure(
+    submitterKeypair: Keypair,
+    attributeName: string,
+    attributeValue: number,
+    credentialId: string,
+    circuitId: string,
+    options?: { context?: string; expiresAt?: number }
+  ): Promise<string> {
+    const nonce = this.generateSalt();
+    const commitment = this.generateCommitment(attributeValue.toString(), nonce);
+    const nullifier = this.generateNullifier(
+      `${credentialId}_${attributeName}_eq`,
+      circuitId,
+      options?.context || 'default'
+    );
+    const predicates: PredicateInfo[] = [{
+      attributeName,
+      predicateType: PredicateType.Equality,
+      threshold: attributeValue.toString(),
+    }];
+
+    return this.createSelectiveDisclosureProof(submitterKeypair, {
+      circuitId,
+      credentialId,
+      publicInputs: [commitment, attributeValue.toString()],
+      proofBytes: `{"eq_proof":{"attribute":${attributeValue}}}`,
+      nullifier,
+      revealedAttributes: [attributeName],
+      hiddenAttributes: [],
+      predicates,
+      expiresAt: options?.expiresAt,
+      metadata: {
+        type: 'equality_disclosure',
+        attribute: attributeName,
+        value: attributeValue.toString(),
+        context: options?.context || 'default',
+      },
+    });
+  }
+
+  /**
+   * Encode predicate info for contract calls.
+   */
+  private encodePredicates(predicates: PredicateInfo[]): any[] {
+    return predicates.map(p => ({
+      attributeName: new TextEncoder().encode(p.attributeName),
+      predicateType: this.encodePredicateType(p.predicateType),
+      threshold: p.threshold ? new TextEncoder().encode(p.threshold) : null,
+      rangeMin: p.rangeMin ? new TextEncoder().encode(p.rangeMin) : null,
+      rangeMax: p.rangeMax ? new TextEncoder().encode(p.rangeMax) : null,
+      allowedValues: p.allowedValues
+        ? p.allowedValues.map(v => new TextEncoder().encode(v))
+        : null,
+    }));
+  }
+
+  private encodePredicateType(type: PredicateType): number {
+    const map: Record<PredicateType, number> = {
+      [PredicateType.GreaterThan]: 0,
+      [PredicateType.LessThan]: 1,
+      [PredicateType.GreaterThanOrEqual]: 2,
+      [PredicateType.LessThanOrEqual]: 3,
+      [PredicateType.Equality]: 4,
+      [PredicateType.Range]: 5,
+      [PredicateType.InSet]: 6,
+      [PredicateType.NotInSet]: 7,
+    };
+    return map[type] ?? 0;
+  }
+
+  private parseSelectiveDisclosure(raw: unknown): SelectiveDisclosureProof {
+    const r = Array.isArray(raw) ? raw : [];
+    const toStr = (v: unknown) => (v instanceof Uint8Array ? new TextDecoder().decode(v) : String(v ?? ''));
+    return {
+      proofId: toStr(r[0]),
+      credentialId: toStr(r[1]),
+      circuitId: toStr(r[2]),
+      publicInputs: Array.isArray(r[3]) ? (r[3] as unknown[]).map(toStr) : [],
+      proofBytes: toStr(r[4]),
+      nullifier: toStr(r[5]),
+      verifierAddress: toStr(r[6]),
+      createdAt: Number(r[7] ?? 0),
+      expiresAt: r[8] != null ? Number(r[8]) : undefined,
+      revealedAttributes: Array.isArray(r[9]) ? (r[9] as unknown[]).map(toStr) : [],
+      hiddenAttributes: Array.isArray(r[10]) ? (r[10] as unknown[]).map(toStr) : [],
+      predicates: Array.isArray(r[11]) ? (r[11] as unknown[]).map(this.parsePredicateInfo) : [],
+      metadata: this.parseMetadata(r[12]),
+    };
+  }
+
+  private parseCombinedDisclosure(raw: unknown): CombinedDisclosureProof {
+    const r = Array.isArray(raw) ? raw : [];
+    const toStr = (v: unknown) => (v instanceof Uint8Array ? new TextDecoder().decode(v) : String(v ?? ''));
+    return {
+      proofId: toStr(r[0]),
+      childProofIds: Array.isArray(r[1]) ? (r[1] as unknown[]).map(toStr) : [],
+      combinedPredicates: Array.isArray(r[2]) ? (r[2] as unknown[]).map(this.parsePredicateInfo) : [],
+      createdAt: Number(r[3] ?? 0),
+      expiresAt: r[4] != null ? Number(r[4]) : undefined,
+      metadata: this.parseMetadata(r[5]),
+    };
+  }
+
+  private parsePredicateInfo(raw: unknown): PredicateInfo {
+    const r = Array.isArray(raw) ? raw : [];
+    const toStr = (v: unknown) => (v instanceof Uint8Array ? new TextDecoder().decode(v) : String(v ?? ''));
+    const predTypeMap: Record<string, PredicateType> = {
+      '0': PredicateType.GreaterThan,
+      '1': PredicateType.LessThan,
+      '2': PredicateType.GreaterThanOrEqual,
+      '3': PredicateType.LessThanOrEqual,
+      '4': PredicateType.Equality,
+      '5': PredicateType.Range,
+      '6': PredicateType.InSet,
+      '7': PredicateType.NotInSet,
+    };
+    return {
+      attributeName: toStr(r[0]),
+      predicateType: predTypeMap[String(r[1])] || PredicateType.GreaterThan,
+      threshold: r[2] != null ? toStr(r[2]) : undefined,
+      rangeMin: r[3] != null ? toStr(r[3]) : undefined,
+      rangeMax: r[4] != null ? toStr(r[4]) : undefined,
+      allowedValues: Array.isArray(r[5]) ? (r[5] as unknown[]).map(toStr) : undefined,
+    };
   }
 
   async registerCircuit(

@@ -145,6 +145,48 @@ feat|fix|docs|test|refactor|chore: <description>
 - Test proof generation and verification
 - Test edge cases and invalid inputs
 
+## Code Quality Gates
+
+To maintain high code quality, CI enforces the following automated gates:
+
+| Gate                     | Threshold                | Enforcement Tool       |
+|--------------------------|--------------------------|------------------------|
+| Test coverage (Rust)     | ≥ 80%                    | `cargo-tarpaulin`      |
+| Test coverage (TS SDK)   | ≥ 80%                    | Jest coverage          |
+| Cyclomatic complexity    | ≤ 15 per function        | ESLint / Clippy        |
+| Function length          | ≤ 100 lines per function | ESLint / `scripts/check-rust-fn-length.py` |
+
+Failing any of these gates will block CI and prevent merging.
+
+### Waiver Process
+
+In exceptional cases where a code quality gate cannot be reasonably satisfied, a waiver may be requested:
+
+1. **Open an issue** with the title `waiver: <gate-name> for <file/function>` (e.g., `waiver: complexity for zk_attestation::verify_proof`)
+2. **Justify the exception** in the issue body:
+   - Which specific gate is being waived and why it cannot be met
+   - Why the code is still correct and maintainable despite the violation
+   - What alternative safeguards (if any) are in place (e.g., extensive tests, peer review)
+   - Proposed remediation plan (e.g., refactor in a future PR)
+3. **Obtain approval** from at least one maintainer
+4. **Reference the waiver** in the affected code using a comment:
+   ```rust
+   // WAIVER: complexity (#123) - ZK proof verification is inherently complex.
+   // Approved by @maintainer on YYYY-MM-DD. Revisit by YYYY-MM-DD.
+   ```
+   ```typescript
+   // WAIVER: max-lines-per-function (#456) - State machine transition logic.
+   // Approved by @maintainer on YYYY-MM-DD. Revisit by YYYY-MM-DD.
+   ```
+5. **Add a waiver expiry date** (maximum 6 months). All waivers must be revisited before expiring.
+
+### CI Bypass
+
+Waivers do **not** mean the CI check is skipped. Instead:
+- The lint error is suppressed via inline comment (e.g., `#[allow(clippy::cognitive_complexity)]` in Rust or `// eslint-disable-next-line complexity` in TypeScript)
+- The inline suppression must reference the waiver issue number
+- This keeps CI green while documenting the intentional exception
+
 ## Code of Conduct
 
 Please note that this project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md). By participating in this project, you agree to abide by its terms.
@@ -300,6 +342,48 @@ feat|fix|docs|test|refactor|chore: <description>
 ### Circuit Tests
 - Test proof generation and verification
 - Test edge cases and invalid inputs
+
+## Code Quality Gates
+
+To maintain high code quality, CI enforces the following automated gates:
+
+| Gate                     | Threshold                | Enforcement Tool       |
+|--------------------------|--------------------------|------------------------|
+| Test coverage (Rust)     | ≥ 80%                    | `cargo-tarpaulin`      |
+| Test coverage (TS SDK)   | ≥ 80%                    | Jest coverage          |
+| Cyclomatic complexity    | ≤ 15 per function        | ESLint / Clippy        |
+| Function length          | ≤ 100 lines per function | ESLint / `scripts/check-rust-fn-length.py` |
+
+Failing any of these gates will block CI and prevent merging.
+
+### Waiver Process
+
+In exceptional cases where a code quality gate cannot be reasonably satisfied, a waiver may be requested:
+
+1. **Open an issue** with the title `waiver: <gate-name> for <file/function>` (e.g., `waiver: complexity for zk_attestation::verify_proof`)
+2. **Justify the exception** in the issue body:
+   - Which specific gate is being waived and why it cannot be met
+   - Why the code is still correct and maintainable despite the violation
+   - What alternative safeguards (if any) are in place (e.g., extensive tests, peer review)
+   - Proposed remediation plan (e.g., refactor in a future PR)
+3. **Obtain approval** from at least one maintainer
+4. **Reference the waiver** in the affected code using a comment:
+   ```rust
+   // WAIVER: complexity (#123) - ZK proof verification is inherently complex.
+   // Approved by @maintainer on YYYY-MM-DD. Revisit by YYYY-MM-DD.
+   ```
+   ```typescript
+   // WAIVER: max-lines-per-function (#456) - State machine transition logic.
+   // Approved by @maintainer on YYYY-MM-DD. Revisit by YYYY-MM-DD.
+   ```
+5. **Add a waiver expiry date** (maximum 6 months). All waivers must be revisited before expiring.
+
+### CI Bypass
+
+Waivers do **not** mean the CI check is skipped. Instead:
+- The lint error is suppressed via inline comment (e.g., `#[allow(clippy::cognitive_complexity)]` in Rust or `// eslint-disable-next-line complexity` in TypeScript)
+- The inline suppression must reference the waiver issue number
+- This keeps CI green while documenting the intentional exception
 
 ## Code of Conduct
 
