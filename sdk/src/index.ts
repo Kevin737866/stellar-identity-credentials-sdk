@@ -167,6 +167,7 @@ export {
 export type { WalletType, WalletInfo } from './walletConnector';
 
 export { DIDResolver } from './didResolver';
+export { ExpirationManager } from './expirationManager';
 export type {
   W3CResolutionResult,
   DIDResolutionMetadata,
@@ -204,12 +205,9 @@ export type {
   ReputationScoreResult,
   ZKVerificationResult,
   ComplianceResult,
-  PredicateType,
-  PredicateInfo,
-  SelectiveDisclosureOptions,
-  SelectiveDisclosureProof,
-  SelectiveDisclosureVerificationResult,
-  CombinedDisclosureProof,
+  ExpirationEvent,
+  ExpirationHandler,
+  EventListener,
 } from './types';
 
 import { DIDClient } from './didClient';
@@ -218,7 +216,8 @@ import { ReputationClient } from './reputation';
 import { ZKProofsClient } from './zkProofs';
 import { CacheManager } from './cacheManager';
 import { EventSubscriber } from './eventSubscriber';
-import { GDPREngine } from './gdpr';
+import { RegulatoryReportingClient } from './regulatoryReporting';
+import { ExpirationManager } from './expirationManager';
 import { StellarIdentityConfig } from './types';
 import {
   validateConfig,
@@ -249,6 +248,7 @@ export class StellarIdentitySDK {
   public credentials: CredentialClient;
   public reputation: ReputationClient;
   public zkProofs: ZKProofsClient;
+  public expirationManager: ExpirationManager;
   public cache: CacheManager;
   public events: EventSubscriber;
   private config: StellarIdentityConfig;
@@ -262,6 +262,7 @@ export class StellarIdentitySDK {
     this.credentials = new CredentialClient(config);
     this.reputation = new ReputationClient(config);
     this.zkProofs = new ZKProofsClient(config);
+    this.expirationManager = new ExpirationManager(this.credentials);
     this.cache = new CacheManager();
     this.events = new EventSubscriber(config);
     this.gdpr = new GDPREngine(this.did, this.credentials);
