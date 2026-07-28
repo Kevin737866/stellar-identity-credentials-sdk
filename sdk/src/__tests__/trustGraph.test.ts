@@ -6,6 +6,54 @@
  * contract-bound methods are checked at API-surface level.
  */
 
+jest.mock('stellar-sdk', () => ({
+  SorobanRpc: {
+    Server: jest.fn().mockImplementation(() => ({
+      getAccount: jest.fn().mockRejectedValue(new Error('mock')),
+      simulateTransaction: jest.fn(),
+      prepareTransaction: jest.fn().mockImplementation((tx) => tx),
+      sendTransaction: jest.fn(),
+    })),
+    Api: {
+      isSimulationError: jest.fn().mockReturnValue(false),
+      SimulateTransactionSuccessResponse: class {},
+      SimulateTransactionErrorResponse: class {},
+    },
+  },
+  Contract: jest.fn().mockImplementation(() => ({ call: jest.fn().mockReturnValue({}) })),
+  Keypair: {
+    random: jest.fn().mockReturnValue({
+      publicKey: jest.fn().mockReturnValue('GB5DJQDKEJXGYQTELBQJXG2QFQHZXJN5T2YGF4Y4A3K5Z2Q2B4F5'),
+      sign: jest.fn(),
+    }),
+  },
+  TransactionBuilder: jest.fn().mockImplementation(() => ({
+    addOperation: jest.fn().mockReturnThis(),
+    setTimeout: jest.fn().mockReturnThis(),
+    build: jest.fn().mockReturnValue({ hash: jest.fn() }),
+  })),
+  Networks: {
+    PUBLIC: 'Public Global Stellar Network ; September 2015',
+    TESTNET: 'Test SDF Network ; September 2015',
+    FUTURENET: 'Test SDF Future Network ; October 2022',
+  },
+  Address: {
+    fromString: jest.fn(),
+    toScAddress: jest.fn(),
+  },
+  nativeToScVal: jest.fn().mockReturnValue({}),
+  scValToNative: jest.fn(),
+  xdr: {
+    ScVal: {
+      scvAddress: jest.fn().mockReturnValue({}),
+      scvVec: jest.fn().mockReturnValue({}),
+      scvVoid: jest.fn().mockReturnValue({}),
+      scvMap: jest.fn().mockReturnValue({}),
+    },
+    ScMapEntry: jest.fn(),
+  },
+}));
+
 import {
   findTrustPathsBFS,
   aggregateTrustWeight,

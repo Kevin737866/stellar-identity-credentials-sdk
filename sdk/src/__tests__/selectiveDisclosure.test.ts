@@ -9,7 +9,10 @@ jest.mock('stellar-sdk', () => ({
         result: { retval: {} },
       }),
       getAccount: jest.fn().mockResolvedValue({ sequenceNumber: jest.fn().mockReturnValue('0') }),
-      prepareTransaction: jest.fn().mockImplementation((tx) => Promise.resolve(tx)),
+      prepareTransaction: jest.fn().mockImplementation((tx) => Promise.resolve({
+        ...tx,
+        sign: jest.fn().mockReturnThis(),
+      })),
       sendTransaction: jest.fn().mockResolvedValue({ hash: 'txhash', status: 'SUCCESS' }),
     })),
     Api: {

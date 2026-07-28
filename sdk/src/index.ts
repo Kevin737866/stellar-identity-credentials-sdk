@@ -6,21 +6,6 @@ declare var require: (id: string) => any;
 import { Keypair } from 'stellar-sdk';
 import { GDPREngine } from './gdpr';
 
-export const DEFAULT_CONFIGS = {
-  testnet: {
-    network: 'testnet' as const,
-    rpcUrl: 'https://soroban-testnet.stellar.org',
-    contracts: {
-      didRegistry: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822a',
-      credentialIssuer: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822b',
-      reputationScore: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822c',
-      zkAttestation: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822d',
-      complianceFilter: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822e',
-      schemaRegistry: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822f',
-    },
-  },
-};
-
 export const UTILS = {
   generateKeypair: () => Keypair.random(),
 };
@@ -56,6 +41,7 @@ export type {
 export { ComplianceClient } from './compliance';
 
 export {
+  DEFAULT_CONFIGS,
   validateContractAddress,
   validateConfig,
   isConfigValid,
@@ -76,10 +62,6 @@ export type {
   ComplianceReport,
   TravelRulePayload,
   AlertSubscription,
-  ComplianceReportOptions,
-  JurisdictionRule,
-  RiskLevel,
-  EnrichedProfile,
 } from './compliance';
 
 export { RegulatoryReportingClient } from './regulatoryReporting';

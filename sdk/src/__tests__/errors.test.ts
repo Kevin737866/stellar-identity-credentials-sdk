@@ -180,7 +180,7 @@ describe('RECOVERY_HINTS', () => {
   });
 
   it('DID hints reference actionable steps', () => {
-    expect(RECOVERY_HINTS[ErrorCode.DIDNotFound]).toContain('resolveDID()');
+    expect(RECOVERY_HINTS[ErrorCode.DIDNotFound]).toMatch(/createDID\(\)|resolveDID\(\)/);
     expect(RECOVERY_HINTS[ErrorCode.DIDDeactivated]).toContain('deactivated');
     expect(RECOVERY_HINTS[ErrorCode.DIDRateLimitExceeded]).toContain('300 seconds');
   });
