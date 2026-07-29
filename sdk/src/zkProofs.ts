@@ -26,6 +26,8 @@ import {
   SelectiveDisclosureProof,
   SelectiveDisclosureVerificationResult,
   CombinedDisclosureProof,
+  ProofOptions,
+  NationalityProofInputs,
 } from './types';
 import { StellarIdentityError, mapContractError } from './errors';
 
@@ -1121,6 +1123,10 @@ export class ZKProofsClient {
     proofBytes: string,
     txOptions?: TransactionOptions
   ): Promise<string> {
+    // Issue #288: Validate public input types
+    if (!credentialHash || credentialHash.length === 0) {
+      throw new StellarIdentityError('credentialHash is required', 'INVALID_INPUT');
+    }
     return this.submitProof(
       submitterKeypair,
       {
@@ -1132,6 +1138,112 @@ export class ZKProofsClient {
         metadata: { type: 'credential_ownership' },
       },
       txOptions
+    );
+  }
+
+  /**
+   * Submit a nationality proof with typed public inputs (Issue #288).
+   * @param submitterKeypair - The keypair of the proof submitter
+   * @param circuitId - The circuit identifier
+   * @param nationalityCommitment - Commitment to the user's nationality
+   * @param allowedCountries - Array of allowed country codes
+   * @param proofBytes - The ZK proof bytes
+   * @param options - Optional ProofOptions (expiration, metadata, revealedAttributes)
+   * @returns The proof ID
+   */
+  async submitNationalityProof(
+    submitterKeypair: Keypair,
+    circuitId: string,
+    nationalityCommitment: string,
+    allowedCountries: string[],
+    proofBytes: string,
+    options?: ProofOptions
+  ): Promise<string> {
+    // Issue #288: Validate public input types
+    if (!nationalityCommitment || nationalityCommitment.length === 0) {
+      throw new StellarIdentityError('nationalityCommitment is required', 'INVALID_INPUT');
+    }
+    if (!Array.isArray(allowedCountries) || allowedCountries.length === 0) {
+      throw new StellarIdentityError('allowedCountries must be a non-empty array', 'INVALID_INPUT');
+    }
+    return this.submitProof(
+      submitterKeypair,
+      {
+        circuitId,
+        publicInputs: [nationalityCommitment, JSON.stringify(allowedCountries)],
+        proofBytes,
+        nullifier: this.generateNullifier(`nationality_${nationalityCommitment}`, circuitId, 'manual'),
+        revealedAttributes: options?.revealedAttributeAttribute ?? ['nationality_commitment'],
+        expiresAt: options?.expiration,
+        metadata: { type: 'nationality_verification', countries: allowedCountries.join(','), ...options?.metadata },
+      },
+      options?.txOptions
+    );
+  }
+
+  /**
+   * Submit an age proof with typed public inputs and ProofOptions (Issue #288).
+   */
+  async submitAgeProofTyped(
+    submitterKeypair: Keypair,
+    circuitId: string,
+    ageCommitment: string,
+    minAge: number,
+    proofBytes: string,
+    options?: ProofOptions
+  ): Promise<string> {
+    // Issue #288: Validate public input types
+    if (!ageCommitment || ageCommitment.length === 0) {
+      throw new StellarIdentityError('ageCommitment is required', 'INVALID_INPUT');
+    }
+    if (typeof minAge !== 'number' || minAge < 0 || minAge > 150) {
+      throw new StellarIdentityError('minAge must be a number between 0 and 150', 'INVALID_INPUT');
+    }
+    return this.submitProof(
+      submitterKeypair,
+      {
+        circuitId,
+        publicInputs: [ageCommitment, String(minAge)],
+        proofBytes,
+        nullifier: this.generateNullifier(`age_${minAge}`, circuitId, 'manual'),
+        revealedAttributes: options?.revealedAttributes ?? ['age_commitment'],
+        expiresAt: options?.expiration,
+        metadata: { type: 'age_verification', minAge: String(minAge), ...options?.metadata },
+      },
+      options?.txOptions
+    );
+  }
+
+  /**
+   * Submit an income proof with typed public inputs and ProofOptions (Issue #288).
+   */
+  async submitIncomeProofTyped(
+    submitterKeypair: Keypair,
+    circuitId: string,
+    incomeCommitment: string,
+    minIncome: number,
+    proofBytes: string,
+    options?: ProofOptions
+  ): Promise<string> {
+    // Issue #288: Validate public input types
+    if (!incomeCommitment || incomeCommitment.length === 0) {
+      throw new StellarIdentityError('incomeCommitment is required', 'INVALID_INPUT');
+    }
+    if (typeof minIncome !== 'number' || minIncome < 0) {
+      throw new StellarIdentityError('minIncome must be a non-negative number', 'INVALID_INPUT');
+    }
+    return this.submitProof(
+      submitterKeypair,
+      {
+        circuitId,
+        publicInputs: [incomeCommitment, String(minIncome)],
+        proofBytes,
+        nullifier: this.generateNullifier(`income_${minIncome}`, circuitId, 'manual'),
+        revealedAttributes: options?.revealedAttributes ?? ['income_commitment'],
+        expiresAt: options?.expiration,
+        metadata: { type: 'income_verification', minIncome: String(minIncome), ...options?.metadata },
+      },
+      options?.txOptions
     );
   }
 

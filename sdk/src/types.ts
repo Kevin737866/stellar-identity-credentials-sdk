@@ -336,6 +336,36 @@ export interface ZKProofOptions {
   txOptions?: TransactionOptions;
 }
 
+/**
+ * Options for typed proof submission (Issue #288).
+ * Configurable expiration, metadata, and revealed attributes.
+ */
+export interface ProofOptions {
+  /** Unix timestamp (seconds) when the proof expires. 0 = no expiration. */
+  expiration?: number;
+  /** Additional metadata to attach to the proof. */
+  metadata?: Record<string, string>;
+  /** Attributes to reveal publicly with the proof. */
+  revealedAttributes?: string[];
+  /** Transaction options (fee, timeout, etc.). */
+  txOptions?: TransactionOptions;
+}
+
+/**
+ * Public inputs for nationality proof (Issue #288).
+ */
+export interface NationalityProofInputs {
+  nationalityCommitment: string;
+  allowedCountries: string[];
+}
+
+/**
+ * Public inputs for credential ownership proof (Issue #288).
+ */
+export interface CredentialOwnershipProofInputs {
+  credentialId: string;
+}
+
 export interface ProofGenerationInputs {
   [key: string]: any;
 }
@@ -472,6 +502,36 @@ export interface SelectiveDisclosureOptions {
   metadata?: Record<string, string>;
   context?: string;
   txOptions?: TransactionOptions;
+}
+
+/**
+ * Options for typed proof submission (Issue #288).
+ * Configurable expiration, metadata, and revealed attributes.
+ */
+export interface ProofOptions {
+  /** Unix timestamp (seconds) when the proof expires. 0 = no expiration. */
+  expiration?: number;
+  /** Additional metadata to attach to the proof. */
+  metadata?: Record<string, string>;
+  /** Attributes to reveal publicly with the proof. */
+  revealedAttributes?: string[];
+  /** Transaction options (fee, timeout, etc.). */
+  txOptions?: TransactionOptions;
+}
+
+/**
+ * Public inputs for nationality proof (Issue #288).
+ */
+export interface NationalityProofInputs {
+  nationalityCommitment: string;
+  allowedCountries: string[];
+}
+
+/**
+ * Public inputs for credential ownership proof (Issue #288).
+ */
+export interface CredentialOwnershipProofInputs {
+  credentialId: string;
 }
 
 export interface SelectiveDisclosureProof {
