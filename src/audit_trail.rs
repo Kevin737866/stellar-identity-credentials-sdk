@@ -93,9 +93,7 @@ fn current_counter(env: &Env) -> u64 {
 
 fn increment_counter(env: &Env) -> u64 {
     let next = current_counter(env) + 1;
-    env.storage()
-        .instance()
-        .set(&AuditKey::Counter, &next);
+    env.storage().instance().set(&AuditKey::Counter, &next);
     next
 }
 

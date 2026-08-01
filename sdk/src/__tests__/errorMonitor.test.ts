@@ -268,7 +268,8 @@ describe('ErrorMonitor queries', () => {
 
   it('getByClass() filters by errorClass', () => {
     const networkEvents = monitor.getByClass('network');
-    expect(networkEvents).toHaveLength(2); // NetworkTimeout + RateLimitError → ratelimit
+    // Only NetworkTimeout has errorClass 'network'; RateLimitError has 'ratelimit'
+    expect(networkEvents).toHaveLength(1);
     networkEvents.forEach(e => expect(e.errorClass).toBe('network'));
   });
 

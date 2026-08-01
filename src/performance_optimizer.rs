@@ -1,7 +1,8 @@
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Map, Symbol, Vec, U256,
-};
 use sha2::{Digest, Sha256};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Map, Symbol, Vec,
+    U256,
+};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -133,7 +134,8 @@ impl PerformanceOptimizer {
         if cache.len() >= config.cache_size_limit as usize {
             // Remove oldest proof (FIFO eviction)
             if let Some(old_proof_id) = cache.get(0) {
-                let old_cache_key = Symbol::new(&env, &format!("cached_proof:{}", old_proof_id.to_string()));
+                let old_cache_key =
+                    Symbol::new(&env, &format!("cached_proof:{}", old_proof_id.to_string()));
                 env.storage().persistent().remove(&old_cache_key);
                 cache.remove(0);
             }
@@ -190,7 +192,7 @@ impl PerformanceOptimizer {
         public_inputs: Vec<Bytes>,
     ) -> Result<CachedProof, PerformanceError> {
         let cache_entry_key = Symbol::new(&env, &format!("cached_proof:{}", proof_id.to_string()));
-        
+
         let mut cached_proof: CachedProof = env
             .storage()
             .persistent()
@@ -267,7 +269,12 @@ impl PerformanceOptimizer {
                 }
                 Err(_) => {
                     // Cache miss - perform verification
-                    match Self::verify_single_proof(env.clone(), proof_id.clone(), circuit_id.clone(), public_inputs.clone()) {
+                    match Self::verify_single_proof(
+                        env.clone(),
+                        proof_id.clone(),
+                        circuit_id.clone(),
+                        public_inputs.clone(),
+                    ) {
                         Ok(gas_used) => {
                             successful += 1;
                             total_gas += gas_used;
@@ -282,7 +289,11 @@ impl PerformanceOptimizer {
 
         let total_time = env.ledger().timestamp() - start_time;
         let total_proofs = proof_ids.len() as u32;
-        let average_time = if total_proofs > 0 { total_time / total_proofs as u64 } else { 0 };
+        let average_time = if total_proofs > 0 {
+            total_time / total_proofs as u64
+        } else {
+            0
+        };
 
         let result = BatchVerificationResult {
             total_proofs,
@@ -300,9 +311,10 @@ impl PerformanceOptimizer {
             .get(&Symbol::new(&env, "total_verifications"))
             .unwrap_or(0u32);
         total_verifications += total_proofs;
-        env.storage()
-            .persistent()
-            .set(&Symbol::new(&env, "total_verifications"), &total_verifications);
+        env.storage().persistent().set(
+            &Symbol::new(&env, "total_verifications"),
+            &total_verifications,
+        );
 
         Ok(result)
     }
@@ -316,13 +328,13 @@ impl PerformanceOptimizer {
     ) -> Result<u64, PerformanceError> {
         // In a real implementation, this would perform actual ZK verification
         // For now, we'll simulate verification with gas estimation
-        
+
         let gas_consumed = 1000000u64; // Simulated gas consumption
-        
+
         // Record performance metrics
         let metrics = PerformanceMetrics {
             proof_generation_time_ms: 0, // Not applicable for verification
-            verification_time_ms: 1500, // Simulated verification time
+            verification_time_ms: 1500,  // Simulated verification time
             proof_size_bytes: public_inputs.len() as u32 * 32, // Estimate
             memory_usage_mb: 50,
             gas_consumed,
@@ -501,8 +513,9 @@ impl PerformanceOptimizer {
 
         let mut indices_to_remove = Vec::new(&env);
         for (i, proof_id) in cache.iter().enumerate() {
-            let cache_entry_key = Symbol::new(&env, &format!("cached_proof:{}", proof_id.to_string()));
-            if let Some(cached_proof): Option<CachedProof> = env.storage().persistent().get(&cache_entry_key) {
+            let cache_entry_key =
+                Symbol::new(&env, &format!("cached_proof:{}", proof_id.to_string()));
+            if let Some(cached_proof) = env.storage().persistent().get(&cache_entry_key) {
                 if current_time > cached_proof.expires_at {
                     indices_to_remove.push_back(i as u32);
                 }
@@ -513,7 +526,8 @@ impl PerformanceOptimizer {
         for i in (0..indices_to_remove.len()).rev() {
             let index = indices_to_remove.get(i).unwrap();
             if let Some(proof_id) = cache.get(*index as usize) {
-                let cache_entry_key = Symbol::new(&env, &format!("cached_proof:{}", proof_id.to_string()));
+                let cache_entry_key =
+                    Symbol::new(&env, &format!("cached_proof:{}", proof_id.to_string()));
                 env.storage().persistent().remove(&cache_entry_key);
                 cache.remove(*index as usize);
                 cleaned_count += 1;
@@ -539,7 +553,7 @@ impl PerformanceOptimizer {
 
         for _ in 0..iterations {
             let iteration_start = env.ledger().timestamp();
-            
+
             // Simulate proof generation and verification
             let gas_used = Self::verify_single_proof(
                 env.clone(),
@@ -547,7 +561,7 @@ impl PerformanceOptimizer {
                 circuit_id.clone(),
                 test_inputs.clone(),
             )?;
-            
+
             let iteration_time = env.ledger().timestamp() - iteration_start;
             total_time += iteration_time;
             total_gas += gas_used;

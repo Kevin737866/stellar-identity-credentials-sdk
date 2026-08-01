@@ -780,9 +780,7 @@ impl ComplianceFilter {
         admin.require_auth();
         Self::assert_admin(&env, &admin)?;
 
-        if weights.high_risk_threshold == 0
-            || weights.high_risk_threshold > MAX_RISK_SCORE
-        {
+        if weights.high_risk_threshold == 0 || weights.high_risk_threshold > MAX_RISK_SCORE {
             return Err(ComplianceFilterError::InvalidRiskScore);
         }
 
@@ -808,10 +806,7 @@ impl ComplianceFilter {
     ///
     /// Returns a `RiskAssessment` with the aggregated score, contributing
     /// factors, and an overall `RiskLevel`.
-    pub fn assess_risk(
-        env: Env,
-        address: Address,
-    ) -> RiskAssessment {
+    pub fn assess_risk(env: Env, address: Address) -> RiskAssessment {
         // 1. Sanctions screening
         let (screening, blocked) = Self::run_screening(&env, &address);
         let sanction_score: u32 = if blocked { MAX_RISK_SCORE } else { 0 };
@@ -843,7 +838,9 @@ impl ComplianceFilter {
                 last_updated: 0,
             });
 
-        let total_weight = weights.sanctions_weight.saturating_add(weights.oracle_weight);
+        let total_weight = weights
+            .sanctions_weight
+            .saturating_add(weights.oracle_weight);
         let aggregated_score: u32 = if total_weight == 0 {
             0
         } else {
@@ -1870,8 +1867,14 @@ mod tests {
         assert_eq!(assessment.overall, RiskLevel::Low);
         assert_eq!(assessment.score, 0);
         assert_eq!(assessment.factors.len(), 2);
-        assert_eq!(assessment.factors.get(0).unwrap().name, Bytes::from_slice(&env, b"sanctions"));
-        assert_eq!(assessment.factors.get(1).unwrap().name, Bytes::from_slice(&env, b"oracle"));
+        assert_eq!(
+            assessment.factors.get(0).unwrap().name,
+            Bytes::from_slice(&env, b"sanctions")
+        );
+        assert_eq!(
+            assessment.factors.get(1).unwrap().name,
+            Bytes::from_slice(&env, b"oracle")
+        );
     }
 
     #[test]

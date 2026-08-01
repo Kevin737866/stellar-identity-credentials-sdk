@@ -59,7 +59,13 @@ fn bench_create_did() {
         },
     ];
 
-    let result = DIDRegistry::create_did(env.clone(), controller, did, soroban_sdk::vec![&env, vm], services);
+    let result = DIDRegistry::create_did(
+        env.clone(),
+        controller,
+        did,
+        soroban_sdk::vec![&env, vm],
+        services,
+    );
     assert!(result.is_ok());
     std::println!("[BENCH] create_did            OK");
 }
@@ -500,8 +506,12 @@ fn bench_update_credential_reputation() {
     ReputationScore::initialize(env.clone(), admin, config);
     let _ = ReputationScore::initialize_reputation(env.clone(), user.clone());
 
-    let result =
-        ReputationScore::update_credential_reputation(env.clone(), user, true, Bytes::from_slice(&env, b"KYC"));
+    let result = ReputationScore::update_credential_reputation(
+        env.clone(),
+        user,
+        true,
+        Bytes::from_slice(&env, b"KYC"),
+    );
     assert!(result.is_ok());
     std::println!("[BENCH] update_cred_reputation OK");
 }
@@ -523,11 +533,7 @@ fn bench_batch_update_transaction_reputation() {
     let _ = ReputationScore::initialize_reputation(env.clone(), user1.clone());
     let _ = ReputationScore::initialize_reputation(env.clone(), user2.clone());
 
-    let updates = soroban_sdk::vec![
-        &env,
-        (user1, true, 1000i128),
-        (user2, true, 2000i128),
-    ];
+    let updates = soroban_sdk::vec![&env, (user1, true, 1000i128), (user2, true, 2000i128),];
 
     let result = ReputationScore::batch_update_transaction_reputation(env.clone(), updates);
     assert!(result.is_ok());
@@ -665,7 +671,11 @@ fn bench_batch_verify_proofs() {
     let proof_ids = soroban_sdk::vec![
         &env,
         {
-            let public_inputs = soroban_sdk::vec![&env, Bytes::from_slice(&env, b"pub1"), Bytes::from_slice(&env, b"pub2")];
+            let public_inputs = soroban_sdk::vec![
+                &env,
+                Bytes::from_slice(&env, b"pub1"),
+                Bytes::from_slice(&env, b"pub2")
+            ];
             let metadata: Map<Symbol, Bytes> = Map::new(&env);
             ZKAttestation::submit_proof(
                 env.clone(),
@@ -676,10 +686,15 @@ fn bench_batch_verify_proofs() {
                 soroban_sdk::vec![&env, Symbol::new(&env, "age")],
                 None,
                 metadata,
-            ).unwrap()
+            )
+            .unwrap()
         },
         {
-            let public_inputs = soroban_sdk::vec![&env, Bytes::from_slice(&env, b"pub1"), Bytes::from_slice(&env, b"pub2")];
+            let public_inputs = soroban_sdk::vec![
+                &env,
+                Bytes::from_slice(&env, b"pub1"),
+                Bytes::from_slice(&env, b"pub2")
+            ];
             let metadata: Map<Symbol, Bytes> = Map::new(&env);
             ZKAttestation::submit_proof(
                 env.clone(),
@@ -690,7 +705,8 @@ fn bench_batch_verify_proofs() {
                 soroban_sdk::vec![&env, Symbol::new(&env, "age")],
                 None,
                 metadata,
-            ).unwrap()
+            )
+            .unwrap()
         },
     ];
 
@@ -706,7 +722,8 @@ fn bench_batch_screen_addresses() {
 
     let source = Bytes::from_slice(&env, b"OFAC_SDN");
     let hash = BytesN::from_array(&env, &[2u8; 32]);
-    ComplianceFilter::update_sanctions_list(env.clone(), admin.clone(), source.clone(), hash, 1).unwrap();
+    ComplianceFilter::update_sanctions_list(env.clone(), admin.clone(), source.clone(), hash, 1)
+        .unwrap();
 
     let addresses = soroban_sdk::vec![
         &env,

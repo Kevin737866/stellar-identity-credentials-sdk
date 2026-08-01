@@ -1,4 +1,6 @@
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol,
+};
 
 use crate::CredentialSchema;
 
@@ -20,7 +22,6 @@ pub enum SchemaKey {
     Version(Bytes),
     Schema(Bytes, u32),
 }
-
 
 #[contractimpl]
 impl CredentialSchemaRegistry {
@@ -62,10 +63,9 @@ impl CredentialSchemaRegistry {
         env.storage().persistent().set(&version_key, &schema);
 
         // Store current version
-        env.storage().persistent().set(
-            &Symbol::new(&env, &format!("version:{}", "<bytes>")),
-            &1u32,
-        );
+        env.storage()
+            .persistent()
+            .set(&Symbol::new(&env, &format!("version:{}", "<bytes>")), &1u32);
 
         Ok(())
     }

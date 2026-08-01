@@ -51,6 +51,7 @@ export const DEFAULT_CONFIGS: Record<string, StellarIdentityConfig> = {
       reputationScore: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822c',
       zkAttestation: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822d',
       complianceFilter: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822e',
+      schemaRegistry: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822f',
     },
   },
   mainnet: {
@@ -63,6 +64,7 @@ export const DEFAULT_CONFIGS: Record<string, StellarIdentityConfig> = {
       reputationScore: '',
       zkAttestation: '',
       complianceFilter: '',
+      schemaRegistry: '',
     },
   },
   futurenet: {
@@ -75,6 +77,7 @@ export const DEFAULT_CONFIGS: Record<string, StellarIdentityConfig> = {
       reputationScore: '',
       zkAttestation: '',
       complianceFilter: '',
+      schemaRegistry: '',
     },
   },
 };

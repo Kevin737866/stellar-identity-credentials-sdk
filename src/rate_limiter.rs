@@ -10,7 +10,6 @@
 ///   persistent storage with rate-limit bookkeeping.
 /// - Admin can update limits via contract-level storage; defaults are applied
 ///   when no admin config exists.
-
 use soroban_sdk::{contracterror, contracttype, Address, Env, Symbol};
 
 // ---------------------------------------------------------------------------
@@ -90,14 +89,14 @@ pub fn check_rate_limit(
 
     let now = env.ledger().timestamp();
 
-    let mut bucket: RateLimitBucket = env
-        .storage()
-        .temporary()
-        .get(&key)
-        .unwrap_or(RateLimitBucket {
-            count: 0,
-            window_start: now,
-        });
+    let mut bucket: RateLimitBucket =
+        env.storage()
+            .temporary()
+            .get(&key)
+            .unwrap_or(RateLimitBucket {
+                count: 0,
+                window_start: now,
+            });
 
     // Reset window if expired
     if now.saturating_sub(bucket.window_start) >= window_secs {
@@ -117,9 +116,7 @@ pub fn check_rate_limit(
     bucket.count += 1;
     // TTL: keep bucket alive for the window duration (in ledgers, ~5s each)
     let ttl_ledgers = ((window_secs / 5) + 1) as u32;
-    env.storage()
-        .temporary()
-        .set(&key, &bucket);
+    env.storage().temporary().set(&key, &bucket);
     env.storage()
         .temporary()
         .extend_ttl(&key, ttl_ledgers, ttl_ledgers);

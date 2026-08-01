@@ -31,22 +31,23 @@ describe('calculateDelay', () => {
   const opts = { baseDelayMs: 500, backoffMultiplier: 2, maxDelayMs: 30_000, jitterFactor: 0 };
 
   it('attempt 1 → baseDelayMs with zero jitter', () => {
-    const err = new NetworkError(ErrorCode.NetworkTimeout);
+    // NetworkTransactionFailed has no explicit retryDelayMs, so defaults to 0
+    const err = new NetworkError(ErrorCode.NetworkTransactionFailed);
     expect(calculateDelay(1, err, opts)).toBe(500);
   });
 
   it('attempt 2 → 2× base', () => {
-    const err = new NetworkError(ErrorCode.NetworkTimeout);
+    const err = new NetworkError(ErrorCode.NetworkTransactionFailed);
     expect(calculateDelay(2, err, opts)).toBe(1_000);
   });
 
   it('attempt 3 → 4× base', () => {
-    const err = new NetworkError(ErrorCode.NetworkTimeout);
+    const err = new NetworkError(ErrorCode.NetworkTransactionFailed);
     expect(calculateDelay(3, err, opts)).toBe(2_000);
   });
 
   it('is capped at maxDelayMs', () => {
-    const err = new NetworkError(ErrorCode.NetworkTimeout);
+    const err = new NetworkError(ErrorCode.NetworkTransactionFailed);
     const capped = calculateDelay(20, err, opts);
     expect(capped).toBe(30_000);
   });
@@ -59,7 +60,8 @@ describe('calculateDelay', () => {
 
   it('jitter stays within ±jitterFactor range', () => {
     const jitteredOpts = { ...opts, jitterFactor: 0.25 };
-    const err = new NetworkError(ErrorCode.NetworkTimeout);
+    // Use error with no retryDelayMs so the base delay from opts is used directly
+    const err = new NetworkError(ErrorCode.NetworkTransactionFailed);
     for (let i = 0; i < 50; i++) {
       const d = calculateDelay(1, err, jitteredOpts);
       expect(d).toBeGreaterThanOrEqual(375); // 500 * (1 - 0.25)
@@ -114,9 +116,12 @@ describe('withRetry', () => {
   it('throws NetworkMaxRetriesExceeded after exhausting attempts', async () => {
     const fn = jest.fn().mockRejectedValue(new NetworkError(ErrorCode.NetworkTimeout));
 
-    const p = withRetry(fn, retryOpts);
+    // Register .catch() handler synchronously, THEN advance fake timers,
+    // THEN await. This prevents unhandled rejection while still allowing
+    // the fake setTimeout in sleep() to fire.
+    const errP = withRetry(fn, retryOpts).catch(e => e);
     await flushTimers();
-    const err = await p.catch(e => e);
+    const err = await errP;
 
     expect(err).toBeInstanceOf(NetworkError);
     expect(err.code).toBe(ErrorCode.NetworkMaxRetriesExceeded);
@@ -165,10 +170,9 @@ describe('withRetry', () => {
 
   it('respects maxAttempts=1 — no retries at all', async () => {
     const fn = jest.fn().mockRejectedValue(new NetworkError(ErrorCode.NetworkTimeout));
-    const p = withRetry(fn, { ...retryOpts, maxAttempts: 1 });
-    await flushTimers();
-    const err = await p.catch(e => e);
-    expect(err.code).toBe(ErrorCode.NetworkMaxRetriesExceeded);
+    await expect(withRetry(fn, { ...retryOpts, maxAttempts: 1 })).rejects.toMatchObject({
+      code: ErrorCode.NetworkMaxRetriesExceeded,
+    });
     expect(fn).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,10 +1,10 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Bytes, BytesN, Env, Map,
-    Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, BytesN, Env, Map, Symbol,
+    Vec,
 };
 
-use crate::{clamp_page_size, PaginatedCircuits};
 use crate::admin;
+use crate::{clamp_page_size, PaginatedCircuits};
 
 // ---------------------------------------------------------------------------
 // Namespaced storage keys (#58)
@@ -176,8 +176,7 @@ impl ZKAttestationContract {
         supported_attributes: Vec<Symbol>,
     ) -> Result<(), ZKAttestationError> {
         admin_address.require_auth();
-        admin::only_admin(&env, &admin_address)
-            .map_err(|_| ZKAttestationError::Unauthorized)?;
+        admin::only_admin(&env, &admin_address).map_err(|_| ZKAttestationError::Unauthorized)?;
 
         if env
             .storage()
@@ -866,10 +865,7 @@ mod tests {
         let events = env.events().all();
         assert!(events.iter().any(|e| {
             let topics = e.0.clone();
-            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(
-                &env,
-                "ProofCreated",
-            )))
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(&env, "ProofCreated")))
         }));
     }
 
@@ -1017,8 +1013,8 @@ mod tests {
             vec![&env, Bytes::from_slice(&env, b"input_1")],
             Bytes::from_slice(&env, b"proof_data"),
             Bytes::from_slice(&env, b"nullifier_2"),
-            vec![&env, Symbol::new(&env, "age")],   // revealed
-            vec![&env, Symbol::new(&env, "age")],   // hidden (conflict)
+            vec![&env, Symbol::new(&env, "age")], // revealed
+            vec![&env, Symbol::new(&env, "age")], // hidden (conflict)
             predicates,
             None,
             Map::new(&env),
@@ -1064,11 +1060,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = ZKAttestation::verify_selective_disclosure(
-            env.clone(),
-            proof_id,
-            predicates,
-        );
+        let result = ZKAttestation::verify_selective_disclosure(env.clone(), proof_id, predicates);
 
         assert!(result.is_ok());
         assert!(result.unwrap());
@@ -1123,11 +1115,8 @@ mod tests {
             },
         ];
 
-        let result = ZKAttestation::verify_selective_disclosure(
-            env.clone(),
-            proof_id,
-            wrong_predicates,
-        );
+        let result =
+            ZKAttestation::verify_selective_disclosure(env.clone(), proof_id, wrong_predicates);
 
         assert_eq!(result, Err(ZKAttestationError::PredicateMismatch));
     }
@@ -1203,11 +1192,8 @@ mod tests {
     #[test]
     fn test_combine_selective_disclosures_empty_fails() {
         let env = setup_env();
-        let result = ZKAttestation::combine_selective_disclosures(
-            env.clone(),
-            vec![&env],
-            Map::new(&env),
-        );
+        let result =
+            ZKAttestation::combine_selective_disclosures(env.clone(), vec![&env], Map::new(&env));
         assert_eq!(result, Err(ZKAttestationError::CombiningFailed));
     }
 

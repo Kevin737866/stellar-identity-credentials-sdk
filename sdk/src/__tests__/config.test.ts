@@ -20,6 +20,17 @@ import { ConfigurationError, ErrorCode } from '../errors';
 import { StellarIdentityConfig } from '../types';
 import { Networks } from 'stellar-sdk';
 
+// Mock stellar-sdk so config.ts can resolve the named Networks export
+// in the ts-jest environment while keeping real implementations.
+jest.mock('stellar-sdk', () => ({
+  ...jest.requireActual('stellar-sdk'),
+  Networks: {
+    PUBLIC: 'Public Global Stellar Network ; September 2015',
+    TESTNET: 'Test SDF Network ; September 2015',
+    FUTURENET: 'Test SDF Future Network ; October 2022',
+  },
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

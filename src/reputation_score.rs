@@ -2,9 +2,9 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
 };
 
-use crate::{clamp_page_size, PaginatedReputationHistory};
 use crate::rate_limiter::{check_rate_limit, defaults};
 use crate::reentrancy_guard::ReentrancyGuard;
+use crate::{clamp_page_size, PaginatedReputationHistory};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -412,12 +412,8 @@ impl ReputationScore {
     ) -> Result<Vec<u32>, ReputationScoreError> {
         let mut scores = Vec::new(&env);
         for (address, success, amount) in updates.iter() {
-            let score = Self::update_transaction_reputation(
-                env.clone(),
-                address.clone(),
-                success,
-                amount,
-            )?;
+            let score =
+                Self::update_transaction_reputation(env.clone(), address.clone(), success, amount)?;
             scores.push_back(score);
         }
         Ok(scores)
@@ -541,7 +537,11 @@ impl ReputationScore {
 
         env.events().publish(
             (Symbol::new(&env, "TierThresholdsConfigured"),),
-            (config.max_score, config.transaction_success_weight, config.credential_valid_weight),
+            (
+                config.max_score,
+                config.transaction_success_weight,
+                config.credential_valid_weight,
+            ),
         );
 
         Ok(())

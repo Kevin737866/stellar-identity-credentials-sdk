@@ -4,21 +4,7 @@ declare var require: (id: string) => any;
 /* eslint-enable no-var */
 
 import { Keypair } from 'stellar-sdk';
-
-export const DEFAULT_CONFIGS = {
-  testnet: {
-    network: 'testnet' as const,
-    rpcUrl: 'https://soroban-testnet.stellar.org',
-    contracts: {
-      didRegistry: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822a',
-      credentialIssuer: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822b',
-      reputationScore: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822c',
-      zkAttestation: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822d',
-      complianceFilter: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822e',
-      schemaRegistry: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822f',
-    },
-  },
-};
+import { GDPREngine } from './gdpr';
 
 export const UTILS = {
   generateKeypair: () => Keypair.random(),
@@ -32,6 +18,15 @@ export { SchemaRegistryClient } from './schemaClient';
 export { CacheManager, DataType } from './cacheManager';
 export { compressPayload, decompressPayload, compressionRatio } from './compression';
 export { EventSubscriber } from './eventSubscriber';
+export type {
+  EventType,
+  EventFilter,
+  Subscription,
+  ContractEvent,
+  ContractEventHandler,
+  PollingOptions,
+  SDKEvent,
+} from './eventSubscriber';
 export { Logger, LogLevel } from './logger';
 export { GDPREngine } from './gdpr';
 export type { ConsentRecord, ProcessingRecord, GDPRComplianceOptions } from './gdpr';
@@ -46,6 +41,7 @@ export type {
 export { ComplianceClient } from './compliance';
 
 export {
+  DEFAULT_CONFIGS,
   validateContractAddress,
   validateConfig,
   isConfigValid,
@@ -66,10 +62,6 @@ export type {
   ComplianceReport,
   TravelRulePayload,
   AlertSubscription,
-  ComplianceReportOptions,
-  JurisdictionRule,
-  RiskLevel,
-  EnrichedProfile,
 } from './compliance';
 
 export { RegulatoryReportingClient } from './regulatoryReporting';
@@ -274,6 +266,7 @@ export class StellarIdentitySDK {
   public schemaRegistry: SchemaRegistryClient;
   public cache: CacheManager;
   public events: EventSubscriber;
+  public gdpr: GDPREngine;
   private config: StellarIdentityConfig;
 
   constructor(config: StellarIdentityConfig, options?: { validate?: boolean }) {
