@@ -63,6 +63,11 @@ enum CfKey {
     AuditIndex(Address),
     ListIndex,
     RiskWeights,
+    // Enhanced compliance rule engine (#273)
+    RuleCondition(Bytes),
+    JurisdictionParent(Bytes),
+    JurisdictionChildren(Bytes),
+    RuleEvaluation(Address, Bytes),
 }
 
 // ── Data structures ───────────────────────────────────────────────────────────
@@ -95,6 +100,47 @@ pub struct ComplianceRule {
     pub enforcement: Bytes,
     pub active: bool,
     pub created: u64,
+}
+
+/// Conditions that a compliance rule evaluates against (#273).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComplianceRuleCondition {
+    pub max_transaction_amount: Option<i128>,
+    pub min_transaction_amount: Option<i128>,
+    pub required_credential_type: Option<Bytes>,
+    pub min_identity_verification_level: Option<u32>,
+}
+
+/// A rule violation found during evaluation (#273).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuleViolation {
+    pub jurisdiction: Bytes,
+    pub requirement: Bytes,
+    pub violation_detail: Bytes,
+}
+
+/// Input for compliance rule evaluation (#273).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComplianceEvaluationInput {
+    pub subject: Address,
+    pub jurisdiction: Bytes,
+    pub transaction_amount: Option<i128>,
+    pub credential_types: Vec<Bytes>,
+    pub identity_verification_level: u32,
+}
+
+/// Result of compliance rule evaluation (#273).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComplianceEvaluationResult {
+    pub subject: Address,
+    pub jurisdiction: Bytes,
+    pub violations: Vec<RuleViolation>,
+    pub total_rules_evaluated: u32,
+    pub timestamp: u64,
 }
 
 #[contracttype]
@@ -729,6 +775,185 @@ impl ComplianceFilter {
 
     pub fn get_compliance_rule(env: Env, jurisdiction: Bytes) -> Option<ComplianceRule> {
         env.storage().persistent().get(&CfKey::Rule(jurisdiction))
+    }
+
+    // ── Jurisdiction-specific compliance rule engine (#273) ──────────────
+
+    /// Set the parent of a jurisdiction for hierarchical rule inheritance.
+    pub fn set_jurisdiction_parent(
+        env: Env,
+        admin: Address,
+        child: Bytes,
+        parent: Bytes,
+    ) -> Result<(), ComplianceFilterError> {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin)?;
+        if child.is_empty() || parent.is_empty() || child == parent {
+            return Err(ComplianceFilterError::InvalidInput);
+        }
+        env.storage().persistent().set(&CfKey::JurisdictionParent(child.clone()), &parent);
+        let mut children: Vec<Bytes> = env.storage().persistent()
+            .get(&CfKey::JurisdictionChildren(parent.clone())).unwrap_or_else(|| Vec::new(&env));
+        let mut exists = false;
+        for c in children.iter() { if c == child { exists = true; break; } }
+        if !exists { children.push_back(child.clone()); }
+        env.storage().persistent().set(&CfKey::JurisdictionChildren(parent), &children);
+        env.events().publish((Symbol::new(&env, "jur_parent_set"),), ());
+        Ok(())
+    }
+
+    pub fn get_jurisdiction_parent(env: Env, jurisdiction: Bytes) -> Option<Bytes> {
+        env.storage().persistent().get(&CfKey::JurisdictionParent(jurisdiction))
+    }
+
+    pub fn get_jurisdiction_children(env: Env, parent: Bytes) -> Vec<Bytes> {
+        env.storage().persistent().get(&CfKey::JurisdictionChildren(parent))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Register a compliance rule with conditions (#273).
+    pub fn register_compliance_rule_with_conditions(
+        env: Env,
+        admin: Address,
+        jurisdiction: Bytes,
+        requirement: Bytes,
+        enforcement: Bytes,
+        condition: ComplianceRuleCondition,
+    ) -> Result<(), ComplianceFilterError> {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin)?;
+        if jurisdiction.is_empty() || requirement.is_empty() || enforcement.is_empty() {
+            return Err(ComplianceFilterError::InvalidInput);
+        }
+        let rule = ComplianceRule {
+            jurisdiction: jurisdiction.clone(), requirement, enforcement,
+            active: true, created: env.ledger().timestamp(),
+        };
+        Self::persist(&env, &CfKey::Rule(jurisdiction.clone()), &rule);
+        Self::persist(&env, &CfKey::RuleCondition(jurisdiction), &condition);
+        env.events().publish((Symbol::new(&env, "rule_cond_reg"),), ());
+        Ok(())
+    }
+
+    pub fn get_rule_condition(env: Env, jurisdiction: Bytes) -> Option<ComplianceRuleCondition> {
+        env.storage().persistent().get(&CfKey::RuleCondition(jurisdiction))
+    }
+
+    /// Get all effective rules for a jurisdiction including inherited rules
+    /// from parent jurisdictions (#273).
+    pub fn get_effective_rules(env: Env, jurisdiction: Bytes) -> Vec<ComplianceRule> {
+        let mut rules = Vec::new(&env);
+        let mut current = jurisdiction;
+        let mut visited: Vec<Bytes> = Vec::new(&env);
+        for _ in 0..10 {
+            let mut already = false;
+            for v in visited.iter() { if v == current { already = true; break; } }
+            if already { break; }
+            visited.push_back(current.clone());
+            if let Some(rule) = Self::get_compliance_rule(env.clone(), current.clone()) {
+                if rule.active { rules.push_back(rule); }
+            }
+            match Self::get_jurisdiction_parent(env.clone(), current) {
+                Some(parent) => current = parent,
+                None => break,
+            }
+        }
+        rules
+    }
+
+    /// Evaluate all active compliance rules for a jurisdiction against a
+    /// subject. Returns violated rules with details (#273).
+    pub fn evaluate_compliance_rules(
+        env: Env,
+        input: ComplianceEvaluationInput,
+    ) -> ComplianceEvaluationResult {
+        let rules = Self::get_effective_rules(env.clone(), input.jurisdiction.clone());
+        let mut violations = Vec::new(&env);
+        let mut evaluated: u32 = 0;
+        for rule in rules.iter() {
+            evaluated += 1;
+            if let Some(cond) = Self::get_rule_condition(env.clone(), rule.jurisdiction.clone()) {
+                if let Some(detail) = Self::check_condition(&env, &cond, &input) {
+                    let v = RuleViolation {
+                        jurisdiction: rule.jurisdiction.clone(),
+                        requirement: rule.requirement.clone(),
+                        violation_detail: detail,
+                    };
+                    env.events().publish(
+                        (Symbol::new(&env, "ComplianceRuleViolated"),),
+                        (input.subject.clone(), v.jurisdiction.clone(), v.requirement.clone()),
+                    );
+                    violations.push_back(v);
+                }
+            }
+        }
+        let result = ComplianceEvaluationResult {
+            subject: input.subject.clone(),
+            jurisdiction: input.jurisdiction.clone(),
+            violations: violations.clone(),
+            total_rules_evaluated: evaluated,
+            timestamp: env.ledger().timestamp(),
+        };
+        Self::persist(&env, &CfKey::RuleEvaluation(input.subject, input.jurisdiction), &result);
+        result
+    }
+
+    /// Batch evaluate compliance rules for multiple subjects (#273).
+    pub fn batch_evaluate_rules(
+        env: Env,
+        inputs: Vec<ComplianceEvaluationInput>,
+    ) -> Vec<ComplianceEvaluationResult> {
+        let mut results = Vec::new(&env);
+        for input in inputs.iter() {
+            results.push_back(Self::evaluate_compliance_rules(env.clone(), input.clone()));
+        }
+        results
+    }
+
+    /// Get the last evaluation result for a subject in a jurisdiction.
+    pub fn get_evaluation_result(
+        env: Env,
+        subject: Address,
+        jurisdiction: Bytes,
+    ) -> Option<ComplianceEvaluationResult> {
+        env.storage().persistent().get(&CfKey::RuleEvaluation(subject, jurisdiction))
+    }
+
+    /// Check a condition against evaluation input. Returns Some(detail) if violated.
+    fn check_condition(
+        env: &Env,
+        cond: &ComplianceRuleCondition,
+        input: &ComplianceEvaluationInput,
+    ) -> Option<Bytes> {
+        if let Some(max_amt) = cond.max_transaction_amount {
+            if let Some(txn_amt) = input.transaction_amount {
+                if txn_amt > max_amt {
+                    return Some(Bytes::from_slice(env, b"txn_exceeds_max"));
+                }
+            }
+        }
+        if let Some(min_amt) = cond.min_transaction_amount {
+            if let Some(txn_amt) = input.transaction_amount {
+                if txn_amt < min_amt {
+                    return Some(Bytes::from_slice(env, b"txn_below_min"));
+                }
+            }
+        }
+        if let Some(ref req_cred) = cond.required_credential_type {
+            let mut found = false;
+            for ct in input.credential_types.iter() {
+                if ct == *req_cred { found = true; break; }
+            }
+            if !found {
+                return Some(Bytes::from_slice(env, b"required_credential_missing"));
+            }
+        }
+        if let Some(min_level) = cond.min_identity_verification_level {
+            if input.identity_verification_level < min_level {
+                return Some(Bytes::from_slice(env, b"identity_level_insufficient"));
+            }
+        }
+        None
     }
 
     // ── Risk weight configuration ─────────────────────────────────────────
@@ -2027,5 +2252,296 @@ mod tests {
 
         let result = ComplianceFilter::set_risk_weights(env.clone(), intruder, weights);
         assert_eq!(result.unwrap_err(), ComplianceFilterError::Unauthorized);
+    }
+
+    // ── Jurisdiction compliance rule engine tests (#273) ──────────────────
+
+    fn setup_jurisdiction_env() -> (Env, Address) {
+        let env = setup_env();
+        let admin = bootstrap(&env);
+        (env, admin)
+    }
+
+    #[test]
+    fn set_and_get_jurisdiction_parent() {
+        let (env, admin) = setup_jurisdiction_env();
+        let eu = Bytes::from_slice(&env, b"EU");
+        let de = Bytes::from_slice(&env, b"EU:DE");
+
+        ComplianceFilter::set_jurisdiction_parent(env.clone(), admin, de.clone(), eu.clone()).unwrap();
+
+        assert_eq!(
+            ComplianceFilter::get_jurisdiction_parent(env.clone(), de).unwrap(),
+            eu
+        );
+    }
+
+    #[test]
+    fn jurisdiction_parent_rejects_non_admin() {
+        let (env, _admin) = setup_jurisdiction_env();
+        let intruder = Address::generate(&env);
+        let result = ComplianceFilter::set_jurisdiction_parent(
+            env.clone(), intruder,
+            Bytes::from_slice(&env, b"EU:DE"),
+            Bytes::from_slice(&env, b"EU"),
+        );
+        assert_eq!(result.unwrap_err(), ComplianceFilterError::Unauthorized);
+    }
+
+    #[test]
+    fn register_rule_with_conditions() {
+        let (env, admin) = setup_jurisdiction_env();
+        let condition = ComplianceRuleCondition {
+            max_transaction_amount: Some(1_000_000),
+            min_transaction_amount: None,
+            required_credential_type: Some(Bytes::from_slice(&env, b"KYC")),
+            min_identity_verification_level: Some(2),
+        };
+
+        ComplianceFilter::register_compliance_rule_with_conditions(
+            env.clone(), admin,
+            Bytes::from_slice(&env, b"EU"),
+            Bytes::from_slice(&env, b"max_txn_1M"),
+            Bytes::from_slice(&env, b"block"),
+            condition.clone(),
+        ).unwrap();
+
+        let cond = ComplianceFilter::get_rule_condition(env, Bytes::from_slice(&env, b"EU")).unwrap();
+        assert_eq!(cond, condition);
+    }
+
+    #[test]
+    fn get_effective_rules_includes_parent() {
+        let (env, admin) = setup_jurisdiction_env();
+        let eu = Bytes::from_slice(&env, b"EU");
+        let de = Bytes::from_slice(&env, b"EU:DE");
+
+        // Register EU rule
+        ComplianceFilter::register_compliance_rule(
+            env.clone(), admin.clone(), eu.clone(),
+            Bytes::from_slice(&env, b"eu_req"), Bytes::from_slice(&env, b"enforce"),
+        ).unwrap();
+
+        // Set DE -> EU parent
+        ComplianceFilter::set_jurisdiction_parent(env.clone(), admin, de.clone(), eu.clone()).unwrap();
+
+        // Get effective rules for DE — should include EU rule
+        let rules = ComplianceFilter::get_effective_rules(env, de);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules.get(0).unwrap().jurisdiction, eu);
+    }
+
+    #[test]
+    fn evaluate_compliance_rules_detects_violation() {
+        let (env, admin) = setup_jurisdiction_env();
+        let subject = Address::generate(&env);
+        let eu = Bytes::from_slice(&env, b"EU");
+
+        // Register EU rule with max txn amount
+        let condition = ComplianceRuleCondition {
+            max_transaction_amount: Some(500_000),
+            min_transaction_amount: None,
+            required_credential_type: None,
+            min_identity_verification_level: None,
+        };
+        ComplianceFilter::register_compliance_rule_with_conditions(
+            env.clone(), admin, eu.clone(),
+            Bytes::from_slice(&env, b"max_txn_500k"),
+            Bytes::from_slice(&env, b"block"),
+            condition,
+        ).unwrap();
+
+        // Evaluate with amount exceeding limit
+        let input = ComplianceEvaluationInput {
+            subject: subject.clone(),
+            jurisdiction: eu.clone(),
+            transaction_amount: Some(1_000_000),
+            credential_types: Vec::new(&env),
+            identity_verification_level: 0,
+        };
+
+        let result = ComplianceFilter::evaluate_compliance_rules(env.clone(), input);
+        assert_eq!(result.total_rules_evaluated, 1);
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations.get(0).unwrap().requirement, Bytes::from_slice(&env, b"max_txn_500k"));
+    }
+
+    #[test]
+    fn evaluate_compliance_rules_no_violation_when_compliant() {
+        let (env, admin) = setup_jurisdiction_env();
+        let subject = Address::generate(&env);
+        let eu = Bytes::from_slice(&env, b"EU");
+
+        let condition = ComplianceRuleCondition {
+            max_transaction_amount: Some(500_000),
+            min_transaction_amount: None,
+            required_credential_type: None,
+            min_identity_verification_level: None,
+        };
+        ComplianceFilter::register_compliance_rule_with_conditions(
+            env.clone(), admin, eu.clone(),
+            Bytes::from_slice(&env, b"max_txn_500k"),
+            Bytes::from_slice(&env, b"block"),
+            condition,
+        ).unwrap();
+
+        let input = ComplianceEvaluationInput {
+            subject: subject.clone(),
+            jurisdiction: eu,
+            transaction_amount: Some(100_000),
+            credential_types: Vec::new(&env),
+            identity_verification_level: 0,
+        };
+
+        let result = ComplianceFilter::evaluate_compliance_rules(env, input);
+        assert_eq!(result.total_rules_evaluated, 1);
+        assert_eq!(result.violations.len(), 0);
+    }
+
+    #[test]
+    fn evaluate_compliance_checks_credential_type() {
+        let (env, admin) = setup_jurisdiction_env();
+        let subject = Address::generate(&env);
+        let eu = Bytes::from_slice(&env, b"EU");
+
+        let condition = ComplianceRuleCondition {
+            max_transaction_amount: None,
+            min_transaction_amount: None,
+            required_credential_type: Some(Bytes::from_slice(&env, b"KYC")),
+            min_identity_verification_level: None,
+        };
+        ComplianceFilter::register_compliance_rule_with_conditions(
+            env.clone(), admin, eu.clone(),
+            Bytes::from_slice(&env, b"requires_kyc"),
+            Bytes::from_slice(&env, b"block"),
+            condition,
+        ).unwrap();
+
+        // Subject without KYC credential
+        let input = ComplianceEvaluationInput {
+            subject: subject.clone(),
+            jurisdiction: eu.clone(),
+            transaction_amount: None,
+            credential_types: Vec::new(&env),
+            identity_verification_level: 0,
+        };
+        let result = ComplianceFilter::evaluate_compliance_rules(env.clone(), input);
+        assert_eq!(result.violations.len(), 1);
+
+        // Subject with KYC credential
+        let mut creds = Vec::new(&env);
+        creds.push_back(Bytes::from_slice(&env, b"KYC"));
+        let input2 = ComplianceEvaluationInput {
+            subject,
+            jurisdiction: eu,
+            transaction_amount: None,
+            credential_types: creds,
+            identity_verification_level: 0,
+        };
+        let result2 = ComplianceFilter::evaluate_compliance_rules(env, input2);
+        assert_eq!(result2.violations.len(), 0);
+    }
+
+    #[test]
+    fn evaluate_compliance_checks_identity_level() {
+        let (env, admin) = setup_jurisdiction_env();
+        let subject = Address::generate(&env);
+        let eu = Bytes::from_slice(&env, b"EU");
+
+        let condition = ComplianceRuleCondition {
+            max_transaction_amount: None,
+            min_transaction_amount: None,
+            required_credential_type: None,
+            min_identity_verification_level: Some(3),
+        };
+        ComplianceFilter::register_compliance_rule_with_conditions(
+            env.clone(), admin, eu.clone(),
+            Bytes::from_slice(&env, b"requires_level3"),
+            Bytes::from_slice(&env, b"block"),
+            condition,
+        ).unwrap();
+
+        let input = ComplianceEvaluationInput {
+            subject,
+            jurisdiction: eu,
+            transaction_amount: None,
+            credential_types: Vec::new(&env),
+            identity_verification_level: 1,
+        };
+        let result = ComplianceFilter::evaluate_compliance_rules(env, input);
+        assert_eq!(result.violations.len(), 1);
+    }
+
+    #[test]
+    fn evaluate_inherited_rules_from_parent() {
+        let (env, admin) = setup_jurisdiction_env();
+        let subject = Address::generate(&env);
+        let eu = Bytes::from_slice(&env, b"EU");
+        let de = Bytes::from_slice(&env, b"EU:DE");
+
+        // EU rule: max txn 500k
+        let eu_cond = ComplianceRuleCondition {
+            max_transaction_amount: Some(500_000),
+            min_transaction_amount: None,
+            required_credential_type: None,
+            min_identity_verification_level: None,
+        };
+        ComplianceFilter::register_compliance_rule_with_conditions(
+            env.clone(), admin.clone(), eu.clone(),
+            Bytes::from_slice(&env, b"eu_max_txn"),
+            Bytes::from_slice(&env, b"block"),
+            eu_cond,
+        ).unwrap();
+
+        // Set hierarchy
+        ComplianceFilter::set_jurisdiction_parent(env.clone(), admin, de.clone(), eu).unwrap();
+
+        // Evaluate for DE — should pick up EU rule
+        let input = ComplianceEvaluationInput {
+            subject,
+            jurisdiction: de,
+            transaction_amount: Some(1_000_000),
+            credential_types: Vec::new(&env),
+            identity_verification_level: 0,
+        };
+        let result = ComplianceFilter::evaluate_compliance_rules(env, input);
+        assert_eq!(result.total_rules_evaluated, 1);
+        assert_eq!(result.violations.len(), 1);
+    }
+
+    #[test]
+    fn batch_evaluate_rules_works() {
+        let (env, admin) = setup_jurisdiction_env();
+        let eu = Bytes::from_slice(&env, b"EU");
+
+        let condition = ComplianceRuleCondition {
+            max_transaction_amount: Some(500_000),
+            min_transaction_amount: None,
+            required_credential_type: None,
+            min_identity_verification_level: None,
+        };
+        ComplianceFilter::register_compliance_rule_with_conditions(
+            env.clone(), admin, eu.clone(),
+            Bytes::from_slice(&env, b"max_txn"),
+            Bytes::from_slice(&env, b"block"),
+            condition,
+        ).unwrap();
+
+        let mut inputs = Vec::new(&env);
+        for _ in 0..3 {
+            inputs.push_back(ComplianceEvaluationInput {
+                subject: Address::generate(&env),
+                jurisdiction: eu.clone(),
+                transaction_amount: Some(1_000_000),
+                credential_types: Vec::new(&env),
+                identity_verification_level: 0,
+            });
+        }
+
+        let results = ComplianceFilter::batch_evaluate_rules(env, inputs);
+        assert_eq!(results.len(), 3);
+        for i in 0..3 {
+            assert_eq!(results.get(i).unwrap().violations.len(), 1);
+        }
     }
 }
