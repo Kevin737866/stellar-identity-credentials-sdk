@@ -27,7 +27,8 @@
   },
   "dependencies": {
     "stellar-sdk": "^12.0.0",
-    "@stellar-identity/sdk": "file:../sdk"
+    "@stellar-identity/sdk": "file:../sdk",
+    "lucide-react": "^0.400.0"
   },
   "devDependencies": {
     "@storybook/addon-essentials": "^8.0.0",

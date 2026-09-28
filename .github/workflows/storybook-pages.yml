@@ -1,0 +1,63 @@
+name: Storybook
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'ui/**'
+      - '.github/workflows/storybook-pages.yml'
+  pull_request:
+    branches: [master, main]
+    paths:
+      - 'ui/**'
+      - '.github/workflows/storybook-pages.yml'
+  workflow_dispatch:
+
+# Allow the workflow to publish to GitHub Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; newer commits supersede queued ones.
+concurrency:
+  group: storybook-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Storybook
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: 'ui/package-lock.json'
+
+      - name: Install UI dependencies
+        run: npm ci --prefix ui --ignore-scripts
+
+      - name: Build Storybook
+        run: npm run build-storybook --prefix ui -- --output-dir storybook-static
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ui/storybook-static
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
