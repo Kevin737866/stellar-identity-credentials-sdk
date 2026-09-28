@@ -10,4 +10,14 @@ module.exports = {
   transform: {
     '^.+\\.ts$': ['ts-jest', { tsconfig: { esModuleInterop: true, target: 'ES2020', module: 'commonjs' } }],
   },
+  // Network-dependent suites are opt-in; they need a funded testnet account.
+  testPathIgnorePatterns: ['<rootDir>/sdk/src/__tests__/integration'],
+  collectCoverageFrom: [
+    'sdk/src/**/*.ts',
+    '!sdk/src/**/*.d.ts',
+    '!sdk/src/__tests__/**',
+  ],
+  coverageThreshold: {
+    global: { branches: 90, functions: 90, lines: 90, statements: 90 },
+  },
 };
