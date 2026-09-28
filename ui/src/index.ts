@@ -33,6 +33,20 @@ export type { CheckboxProps } from './components/ui/checkbox';
 export { Layout } from './components/Layout';
 export type { LayoutProps, NavItem } from './components/Layout';
 
+// Responsive layout primitives
+export { MobileNav, MOBILE_NAV_MORE_ID } from './components/MobileNav';
+export type { MobileNavProps, MobileNavItem } from './components/MobileNav';
+export { ResponsiveTable } from './components/ResponsiveTable';
+export type { ResponsiveTableProps, ResponsiveTableColumn } from './components/ResponsiveTable';
+export {
+  BREAKPOINTS,
+  getBreakpoint,
+  useBreakpoint,
+  useMediaQuery,
+  useViewportWidth,
+} from './hooks/useBreakpoint';
+export type { Breakpoint, BreakpointInfo } from './hooks/useBreakpoint';
+
 // Feature Components
 export { DIDManager, ConnectedDIDManager } from './components/DIDManager';
 export { CredentialWallet } from './components/CredentialWallet';
