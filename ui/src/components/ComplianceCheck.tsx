@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
+import { Skeleton, SkeletonTable } from '@/components/ui/skeleton';
 import { 
   ComplianceRecord, 
   ComplianceResult 
@@ -112,9 +113,22 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
     return (
       <Card>
         <CardContent className="p-6">
-          <div className="flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <span className="ml-2">Performing compliance check...</span>
+          <div
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+            aria-label="Performing compliance check"
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <Skeleton shape="circle" height={40} width={40} />
+              <div style={{ flex: 1 }}>
+                <Skeleton height={16} shape="text" width={6} />
+                <div style={{ height: 'var(--space-2)' }} />
+                <Skeleton height={11} shape="text" width={8} />
+              </div>
+            </div>
+            <SkeletonTable rows={4} columns={3} />
+            <span className="sr-only">Performing compliance check</span>
           </div>
         </CardContent>
       </Card>

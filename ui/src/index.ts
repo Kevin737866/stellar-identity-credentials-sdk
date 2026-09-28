@@ -153,3 +153,51 @@ export {
   svgElementToPngBlob,
   triggerDownload,
 } from './utils/analyticsExport';
+
+// Skeleton placeholders (#217)
+export {
+  Skeleton,
+  SkeletonText,
+  SkeletonAvatar,
+  SkeletonList,
+  SkeletonCard,
+  SkeletonDetail,
+  SkeletonTable,
+} from './components/ui/skeleton';
+export type { SkeletonProps } from './components/ui/skeleton';
+
+// Accessibility primitives (#216)
+export { LiveAnnouncer, useAnnouncer } from './components/ui/live-region';
+export type {
+  LiveAnnouncerProps,
+  UseAnnouncerResult,
+  Politeness,
+} from './components/ui/live-region';
+export {
+  useFocusTrap,
+  useFocusOnMount,
+  useRovingIndex,
+  getFocusableElements,
+} from './hooks/useFocusTrap';
+export type { FocusTrapOptions } from './hooks/useFocusTrap';
+export { DialogDescription, DialogFooter } from './components/ui/modal';
+export { ProgressWithLabel } from './components/ui/progress';
+
+// Credential detail view (#218)
+export { CredentialDetail, flattenAttributes, buildExportPayload } from './components/CredentialDetail';
+export type { CredentialDetailProps, CredentialHistoryEntry } from './components/CredentialDetail';
+
+// Onboarding wizard (#219)
+export {
+  OnboardingWizard,
+  ONBOARDING_STEPS,
+  readProgress,
+  resolveInitialStep,
+} from './components/OnboardingWizard';
+export type {
+  OnboardingWizardProps,
+  OnboardingStep,
+  OnboardingStepId,
+  OnboardingProgress,
+  StorageLike,
+} from './components/OnboardingWizard';

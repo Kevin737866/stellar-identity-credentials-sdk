@@ -16,7 +16,10 @@ export const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
     return (
       <div
         ref={ref}
+        // Errors interrupt; confirmations wait for a pause. Both are
+        // role="alert" so the severity is conveyed, not just the colour.
         role="alert"
+        aria-live={variant === 'destructive' ? 'assertive' : 'polite'}
         style={{
           display: 'flex',
           alignItems: 'flex-start',
