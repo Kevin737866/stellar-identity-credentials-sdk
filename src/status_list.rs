@@ -18,7 +18,13 @@ use soroban_sdk::{
 // ---------------------------------------------------------------------------
 
 /// Maximum number of bits a single status list can hold.
-pub const MAX_STATUS_LIST_SIZE: u32 = 131_072; // 16 KiB of bits
+pub const MAX_STATUS_LIST_SIZE: u32 = 100_000; // 100k entries per issue #267
+
+/// Default initial size for a new status list.
+pub const DEFAULT_STATUS_LIST_SIZE: u32 = 1_000;
+
+/// Growth factor when expanding a status list dynamically.
+const GROWTH_FACTOR: u32 = 2;
 
 /// Number of bits packed into a single u8 word.
 const BITS_PER_WORD: u32 = 8;
@@ -243,6 +249,10 @@ impl BitstringStatusList {
                 .set(&SlKey::Meta(list_id.clone()), &meta);
 
             env.events().publish(
+                (Symbol::new(&env, "StatusListUpdated"),),
+                (list_id.clone(), index, revoked),
+            );
+            env.events().publish(
                 (Symbol::new(&env, "CredentialRevocationStatusChanged"),),
                 (list_id, index, revoked),
             );
@@ -278,6 +288,108 @@ impl BitstringStatusList {
 
         let byte: u8 = list_data.get(byte_idx).unwrap_or(0);
         Ok((byte & (1 << bit_idx)) != 0)
+    }
+
+    /// Set or clear the revocation status bit for a credential at `index`.
+    ///
+    /// This is the canonical name per the W3C Bitstring Status List spec (#267).
+    /// It is equivalent to [`set_status`].
+    pub fn update_status_list_entry(
+        env: Env,
+        admin: Address,
+        list_id: Bytes,
+        index: u32,
+        revoked: bool,
+    ) -> Result<(), StatusListError> {
+        Self::set_status(env, admin, list_id, index, revoked)
+    }
+
+    /// Check whether the credential at `index` has been revoked.
+    ///
+    /// This is the canonical name per the W3C Bitstring Status List spec (#267).
+    /// It is equivalent to [`get_status`].
+    pub fn check_status_list_entry(
+        env: Env,
+        list_id: Bytes,
+        index: u32,
+    ) -> Result<bool, StatusListError> {
+        Self::get_status(env, list_id, index)
+    }
+
+    /// Dynamically expand a status list to accommodate more entries.
+    ///
+    /// The list grows by `GROWTH_FACTOR`x its current size, capped at
+    /// `MAX_STATUS_LIST_SIZE`. Only the issuer may expand the list.
+    pub fn expand_status_list(
+        env: Env,
+        admin: Address,
+        list_id: Bytes,
+        min_size: u32,
+    ) -> Result<u32, StatusListError> {
+        admin.require_auth();
+
+        let mut meta: StatusListMeta = env
+            .storage()
+            .persistent()
+            .get(&SlKey::Meta(list_id.clone()))
+            .ok_or(StatusListError::NotFound)?;
+
+        if !meta.active {
+            return Err(StatusListError::ListDeactivated);
+        }
+        if meta.issuer != admin {
+            return Err(StatusListError::Unauthorized);
+        }
+        if min_size <= meta.size {
+            return Ok(meta.size); // already large enough
+        }
+
+        // Calculate new size: max(min_size, current * GROWTH_FACTOR), capped
+        let grown = meta.size.saturating_mul(GROWTH_FACTOR);
+        let new_size = core::cmp::min(
+            core::cmp::max(min_size, grown),
+            MAX_STATUS_LIST_SIZE,
+        );
+
+        if new_size == meta.size {
+            return Ok(meta.size); // already at max
+        }
+
+        // Expand the byte array
+        let old_byte_count = (meta.size + BITS_PER_WORD - 1) / BITS_PER_WORD;
+        let new_byte_count = (new_size + BITS_PER_WORD - 1) / BITS_PER_WORD;
+
+        let mut list_data: Bytes = env
+            .storage()
+            .persistent()
+            .get(&SlKey::List(list_id.clone()))
+            .unwrap_or_else(|| Bytes::new(&env));
+
+        // Append zero bytes for the new space
+        for _ in old_byte_count..new_byte_count {
+            list_data.push_back(0u8);
+        }
+
+        meta.size = new_size;
+        meta.last_updated = env.ledger().timestamp();
+
+        env.storage()
+            .persistent()
+            .set(&SlKey::List(list_id.clone()), &list_data);
+        env.storage()
+            .persistent()
+            .set(&SlKey::Meta(list_id.clone()), &meta);
+
+        env.events().publish(
+            (Symbol::new(&env, "StatusListUpdated"),),
+            (list_id.clone(), 0u32, false),
+        );
+        env.events().publish(
+            (Symbol::new(&env, "StatusListExpanded"),),
+            (list_id, new_size),
+        );
+
+        Ok(new_size)
     }
 
     /// Batch-query revocation status for multiple indices in a single list.
@@ -563,5 +675,94 @@ mod tests {
         let encoded = BitstringStatusList::get_encoded_list(env.clone(), list_id).unwrap();
         // Should have ceil(1024 / 8) = 128 bytes
         assert_eq!(encoded.len(), 128);
+    }
+
+    #[test]
+    fn update_status_list_entry_works() {
+        let env = setup_env();
+        let (admin, list_id) = bootstrap(&env);
+
+        // Use the canonical W3C function name
+        BitstringStatusList::update_status_list_entry(
+            env.clone(),
+            admin.clone(),
+            list_id.clone(),
+            42,
+            true,
+        )
+        .unwrap();
+
+        assert!(BitstringStatusList::check_status_list_entry(
+            env.clone(),
+            list_id.clone(),
+            42,
+        )
+        .unwrap());
+
+        // Clear it
+        BitstringStatusList::update_status_list_entry(
+            env.clone(),
+            admin,
+            list_id.clone(),
+            42,
+            false,
+        )
+        .unwrap();
+
+        assert!(!BitstringStatusList::check_status_list_entry(env, list_id, 42).unwrap());
+    }
+
+    #[test]
+    fn expand_status_list_grows_dynamically() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let list_id = Bytes::from_slice(&env, b"expandable-list");
+
+        // Create a small list
+        BitstringStatusList::create_status_list(env.clone(), admin.clone(), list_id.clone(), 100)
+            .unwrap();
+
+        let meta = BitstringStatusList::get_metadata(env.clone(), list_id.clone()).unwrap();
+        assert_eq!(meta.size, 100);
+
+        // Expand to at least 500
+        let new_size =
+            BitstringStatusList::expand_status_list(env.clone(), admin, list_id.clone(), 500)
+                .unwrap();
+        assert!(new_size >= 500);
+
+        let meta = BitstringStatusList::get_metadata(env.clone(), list_id.clone()).unwrap();
+        assert_eq!(meta.size, new_size);
+
+        // Verify existing bits are preserved
+        assert!(!BitstringStatusList::check_status_list_entry(env, list_id, 50).unwrap());
+
+        // Verify new indices are accessible
+        assert!(!BitstringStatusList::check_status_list_entry(env, list_id, 400).unwrap());
+    }
+
+    #[test]
+    fn expand_status_list_rejects_non_issuer() {
+        let env = setup_env();
+        let (admin, list_id) = bootstrap(&env);
+        let intruder = Address::generate(&env);
+
+        let result =
+            BitstringStatusList::expand_status_list(env.clone(), intruder, list_id, 2000);
+        assert_eq!(result.unwrap_err(), StatusListError::Unauthorized);
+    }
+
+    #[test]
+    fn expand_already_large_enough_returns_current() {
+        let env = setup_env();
+        let (admin, list_id) = bootstrap(&env);
+        // List is 1024, request min 512 — should return 1024 unchanged
+        let size = BitstringStatusList::expand_status_list(env, admin, list_id, 512).unwrap();
+        assert_eq!(size, 1024);
+    }
+
+    #[test]
+    fn default_max_is_100000() {
+        assert_eq!(MAX_STATUS_LIST_SIZE, 100_000);
     }
 }
