@@ -6,6 +6,7 @@ pub mod credential_offer;
 pub mod did_recovery;
 pub mod did_registry;
 pub mod gas_benchmark;
+pub mod rate_limiter;
 pub mod reputation_oracle;
 pub mod reputation_score;
 pub mod schema_registry;
