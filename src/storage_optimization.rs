@@ -176,7 +176,9 @@ pub fn did_hash_key(env: &Env, did: &Bytes) -> BytesN<32> {
 /// Store the hash-index mapping (DID string → hash key) for reverse lookup.
 pub fn store_did_hash_index(env: &Env, did: &Bytes, hash: &BytesN<32>) {
     #[contracttype]
-    enum IdxKey { HashIdx(Bytes) }
+    enum IdxKey {
+        HashIdx(Bytes),
+    }
     env.storage()
         .persistent()
         .set(&IdxKey::HashIdx(did.clone()), hash);
@@ -185,7 +187,9 @@ pub fn store_did_hash_index(env: &Env, did: &Bytes, hash: &BytesN<32>) {
 /// Look up the 32-byte hash key for a given DID string.
 pub fn get_did_hash(env: &Env, did: &Bytes) -> Option<BytesN<32>> {
     #[contracttype]
-    enum IdxKey { HashIdx(Bytes) }
+    enum IdxKey {
+        HashIdx(Bytes),
+    }
     env.storage()
         .persistent()
         .get(&IdxKey::HashIdx(did.clone()))
@@ -287,7 +291,9 @@ mod tests {
 
         // Store meta under hash key
         #[contracttype]
-        enum MetaKey { Meta(BytesN<32>) }
+        enum MetaKey {
+            Meta(BytesN<32>),
+        }
         env.storage()
             .persistent()
             .set(&MetaKey::Meta(hash.clone()), &meta);
@@ -339,7 +345,9 @@ mod tests {
         let hash = did_hash_key(&env, &did);
 
         #[contracttype]
-        enum BodyKey { Body(BytesN<32>) }
+        enum BodyKey {
+            Body(BytesN<32>),
+        }
         env.storage()
             .persistent()
             .set(&BodyKey::Body(hash.clone()), &body);

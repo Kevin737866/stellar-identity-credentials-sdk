@@ -2,8 +2,9 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
-use crate::{DIDDocument, Service, VerificationMethod};
+use crate::contract_upgrade;
 use crate::rate_limiter::{check_rate_limit, defaults};
+use crate::{DIDDocument, Service, VerificationMethod};
 
 // ---------------------------------------------------------------------------
 // Multi-Signature Types (#93)
@@ -986,6 +987,50 @@ impl DIDRegistry {
         ));
         id
     }
+
+    // ── Contract Upgrade (#275) ──────────────────────────────────────────────
+
+    /// Initialize the upgrade module with an admin and initial WASM hash.
+    /// Must be called once during contract deployment.
+    pub fn init_upgrade(
+        env: Env,
+        admin: Address,
+        initial_wasm_hash: BytesN<32>,
+    ) -> Result<(), DIDRegistryError> {
+        admin.require_auth();
+        if contract_upgrade::is_initialized(&env) {
+            return Err(DIDRegistryError::AlreadyExists);
+        }
+        contract_upgrade::init(&env, admin, initial_wasm_hash);
+        Ok(())
+    }
+
+    /// Upgrade the contract to a new WASM hash.
+    /// Only the registered admin can perform this operation.
+    pub fn upgrade(
+        env: Env,
+        caller: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), DIDRegistryError> {
+        caller.require_auth();
+        contract_upgrade::upgrade(&env, &caller, new_wasm_hash)
+            .map_err(|_| DIDRegistryError::Unauthorized)
+    }
+
+    /// Return the current contract version.
+    pub fn get_contract_version(env: Env) -> u32 {
+        contract_upgrade::get_contract_version(&env)
+    }
+
+    /// Return the current deployed WASM hash.
+    pub fn get_wasm_hash(env: Env) -> Option<BytesN<32>> {
+        contract_upgrade::get_wasm_hash(&env)
+    }
+
+    /// Return the full version history for audit purposes.
+    pub fn get_version_history(env: Env) -> Vec<contract_upgrade::VersionRecord> {
+        contract_upgrade::get_version_history(&env)
+    }
 }
 
 #[cfg(test)]
@@ -1432,7 +1477,8 @@ mod tests {
         )
         .unwrap();
 
-        DIDRegistry::add_authentication(env.clone(), controller.clone(), auth_method.clone()).unwrap();
+        DIDRegistry::add_authentication(env.clone(), controller.clone(), auth_method.clone())
+            .unwrap();
         DIDRegistry::remove_authentication(env.clone(), controller, auth_method).unwrap();
 
         assert!(emitted(&env, "AuthenticationRemoved"));

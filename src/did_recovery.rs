@@ -898,8 +898,13 @@ mod tests {
         assert_eq!(config.total_guardians, 1);
 
         // Remove guardian
-        DIDRecovery::remove_guardian(env.clone(), controller.clone(), did.clone(), guardian.clone())
-            .unwrap();
+        DIDRecovery::remove_guardian(
+            env.clone(),
+            controller.clone(),
+            did.clone(),
+            guardian.clone(),
+        )
+        .unwrap();
 
         let record = DIDRecovery::get_guardian(env.clone(), did, guardian).unwrap();
         assert!(!record.active);
@@ -1089,7 +1094,8 @@ mod tests {
         });
 
         // Now execution should succeed
-        let result = DIDRecovery::execute_recovery(env.clone(), controller.clone(), request_id).unwrap();
+        let result =
+            DIDRecovery::execute_recovery(env.clone(), controller.clone(), request_id).unwrap();
         assert_eq!(result, new_controller);
     }
 
@@ -1197,9 +1203,14 @@ mod tests {
         )
         .unwrap();
 
-        let request_id =
-            DIDRecovery::initiate_recovery(env.clone(), ttp.clone(), did.clone(), new_controller.clone(), None)
-                .unwrap();
+        let request_id = DIDRecovery::initiate_recovery(
+            env.clone(),
+            ttp.clone(),
+            did.clone(),
+            new_controller.clone(),
+            None,
+        )
+        .unwrap();
 
         // Attacker tries to execute
         let result = DIDRecovery::execute_recovery(env.clone(), attacker, request_id);

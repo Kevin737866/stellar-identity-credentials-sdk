@@ -1,13 +1,20 @@
 /**
- * Build reputation through transaction history and credential validation
- * This example demonstrates how to establish and improve reputation on Stellar
+ * Reputation Builder Example
+ *
+ * Demonstrates how reputation scores evolve with transaction history and
+ * credential interactions. Simulates 10+ transactions, shows reputation
+ * score changes, demonstrates credential-based reputation enhancement,
+ * displays reputation tier progression, and calls getReputationAnalysis
+ * with visual console-based output.
+ *
+ * Run with: npm run example:reputation
  */
 
 import { 
   StellarIdentitySDK, 
   DEFAULT_CONFIGS,
   UTILS 
-} from '@stellar-identity/sdk';
+} from '../sdk/src/index';
 import { Keypair, Server, TransactionBuilder, Networks, Asset, PaymentOperation } from 'stellar-sdk';
 
 interface Transaction {
@@ -34,22 +41,25 @@ async function main() {
 
   // Generate keypair for the user building reputation
   const userKeypair = UTILS.generateKeypair();
-  console.log(`👤 User Address: ${userKeypair.publicKey()}`);
+  const userAddress = userKeypair.publicKey();
+  console.log(`👤 User Address: ${userAddress}`);
 
   try {
     // Step 1: Initialize reputation tracking
     console.log('\n📊 Step 1: Initializing Reputation Tracking...');
-    await sdk.reputation.initializeReputation(userKeypair.publicKey());
-    let currentScore = await sdk.reputation.getReputationScore(userKeypair.publicKey());
+    await sdk.reputation.initializeReputation(userKeypair);
+    const currentScoreBreakdown = await sdk.reputation.getReputationScore(userAddress);
+    const currentScore = currentScoreBreakdown.score;
     console.log(`   Initial Score: ${currentScore}/100`);
 
     // Step 2: Build reputation through successful transactions
     console.log('\n💰 Step 2: Building Transaction History...');
-    const transactions = await generateTransactionHistory(userKeypair.publicKey());
+    const transactions = await generateTransactionHistory(userAddress);
     
     for (const tx of transactions) {
       const newScore = await sdk.reputation.updateTransactionReputation(
-        userKeypair.publicKey(),
+        userKeypair,
+        userAddress,
         tx.successful,
         tx.amount
       );
@@ -58,11 +68,12 @@ async function main() {
 
     // Step 3: Add credentials to boost reputation
     console.log('\n📜 Step 3: Adding Verifiable Credentials...');
-    const credentials = await generateCredentialHistory(userKeypair.publicKey());
+    const credentials = await generateCredentialHistory(userAddress);
     
     for (const cred of credentials) {
       const newScore = await sdk.reputation.updateCredentialReputation(
-        userKeypair.publicKey(),
+        userKeypair,
+        userAddress,
         cred.valid,
         cred.type
       );
@@ -71,7 +82,7 @@ async function main() {
 
     // Step 4: Get comprehensive reputation analysis
     console.log('\n📈 Step 4: Reputation Analysis...');
-    const reputationAnalysis = await sdk.reputation.getReputationAnalysis(userKeypair.publicKey());
+    const reputationAnalysis = await sdk.reputation.getReputationAnalysis(userAddress);
     
     console.log(`   Final Score: ${reputationAnalysis.score}/100`);
     console.log(`   Percentile: ${reputationAnalysis.percentile}%`);
@@ -92,16 +103,16 @@ async function main() {
 
     // Step 7: Simulate ongoing reputation building
     console.log('\n🔄 Step 7: Ongoing Reputation Building...');
-    await simulateOngoingReputationBuilding(sdk, userKeypair.publicKey());
+    await simulateOngoingReputationBuilding(sdk, userKeypair, userAddress);
 
     // Step 8: Generate reputation report
     console.log('\n📋 Step 8: Generating Reputation Report...');
-    const report = await generateReputationReport(sdk, userKeypair.publicKey());
+    const report = await generateReputationReport(sdk, userAddress);
     console.log('\n📊 Reputation Report:');
     console.log(JSON.stringify(report, null, 2));
 
     return {
-      address: userKeypair.publicKey(),
+      address: userAddress,
       finalScore: reputationAnalysis.score,
       tier: tierInfo.tier,
       percentile: reputationAnalysis.percentile,
@@ -207,6 +218,7 @@ async function generateCredentialHistory(userAddress: string): Promise<Credentia
  */
 async function simulateOngoingReputationBuilding(
   sdk: StellarIdentitySDK, 
+  userKeypair: Keypair,
   userAddress: string
 ): Promise<void> {
   console.log('   Simulating weekly reputation activities...');
@@ -221,6 +233,7 @@ async function simulateOngoingReputationBuilding(
       const amount = Math.floor(Math.random() * 1000) + 100;
       
       weeklyScore = await sdk.reputation.updateTransactionReputation(
+        userKeypair,
         userAddress,
         success,
         amount
@@ -232,6 +245,7 @@ async function simulateOngoingReputationBuilding(
     // Simulate credential verification
     if (week === 2) {
       const credScore = await sdk.reputation.updateCredentialReputation(
+        userKeypair,
         userAddress,
         true,
         'IncomeVerification'
@@ -329,7 +343,7 @@ export class ReputationBuilder {
   /**
    * Implement rapid reputation building strategy
    */
-  async rapidBuildStrategy(userAddress: string, duration: number = 30): Promise<void> {
+  async rapidBuildStrategy(userKeypair: Keypair, userAddress: string, duration: number = 30): Promise<void> {
     console.log(`🚀 Starting rapid reputation build for ${duration} days...`);
     
     const dailyTransactions = 10;
@@ -345,6 +359,7 @@ export class ReputationBuilder {
       // Daily transactions
       for (let tx = 0; tx < dailyTransactions; tx++) {
         await this.sdk.reputation.updateTransactionReputation(
+          userKeypair,
           userAddress,
           true, // High success rate
           Math.floor(Math.random() * 500) + 100
@@ -355,30 +370,31 @@ export class ReputationBuilder {
       if (day % 7 === 0) {
         const credentialType = credentialTypes[Math.floor(day / 7) % credentialTypes.length];
         await this.sdk.reputation.updateCredentialReputation(
+          userKeypair,
           userAddress,
           true,
           credentialType
         );
       }
 
-      const currentScore = await this.sdk.reputation.getReputationScore(userAddress);
-      console.log(`Day ${day}: Score ${currentScore}/100`);
+      const currentScoreBreakdown = await this.sdk.reputation.getReputationScore(userAddress);
+      console.log(`Day ${day}: Score ${currentScoreBreakdown.score}/100`);
     }
   }
 
   /**
    * Implement defensive reputation maintenance
    */
-  async defensiveMaintenance(userAddress: string): Promise<void> {
+  async defensiveMaintenance(userKeypair: Keypair, userAddress: string): Promise<void> {
     console.log('🛡️ Starting defensive reputation maintenance...');
     
     // Monitor reputation score daily
     const monitoringInterval = setInterval(async () => {
-      const currentScore = await this.sdk.reputation.getReputationScore(userAddress);
+      const currentScoreBreakdown = await this.sdk.reputation.getReputationScore(userAddress);
       
-      if (currentScore < 50) {
+      if (currentScoreBreakdown.score < 50) {
         console.warn('⚠️ Reputation score dropped below 50, initiating recovery...');
-        await this.initiateRecoveryProtocol(userAddress);
+        await this.initiateRecoveryProtocol(userKeypair, userAddress);
       }
     }, 24 * 60 * 60 * 1000); // Daily check
 
@@ -388,12 +404,13 @@ export class ReputationBuilder {
   /**
    * Recovery protocol for declining reputation
    */
-  private async initiateRecoveryProtocol(userAddress: string): Promise<void> {
+  async initiateRecoveryProtocol(userKeypair: Keypair, userAddress: string): Promise<void> {
     console.log('🔄 Initiating reputation recovery protocol...');
     
     // Boost with high-value successful transactions
     for (let i = 0; i < 5; i++) {
       await this.sdk.reputation.updateTransactionReputation(
+        userKeypair,
         userAddress,
         true,
         2000 // High value transactions
@@ -404,11 +421,15 @@ export class ReputationBuilder {
     const recoveryCredentials = ['IdentityVerification', 'EmailVerification', 'PhoneVerification'];
     for (const credType of recoveryCredentials) {
       await this.sdk.reputation.updateCredentialReputation(
+        userKeypair,
         userAddress,
         true,
         credType
       );
     }
+
+    const recoveredScore = await this.sdk.reputation.getReputationScore(userAddress);
+    console.log(`   Recovery complete. Score: ${recoveredScore.score}/100`);
   }
 
   /**

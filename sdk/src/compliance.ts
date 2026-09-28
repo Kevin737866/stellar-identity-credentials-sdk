@@ -23,7 +23,7 @@ import {
   nativeToScVal,
   scValToNative,
 } from 'stellar-sdk';
-import { StellarIdentityConfig } from './types';
+import { StellarIdentityConfig, ComplianceRule, ComplianceRuleEnforcement, RuleEvaluationResult, ComplianceResult } from './types';
 import { StellarIdentityError, ComplianceError, ErrorCode } from './errors';
 
 // ---------------------------------------------------------------------------
@@ -143,14 +143,20 @@ export interface SanctionsListInfo {
 export class ComplianceClient {
   private rpc: SorobanRpc.Server;
   private config: StellarIdentityConfig;
-  private contract: Contract;
+  /** Lazily constructed so unit tests do not need a valid StrKey contract id. */
+  private _contract?: Contract;
+  private get contract(): Contract {
+    if (!this._contract) {
+      this._contract = new Contract(this.config.contracts.complianceFilter);
+    }
+    return this._contract;
+  }
   /** In-memory alert subscriptions (persisted off-chain by the caller) */
   private subscriptions: Map<string, AlertSubscription> = new Map();
 
   constructor(config: StellarIdentityConfig) {
     this.config = config;
     this.rpc = new SorobanRpc.Server(config.rpcUrl ?? this.defaultRpcUrl());
-    this.contract = new Contract(config.contracts.complianceFilter);
   }
 
   // -------------------------------------------------------------------------
@@ -532,37 +538,214 @@ export class ComplianceClient {
   // Compliance rules
   // -------------------------------------------------------------------------
 
+  /**
+   * Register a brand-new compliance rule for the given jurisdiction.
+   * Throws ComplianceError (ComplianceUnauthorized) when the admin keypair is
+   * not authorized on-chain, or ComplianceError (ComplianceNotFound/code 404)
+   * if a rule for this jurisdiction already exists.
+   *
+   * Alias of {@link registerComplianceRule} retained for legacy call sites.
+   */
+  async registerRule(
+    adminKeypair: Keypair,
+    jurisdiction: string,
+    requirement: string,
+    enforcement: ComplianceRuleEnforcement,
+  ): Promise<void> {
+    if (!jurisdiction || jurisdiction.trim() === '') {
+      throw new ComplianceError(ErrorCode.ComplianceInvalidHash, 'jurisdiction must be non-empty');
+    }
+    if (!requirement) {
+      throw new ComplianceError(ErrorCode.ComplianceInvalidHash, 'requirement must be non-empty');
+    }
+    return this.registerComplianceRule(adminKeypair, jurisdiction, requirement, enforcement);
+  }
+
+  /** Legacy alias kept for callers written before Issue #285. */
   async registerComplianceRule(
     adminKeypair: Keypair,
     jurisdiction: string,
     requirement: string,
-    enforcement: 'mandatory' | 'advisory',
+    enforcement: ComplianceRuleEnforcement,
+  ): Promise<void> {
+    return this.invokeWrite(adminKeypair, 'register_compliance_rule', [
+      xdr.ScVal.scvAddress(new Address(adminKeypair.publicKey()).toScAddress()),
+      nativeToScVal(enc(jurisdiction), { type: 'bytes' }),
+      nativeToScVal(enc(requirement), { type: 'bytes' }),
+      nativeToScVal(enc(enforcement), { type: 'bytes' }),
+    ]);
+  }
+
+  /**
+   * Update the requirement / enforcement / active state of an existing rule.
+   * Throws ComplianceError (ComplianceNotFound) when no rule exists for the
+   * jurisdiction, and ComplianceError (ComplianceUnauthorized) on permission
+   * failure.
+   */
+  async updateRule(
+    adminKeypair: Keypair,
+    jurisdiction: string,
+    requirement: string,
+    enforcement: ComplianceRuleEnforcement,
+    active: boolean,
+  ): Promise<void> {
+    if (!jurisdiction || jurisdiction.trim() === '') {
+      throw new ComplianceError(ErrorCode.ComplianceInvalidHash, 'jurisdiction must be non-empty');
+    }
+    return this.invokeWrite(adminKeypair, 'update_compliance_rule', [
+      xdr.ScVal.scvAddress(new Address(adminKeypair.publicKey()).toScAddress()),
+      nativeToScVal(enc(jurisdiction), { type: 'bytes' }),
+      nativeToScVal(enc(requirement), { type: 'bytes' }),
+      nativeToScVal(enc(enforcement), { type: 'bytes' }),
+      nativeToScVal(active, { type: 'bool' }),
+    ]);
+  }
+
+  /**
+   * Deactivate (but do not delete) the rule registered for a jurisdiction.
+   * The rule stays on-chain and can be re-activated via {@link updateRule}.
+   */
+  async deactivateRule(
+    adminKeypair: Keypair,
+    jurisdiction: string,
+  ): Promise<void> {
+    return this.invokeWrite(adminKeypair, 'deactivate_compliance_rule', [
+      xdr.ScVal.scvAddress(new Address(adminKeypair.publicKey()).toScAddress()),
+      nativeToScVal(enc(jurisdiction), { type: 'bytes' }),
+    ]);
+  }
+
+  /**
+   * Read a single compliance rule by exact jurisdiction key. Returns null when
+   * the contract has no entry for that jurisdiction.
+   */
+  async getRule(jurisdiction: string): Promise<ComplianceRule | null> {
+    try {
+      const val = await this.simulateRead('get_compliance_rule', [
+        nativeToScVal(enc(jurisdiction), { type: 'bytes' }),
+      ]);
+      return this.parseComplianceRule(scValToNative(val), jurisdiction);
+    } catch (e) {
+      if (String(e).includes('NotFound') || String(e).includes('ContractError(404)')) {
+        return null;
+      }
+      throw new ComplianceError(
+        ErrorCode.ComplianceNotFound,
+        `get_compliance_rule failed: ${e instanceof Error ? e.message : String(e)}`,
+        { jurisdiction },
+      );
+    }
+  }
+
+  /**
+   * Return the set of compliance rules that apply to a jurisdiction,
+   * walking the hierarchical path from the most specific up to GLOBAL.
+   *
+   * Example effective rules for "US-CA-SF":
+   *   GLOBAL                  (always considered)
+   *   US
+   *   US-CA
+   *   US-CA-SF
+   *
+   * Inactive rules (active=false) are filtered out. Most-specific overrides
+   * win when ancestor and descendant disagree (handled via Map keyed by rule
+   * id `{jurisdiction}:{requirement}`).
+   */
+  async getEffectiveRules(jurisdiction: string): Promise<ComplianceRule[]> {
+    const path = ancestorJurisdictions(jurisdiction);
+    const out: ComplianceRule[] = [];
+    for (const key of path) {
+      const rule = await this.getRule(key);
+      if (rule && rule.active) out.push(rule);
+    }
+    return out;
+  }
+
+  /**
+   * Evaluate an address against the rules of a jurisdiction (default
+   * "GLOBAL"). The returned object always contains the address and
+   * jurisdiction; violations lists each active mandatory rule that the
+   * current screening result does not satisfy.
+   */
+  async evaluateRules(
+    address: string,
+    jurisdiction: string = 'GLOBAL',
+  ): Promise<RuleEvaluationResult> {
+    if (!address) {
+      throw new ComplianceError(ErrorCode.ComplianceInvalidHash, 'address must be non-empty');
+    }
+    const [screening, rules] = await Promise.all([
+      this.screenAddress(address).catch(() => null),
+      this.getEffectiveRules(jurisdiction),
+    ]);
+
+    const complianceScreening: ComplianceResult | undefined = screening
+      ? {
+          address: screening.address,
+          status: screening.status === 'clear' ? 'cleared' : screening.status === 'suspicious' ? 'flagged' : 'blocked',
+          riskScore: screening.riskScore,
+          sanctionsLists: screening.matches,
+          lastChecked: screening.timestamp,
+          recommendations: [],
+        }
+      : undefined;
+
+    const violations = rules.filter(rule =>
+      evaluateRuleAgainstScreen(rule, complianceScreening)
+    );
+
+    return {
+      address,
+      jurisdiction,
+      compliant: violations.length === 0,
+      violations,
+      screening: complianceScreening,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Private helpers
+  // -------------------------------------------------------------------------
+
+  /**
+   * Shared submit-helper for the rule-mutating contract calls so the
+   * try/prepare/sign/send pipeline is identical for every method.
+   */
+  private async invokeWrite(
+    adminKeypair: Keypair,
+    method: string,
+    args: xdr.ScVal[],
   ): Promise<void> {
     const account = await this.rpc.getAccount(adminKeypair.publicKey());
     const tx = new TransactionBuilder(account, {
       fee: '100',
       networkPassphrase: this.networkPassphrase(),
     })
-      .addOperation(
-        this.contract.call(
-          'register_compliance_rule',
-          xdr.ScVal.scvAddress(new Address(adminKeypair.publicKey()).toScAddress()),
-          nativeToScVal(enc(jurisdiction), { type: 'bytes' }),
-          nativeToScVal(enc(requirement), { type: 'bytes' }),
-          nativeToScVal(enc(enforcement), { type: 'bytes' }),
-        ),
-      )
+      .addOperation(this.contract.call(method, ...args))
       .setTimeout(30)
       .build();
-
     const prepared = await this.rpc.prepareTransaction(tx);
     prepared.sign(adminKeypair);
-    await this.rpc.sendTransaction(prepared);
+    const result = await this.rpc.sendTransaction(prepared);
+    if (result.status === 'ERROR') {
+      throw new ComplianceError(
+        ErrorCode.ComplianceUnauthorized,
+        `${method} failed: ${result.errorResult}`,
+      );
+    }
   }
 
-  // -------------------------------------------------------------------------
-  // Private helpers
-  // -------------------------------------------------------------------------
+  private parseComplianceRule(raw: unknown, fallbackJurisdiction: string): ComplianceRule | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const r = raw as Record<string, unknown>;
+    return {
+      jurisdiction: dec(r.jurisdiction) || fallbackJurisdiction,
+      requirement: dec(r.requirement),
+      enforcement: (dec(r.enforcement) === 'mandatory' ? 'mandatory' : 'advisory'),
+      active: Boolean(r.active ?? true),
+      updatedAt: Number(r.updated_at ?? r.updatedAt ?? 0) || undefined,
+    };
+  }
 
   private async screenAddressOnChain(address: string): Promise<ScreeningResult> {
     try {
@@ -718,4 +901,60 @@ async function sha256Hex(input: string): Promise<string> {
   return Array.from(new Uint8Array(hashBuffer))
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+/**
+ * Strip a `-separated` jurisdiction string into ancestor entries from
+ * GLOBAL down to the most specific path entry. The returned array always
+ * starts with the literal "GLOBAL".
+ *
+ * Example: ancestorJurisdictions("US-CA-SF")
+ *   ["GLOBAL", "US", "US-CA", "US-CA-SF"]
+ */
+export function ancestorJurisdictions(jurisdiction: string): string[] {
+  const out: string[] = ['GLOBAL'];
+  if (!jurisdiction || jurisdiction === 'GLOBAL') return out;
+  const sanitized = jurisdiction.replace(/^[-]+|[-]+$/g, '');
+  if (!sanitized) return out;
+  const parts = sanitized.split('-');
+  let acc = '';
+  for (const part of parts) {
+    acc = acc ? `${acc}-${part}` : part;
+    out.push(acc);
+  }
+  return out;
+}
+
+/**
+ * Decides whether a single rule is currently violated by an address's
+ * screening result. Pure function — exported for unit tests.
+ *
+ * Behaviour
+ *  - inactive rules are never violated (they are filtered out elsewhere).
+ *  - advisory rules are never violations (they surface as warnings, not
+ *    blockers).
+ *  - When no screening result is available the address is treated as
+ *    not-screened; any rule with a non-empty requirement is considered
+ *    violated so callers can prompt the user to complete KYC.
+ */
+export function evaluateRuleAgainstScreen(
+  rule: ComplianceRule,
+  screening: ComplianceResult | undefined,
+): boolean {
+  if (!rule.active) return false;
+  if (rule.enforcement !== 'mandatory') return false;
+  if (!screening) {
+    // Without a screening we cannot prove compliance; treat this as a violation
+    // so the address is forced to be screened before being cleared.
+    return Boolean(rule.requirement);
+  }
+
+  // Cleared addresses satisfy every mandatory rule.
+  if (screening.status === 'cleared' && screening.riskScore <= 50) return false;
+  // Flagged / blocked addresses violate every mandatory rule.
+  if (screening.status === 'flagged' || screening.status === 'blocked') return true;
+
+  // Unknown status but high risk still violates.
+  if (screening.riskScore > 70) return true;
+  return false;
 }

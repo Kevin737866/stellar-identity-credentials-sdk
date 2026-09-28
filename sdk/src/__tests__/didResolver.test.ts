@@ -37,7 +37,10 @@ jest.mock('stellar-sdk', () => ({
     FUTURENET: 'Test SDF Future Network ; October 2022',
   },
   Address: {
-    fromString: jest.fn().mockReturnValue({}),
+    fromString: jest.fn().mockImplementation((addr: string) => {
+      if (!addr.startsWith('G')) throw new Error(`Invalid Stellar address: ${addr}`);
+      return {};
+    }),
     fromScAddress: jest.fn().mockReturnValue({}),
   },
   nativeToScVal: jest.fn().mockReturnValue({}),

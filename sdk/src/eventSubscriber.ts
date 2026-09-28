@@ -1,3 +1,23 @@
+/**
+ * eventSubscriber.ts
+ *
+ * The EventSubscriber lets applications subscribe to and react to on-chain
+ * events emitted by the Stellar Identity contracts. Events are delivered to
+ * registered handlers from two interchangeable transports:
+ *
+ *   - WebSocket  primary, automatic reconnect with exponential backoff,
+ *                shared with the existing implementation.
+ *   - Polling    opt-in fallback that hits SorobanRpc.getEvents on a
+ *                configurable interval, sharing the same dispatch path so a
+ *                subscription behaves identically regardless of transport.
+ *
+ * Issue #290 additions (subscribeToDIDEvents, subscribeToCredentialEvents,
+ * subscribeToContractEvents, enablePolling, polling fallback) live alongside
+ * the existing subscribe/unsubscribe/once surface so existing call sites
+ * continue to work unchanged.
+ */
+
+import { SorobanRpc } from 'stellar-sdk';
 import { StellarIdentityConfig } from './types';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -11,6 +31,7 @@ const MAX_EVENT_HISTORY = 500;
 const HEARTBEAT_INTERVAL_MS = 20_000;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
 const MAX_SUBSCRIPTIONS = 200;
+const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
 const RPC_URLS: Record<string, string> = {
   mainnet: 'https://soroban-rpc.stellar.org',
@@ -43,6 +64,22 @@ const ALL_EVENT_TYPES = new Set<EventType>([
   'AddressDesanctioned',
 ]);
 
+/** Event types related to a DID lifecycle (Issue #290). */
+const DID_RELATED_EVENTS: EventType[] = [
+  'DIDCreated',
+  'CredentialIssued',
+  'CredentialRevoked',
+  'ReputationScoreUpdated',
+  'AddressSanctioned',
+];
+
+/** Event types related to a credential lifecycle (Issue #290). */
+const CREDENTIAL_RELATED_EVENTS: EventType[] = [
+  'CredentialIssued',
+  'CredentialRevoked',
+  'ProofVerified',
+];
+
 // ── Connection state ──────────────────────────────────────────────────────────
 
 export type ConnectionState =
@@ -53,6 +90,31 @@ export type ConnectionState =
   | 'paused';
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
+
+/** A single on-chain event delivered to subscribers (Issue #290 extended). */
+export interface ContractEvent {
+  type: EventType;
+  data: Record<string, unknown>;
+  timestamp: number;
+  /** Originating contract address, when known (polling transport). */
+  contractAddress?: string;
+  /** Ledger sequence the event was observed on, when known. */
+  ledger?: number;
+  /** Unique event ID assigned by the server (used for deduplication). */
+  eventId?: string;
+}
+
+/** Backwards-compatible SDK event interface. */
+export interface SDKEvent {
+  type: EventType;
+  data: Record<string, unknown>;
+  timestamp: number;
+  /** Unique event ID assigned by the server (used for deduplication). */
+  eventId?: string;
+}
+
+/** Event handler signature. */
+export type ContractEventHandler = (event: ContractEvent) => void;
 
 export interface EventFilter {
   /** Match events whose `data.address` equals this value. */
@@ -65,14 +127,12 @@ export interface EventFilter {
   maxScore?: number;
   /** Custom predicate for advanced filtering. */
   predicate?: (event: SDKEvent) => boolean;
-}
-
-export interface SDKEvent {
-  type: EventType;
-  data: Record<string, unknown>;
-  timestamp: number;
-  /** Unique event ID assigned by the server (used for deduplication). */
-  eventId?: string;
+  /** Filter to events emitted by a specific contract (Issue #290). */
+  contractAddress?: string;
+  /** Filter by credential ID (Issue #290). */
+  credentialId?: string;
+  /** Filter by DID (Issue #290). */
+  did?: string;
 }
 
 export interface SubscribeOptions {
@@ -84,6 +144,19 @@ export interface SubscribeOptions {
   maxQueueSize?: number;
   /** If true, immediately replay recent historical events on subscribe. */
   replayHistory?: boolean;
+}
+
+export interface PollingOptions {
+  /** Master switch. When false (default) the transport is WebSocket only. */
+  enabled: boolean;
+  /** Poll interval in ms. Defaults to 5000 when omitted. */
+  intervalMs?: number;
+  /** Ledger sequence to start polling from. Defaults to 'now'. */
+  startLedger?: number;
+  /** Specific contract ids to narrow the getEvents RPC. */
+  contractIds?: string[];
+  /** Specific event topics to filter on. */
+  topics?: string[][];
 }
 
 export interface EventSubscriberMetrics {
@@ -124,6 +197,9 @@ export interface Subscription {
   /** Number of events dropped due to queue overflow for this subscription. */
   droppedCount: number;
   paused: boolean;
+  /** Issue #290: marker for synthetic contract-address subscriptions so
+   *  unsubscribe(contract:<addr>) evicts only those this call created. */
+  _contractOwner?: string;
 }
 
 // ── EventSubscriber ───────────────────────────────────────────────────────────
@@ -134,6 +210,9 @@ export interface Subscription {
  * Maintains a WebSocket connection with automatic reconnection, exponential
  * back-off, heartbeat monitoring, wildcard subscriptions, batched delivery,
  * deduplication, event history replay, and connection lifecycle events.
+ *
+ * Issue #290 additions provide polling fallback, DID/credential/contract
+ * subscription helpers, and an `on()` alias for convenience.
  *
  * @example
  * ```ts
@@ -159,8 +238,8 @@ export class EventSubscriber {
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
   private reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private shouldReconnect = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ── Heartbeat ─────────────────────────────────────────────────────────────
 
@@ -194,6 +273,18 @@ export class EventSubscriber {
     ConnectionEventType,
     Array<(...args: unknown[]) => void>
   >();
+
+  // ── Polling state (Issue #290) ────────────────────────────────────────────
+
+  private pollingOptions: PollingOptions | null = null;
+  private pollingTimer: ReturnType<typeof setInterval> | null = null;
+  private lastPolledLedger: number | null = null;
+  /** Lazily constructed so unit tests do not need a real Soroban RPC URL. */
+  private _rpc?: SorobanRpc.Server;
+  private get rpc(): SorobanRpc.Server {
+    if (!this._rpc) this._rpc = new SorobanRpc.Server(this.rpcUrl);
+    return this._rpc;
+  }
 
   // ── Constructor ───────────────────────────────────────────────────────────
 
@@ -239,7 +330,6 @@ export class EventSubscriber {
       droppedCount: 0,
       paused: false,
     };
-
     this.subscriptions.set(id, subscription);
 
     if (options?.batchSize || options?.batchIntervalMs) {
@@ -252,14 +342,146 @@ export class EventSubscriber {
     if (options?.replayHistory) {
       this.replayHistory(subscription);
     }
-
     return id;
   }
 
   /**
+   * Alias for {@link subscribe} with no batching.
+   * Provided so callers that want EventEmitter-style synchronous delivery
+   * (one callback per event) do not have to pass options.
+   *
+   * Note: this overload is for event subscription. For connection lifecycle
+   * events use `on('connected' | 'disconnected' | ...)`.
+   */
+  on(
+    eventType: EventType,
+    filter: EventFilter | undefined,
+    callback: ContractEventHandler,
+  ): string;
+
+  /**
+   * Register a listener for connection lifecycle events.
+   *
+   * @example
+   * ```ts
+   * sub.on('connected', () => console.log('connected'));
+   * sub.on('error', err => console.error(err));
+   * ```
+   */
+  on<K extends ConnectionEventType>(
+    event: K,
+    listener: ConnectionEventMap[K],
+  ): this;
+
+  // Implementation — supports both event subscription and lifecycle registration
+  on(
+    eventOrType: EventType | ConnectionEventType,
+    filterOrListener: EventFilter | undefined | ((...args: unknown[]) => void),
+    callback?: ContractEventHandler,
+  ): string | this {
+    // Route to lifecycle listener registration when the first argument
+    // is a known lifecycle event name.
+    const lifecycleEvents: ConnectionEventType[] = [
+      'connected',
+      'disconnected',
+      'reconnecting',
+      'error',
+      'paused',
+      'resumed',
+    ];
+    if (lifecycleEvents.includes(eventOrType as ConnectionEventType)) {
+      const event = eventOrType as ConnectionEventType;
+      if (!this.connectionListeners.has(event)) {
+        this.connectionListeners.set(event, []);
+      }
+      this.connectionListeners.get(event)!.push(
+        filterOrListener as (...args: unknown[]) => void,
+      );
+      return this;
+    }
+    // Otherwise treat it as an event-type subscription.
+    return this.subscribe(
+      eventOrType as EventType,
+      filterOrListener as EventFilter | undefined,
+      callback as ContractEventHandler,
+    );
+  }
+
+  /**
+   * Subscribe to every event related to a DID across all DID-related event
+   * types. Returns the list of subscription ids so callers can bulk-unsubscribe.
+   */
+  subscribeToDIDEvents(did: string, callback: ContractEventHandler): string[] {
+    if (!did) throw new Error('did must be non-empty');
+    return DID_RELATED_EVENTS.map(eventType =>
+      this.subscribe(eventType, { did, address: didToAddress(did) }, callback),
+    );
+  }
+
+  /**
+   * Subscribe to all events concerning a specific verifiable credential.
+   */
+  subscribeToCredentialEvents(
+    credentialId: string,
+    callback: ContractEventHandler,
+  ): string[] {
+    if (!credentialId) throw new Error('credentialId must be non-empty');
+    return CREDENTIAL_RELATED_EVENTS.map(eventType =>
+      this.subscribe(eventType, { credentialId }, callback),
+    );
+  }
+
+  /**
+   * Subscribe to every event emitted by a specific contract address.
+   * Returns a `contract:<addr>` handle; pass it to `unsubscribe` to tear
+   * down all subscriptions created by this call atomically.
+   */
+  subscribeToContractEvents(
+    contractAddress: string,
+    callback: ContractEventHandler,
+  ): string {
+    if (!contractAddress) throw new Error('contractAddress must be non-empty');
+    // Dedupe the union of credential- and DID-related event types so a
+    // single event cannot fire the user callback twice.
+    const targets = Array.from(
+      new Set<EventType>([...CREDENTIAL_RELATED_EVENTS, ...DID_RELATED_EVENTS]),
+    );
+    for (const eventType of targets) {
+      const id = this.subscribe(eventType, { contractAddress }, callback);
+      // Tag the subscription so unsubscribe(contract:<addr>) can evict
+      // only synthetic subscribers owned by this call.
+      const sub = this.subscriptions.get(id);
+      if (sub) sub._contractOwner = contractAddress;
+    }
+    return `contract:${contractAddress}`;
+  }
+
+  /**
    * Cancel a subscription and clean up all associated timers and queues.
+   *
+   * Supports the special `contract:<addr>` handle to bulk-unsubscribe
+   * all subscriptions created by `subscribeToContractEvents`.
    */
   unsubscribe(subscriptionId: string): void {
+    if (subscriptionId.startsWith('contract:')) {
+      // Evict only synthetic subscriptions tagged with the matching
+      // _contractOwner, not any subscription with the same contractAddress.
+      const target = subscriptionId.slice('contract:'.length);
+      for (const [id, sub] of Array.from(this.subscriptions.entries())) {
+        if (sub._contractOwner === target) {
+          this.flushQueue(id);
+          this.subscriptions.delete(id);
+          this.eventQueue.delete(id);
+          const timer = this.batchTimers.get(id);
+          if (timer) {
+            clearInterval(timer);
+            this.batchTimers.delete(id);
+          }
+        }
+      }
+      return;
+    }
+
     // Flush any pending batched events before removal.
     this.flushQueue(subscriptionId);
     this.subscriptions.delete(subscriptionId);
@@ -362,6 +584,7 @@ export class EventSubscriber {
     this.reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
     this.setConnectionState('connecting');
     this.connectInternal();
+    if (this.pollingOptions?.enabled) this.startPollingInternal();
   }
 
   /**
@@ -374,13 +597,12 @@ export class EventSubscriber {
     this.closeSocket();
     this.setConnectionState('disconnected');
     this.stopAllBatchTimers();
+    this.stopPollingInternal();
     this.emit('disconnected', 'client requested disconnect');
   }
 
   /**
    * Pause all event delivery without closing the connection.
-   * Events received while paused are still tracked in subscription queues
-   * if batching is enabled.
    */
   pauseAll(): void {
     for (const sub of this.subscriptions.values()) {
@@ -403,29 +625,7 @@ export class EventSubscriber {
     this.emit('resumed');
   }
 
-  // ── Connection lifecycle events ───────────────────────────────────────────
-
-  /**
-   * Register a listener for connection lifecycle events.
-   *
-   * @example
-   * ```ts
-   * sub.on('connected', () => console.log('connected'));
-   * sub.on('error', err => console.error(err));
-   * ```
-   */
-  on<K extends ConnectionEventType>(
-    event: K,
-    listener: ConnectionEventMap[K],
-  ): this {
-    if (!this.connectionListeners.has(event)) {
-      this.connectionListeners.set(event, []);
-    }
-    this.connectionListeners.get(event)!.push(
-      listener as (...args: unknown[]) => void,
-    );
-    return this;
-  }
+  // ── Lifecycle listener removal ────────────────────────────────────────────
 
   /**
    * Remove a previously registered lifecycle listener.
@@ -440,6 +640,52 @@ export class EventSubscriber {
       if (idx !== -1) listeners.splice(idx, 1);
     }
     return this;
+  }
+
+  // ── Polling transport (Issue #290) ────────────────────────────────────────
+
+  /**
+   * Configure polling-based event delivery (Issue #290). When `enabled`
+   * is true, a setInterval loop hits `rpc.getEvents` and dispatches any
+   * matching events through the same path used by the WebSocket transport.
+   */
+  enablePolling(options: PollingOptions): void {
+    this.pollingOptions = options;
+    if (options.enabled) {
+      this.startPollingInternal();
+    } else {
+      this.stopPollingInternal();
+    }
+  }
+
+  /** Returns true when polling-backed delivery is currently active. */
+  isPolling(): boolean {
+    return this.pollingTimer !== null;
+  }
+
+  /** Single polling tick. Exposed for tests; safe to await. */
+  async pollOnce(): Promise<void> {
+    if (!this.pollingOptions) return;
+    try {
+      const startLedger = this.lastPolledLedger ?? undefined;
+      const response = await this.rpc.getEvents({
+        startLedger,
+        filters: this.pollingOptions.contractIds?.map(id => ({
+          contractIds: [id],
+        })),
+        topics: this.pollingOptions.topics,
+      } as Parameters<SorobanRpc.Server['getEvents']>[0]);
+      const events = response?.events ?? [];
+      for (const evt of events) {
+        const normalised = this.normalisePolledEvent(evt);
+        this.dispatchEvent(normalised);
+      }
+      if (typeof response?.latestLedger === 'number') {
+        this.lastPolledLedger = response.latestLedger;
+      }
+    } catch {
+      // Polling failure is non-fatal — logs could be added here.
+    }
   }
 
   // ── Query API ─────────────────────────────────────────────────────────────
@@ -479,7 +725,7 @@ export class EventSubscriber {
     return this.subscriptions.size;
   }
 
-  // ── Private — WebSocket management ───────────────────────────────────────
+  // ── Private — WebSocket management ────────────────────────────────────────
 
   private connectInternal(): void {
     this.closeSocket();
@@ -518,7 +764,10 @@ export class EventSubscriber {
       };
     } catch (error) {
       this.metrics.totalErrors++;
-      this.emit('error', error instanceof Error ? error : new Error(String(error)));
+      this.emit(
+        'error',
+        error instanceof Error ? error : new Error(String(error)),
+      );
       if (this.shouldReconnect) {
         this.scheduleReconnect();
       }
@@ -532,7 +781,6 @@ export class EventSubscriber {
       DEFAULT_RECONNECT_DELAY_MS * 2 ** this.reconnectAttempts,
       MAX_RECONNECT_DELAY_MS,
     );
-
     this.reconnectTimer = setTimeout(() => {
       this.reconnectAttempts++;
       this.metrics.reconnectCount++;
@@ -543,15 +791,21 @@ export class EventSubscriber {
 
   private closeSocket(): void {
     if (this.ws) {
-      try { this.ws.close(); } catch { /* intentional */ }
+      try {
+        this.ws.close();
+      } catch {
+        /* intentional */
+      }
       this.ws = null;
     }
   }
 
   private buildWsUrl(): string {
-    return this.rpcUrl.replace(/^https?/, match =>
-      match === 'https' ? 'wss' : 'ws',
-    ) + '/events';
+    return (
+      this.rpcUrl.replace(/^https?/, match =>
+        match === 'https' ? 'wss' : 'ws',
+      ) + '/events'
+    );
   }
 
   // ── Private — heartbeat ───────────────────────────────────────────────────
@@ -692,6 +946,25 @@ export class EventSubscriber {
       const score = event.data.score as number | undefined;
       if (score === undefined || score > filter.maxScore) return false;
     }
+    // Issue #290 filter fields
+    if (filter.contractAddress !== undefined) {
+      const addr = (event as unknown as ContractEvent).contractAddress;
+      if (addr !== filter.contractAddress) return false;
+    }
+    if (filter.credentialId !== undefined) {
+      if (event.data.credentialId !== filter.credentialId) return false;
+    }
+    if (filter.did !== undefined) {
+      const eventDID = (event.data.did ?? event.data.address) as
+        | string
+        | undefined;
+      if (
+        eventDID !== filter.did &&
+        eventDID !== didToAddress(filter.did)
+      ) {
+        return false;
+      }
+    }
     if (filter.predicate && !filter.predicate(event)) {
       return false;
     }
@@ -749,6 +1022,51 @@ export class EventSubscriber {
     this.batchTimers.clear();
   }
 
+  // ── Private — polling (Issue #290) ────────────────────────────────────────
+
+  private startPollingInternal(): void {
+    if (!this.pollingOptions) return;
+    this.stopPollingInternal();
+
+    const intervalMs =
+      this.pollingOptions.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.lastPolledLedger = this.pollingOptions.startLedger ?? null;
+    this.pollingTimer = setInterval(() => {
+      void this.pollOnce();
+    }, intervalMs);
+  }
+
+  private stopPollingInternal(): void {
+    if (this.pollingTimer) {
+      clearInterval(this.pollingTimer);
+      this.pollingTimer = null;
+    }
+  }
+
+  private normalisePolledEvent(raw: unknown): SDKEvent & ContractEvent {
+    const record = (raw && typeof raw === 'object' ? raw : {}) as Record<
+      string,
+      unknown
+    >;
+    const inner = (record.event && typeof record.event === 'object'
+      ? record.event
+      : record) as Record<string, unknown>;
+    const type = String(inner.type ?? 'DIDCreated') as EventType;
+    return {
+      type,
+      data: (inner.data && typeof inner.data === 'object'
+        ? inner.data
+        : {}) as Record<string, unknown>,
+      timestamp: Number(inner.timestamp ?? Date.now()),
+      contractAddress: record.contractId
+        ? String(record.contractId)
+        : inner.contractAddress
+          ? String(inner.contractAddress)
+          : undefined,
+      ledger: typeof record.ledger === 'number' ? record.ledger : undefined,
+    };
+  }
+
   // ── Private — history ─────────────────────────────────────────────────────
 
   private recordHistory(event: SDKEvent): void {
@@ -793,9 +1111,16 @@ export class EventSubscriber {
     for (const listener of listeners) {
       try {
         (listener as (...a: unknown[]) => void)(...(args as unknown[]));
-      } catch { /* prevent listener errors from crashing the subscriber */ }
+      } catch {
+        /* prevent listener errors from crashing the subscriber */
+      }
     }
   }
 }
 
-export type { EventType, Subscription, EventFilter, SDKEvent };
+/** Extract the Stellar address from a `did:stellar:<address>:...` identifier. */
+function didToAddress(did: string): string {
+  if (!did.startsWith('did:stellar:')) return did;
+  return did.slice('did:stellar:'.length).split(':')[0];
+}
+

@@ -1,10 +1,12 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
-use crate::{clamp_page_size, PaginatedCredentials, VerifiableCredential};
+use crate::admin;
+use crate::contract_upgrade;
 use crate::rate_limiter::{check_rate_limit, defaults};
 use crate::reentrancy_guard::ReentrancyGuard;
+use crate::{clamp_page_size, PaginatedCredentials, VerifiableCredential};
 
 // ---------------------------------------------------------------------------
 // Delegated Credential Issuance Types (#92)
@@ -135,6 +137,8 @@ pub struct CredentialIssuer;
 impl CredentialIssuer {
     const MAX_CREDENTIAL_TYPE_LENGTH: u32 = 128;
     const MAX_CREDENTIAL_DATA_LENGTH: u32 = 10240;
+    /// Maximum number of credentials that can be issued in a single batch (#281).
+    const MAX_BATCH_SIZE: u32 = 50;
 
     pub fn issue_credential(
         env: Env,
@@ -469,13 +473,29 @@ impl CredentialIssuer {
     }
 
     /// Issue multiple credentials in a single transaction (#81).
-    /// Returns the list of generated credential IDs in order.
+    ///
+    /// Each credential is issued via `issue_credential`, which emits an
+    /// individual `CredentialIssued` event. After all credentials are issued,
+    /// a single `BatchCredentialIssued` event is published with the batch
+    /// size and the list of credential IDs.
+    ///
+    /// If any credential fails, the entire batch reverts (atomic).
+    /// Maximum batch size is enforced by `MAX_BATCH_SIZE` (default 50).
     pub fn batch_issue_credentials(
         env: Env,
         issuer: Address,
         items: Vec<BatchIssuanceItem>,
     ) -> Result<Vec<Bytes>, CredentialIssuerError> {
         issuer.require_auth();
+
+        // Enforce maximum batch size (#281)
+        let batch_len = items.len();
+        if batch_len == 0 {
+            return Err(CredentialIssuerError::InvalidCredential);
+        }
+        if batch_len > Self::MAX_BATCH_SIZE as usize {
+            return Err(CredentialIssuerError::InvalidCredential);
+        }
 
         let mut issued_ids = Vec::new(&env);
 
@@ -492,6 +512,12 @@ impl CredentialIssuer {
             issued_ids.push_back(credential_id);
         }
 
+        // Emit a single BatchCredentialIssued event (#281)
+        env.events().publish(
+            (Symbol::new(&env, "BatchCredentialIssued"),),
+            (issuer.clone(), issued_ids.len() as u32, issued_ids.clone()),
+        );
+
         Ok(issued_ids)
     }
 
@@ -506,12 +532,14 @@ impl CredentialIssuer {
     // -----------------------------------------------------------------------
 
     /// Authorize an address to issue credentials. Emits IssuerAuthorized event.
+    /// Only the contract admin may call this.
     pub fn authorize_issuer(
         env: Env,
         admin: Address,
         issuer: Address,
     ) -> Result<(), CredentialIssuerError> {
         admin.require_auth();
+        admin::only_admin(&env, &admin).map_err(|_| CredentialIssuerError::Unauthorized)?;
 
         let mut issuers: Vec<Address> = env
             .storage()
@@ -537,12 +565,14 @@ impl CredentialIssuer {
     }
 
     /// Revoke an address's authorization to issue credentials. Emits IssuerDeauthorized event.
+    /// Only the contract admin may call this.
     pub fn deauthorize_issuer(
         env: Env,
         admin: Address,
         issuer: Address,
     ) -> Result<(), CredentialIssuerError> {
         admin.require_auth();
+        admin::only_admin(&env, &admin).map_err(|_| CredentialIssuerError::Unauthorized)?;
 
         let issuers: Vec<Address> = env
             .storage()
@@ -592,6 +622,129 @@ impl CredentialIssuer {
         _max_results: u32,
     ) -> Vec<Bytes> {
         Vec::new(&env)
+    }
+
+    // -----------------------------------------------------------------------
+    // Credential expiration & auto-revocation (#43)
+    // -----------------------------------------------------------------------
+
+    /// Batch-revoke all credentials whose `expiration_date` has passed.
+    ///
+    /// Walks through the issuer's credential list and revokes any expired
+    /// credential.  Returns the number of credentials that were revoked.
+    /// `batch_size` limits how many entries are processed in a single call
+    /// (recommended: ≤ 50) to keep gas costs predictable.
+    pub fn revoke_expired_credentials(
+        env: Env,
+        admin: Address,
+        batch_size: u32,
+    ) -> Result<u32, CredentialIssuerError> {
+        admin.require_auth();
+
+        let now = env.ledger().timestamp();
+        let mut revoked = 0u32;
+
+        let creds: Vec<Bytes> = env
+            .storage()
+            .persistent()
+            .get(&CredKey::IssuerCreds(admin.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        for cred_id in creds.iter() {
+            if revoked >= batch_size {
+                break;
+            }
+
+            let credential: Option<VerifiableCredential> = env
+                .storage()
+                .persistent()
+                .get(&CredKey::Credential(cred_id.clone()));
+
+            if let Some(cred) = credential {
+                // Check expiration
+                let expired = cred.expiration_date.map(|exp| now > exp).unwrap_or(false);
+
+                if !expired {
+                    continue;
+                }
+
+                // Check current status — skip already revoked credentials
+                let status: u32 = env
+                    .storage()
+                    .persistent()
+                    .get(&CredKey::Status(cred_id.clone()))
+                    .unwrap_or(0);
+                if status == 1 {
+                    continue;
+                }
+
+                // Revoke
+                let mut mutable_cred = cred;
+                mutable_cred.revocation = Some(Bytes::from_slice(&env, now.to_string().as_bytes()));
+                env.storage()
+                    .persistent()
+                    .set(&CredKey::Credential(cred_id.clone()), &mutable_cred);
+                env.storage()
+                    .persistent()
+                    .set(&CredKey::Status(cred_id.clone()), &1u32);
+
+                let reason = Bytes::from_slice(&env, b"expired");
+                env.storage()
+                    .persistent()
+                    .set(&CredKey::Reason(cred_id.clone()), &reason);
+
+                revoked += 1;
+            }
+        }
+
+        if revoked > 0 {
+            env.events().publish(
+                (Symbol::new(&env, "ExpiredCredentialsRevoked"),),
+                (admin, revoked),
+            );
+        }
+
+        Ok(revoked)
+    }
+
+    /// Renew an existing credential by issuing a new one with an updated
+    /// expiration date.  The original credential is NOT automatically
+    /// revoked — the issuer must explicitly revoke it if desired.
+    ///
+    /// Returns the ID of the newly issued credential.
+    pub fn renew_credential(
+        env: Env,
+        issuer: Address,
+        credential_id: Bytes,
+        new_expiration_date: u64,
+        new_proof: Bytes,
+    ) -> Result<Bytes, CredentialIssuerError> {
+        issuer.require_auth();
+
+        let credential: VerifiableCredential = env
+            .storage()
+            .persistent()
+            .get(&CredKey::Credential(credential_id.clone()))
+            .ok_or(CredentialIssuerError::NotFound)?;
+
+        if credential.issuer != issuer {
+            return Err(CredentialIssuerError::Unauthorized);
+        }
+
+        if new_expiration_date <= env.ledger().timestamp() {
+            return Err(CredentialIssuerError::Expired);
+        }
+
+        // Issue a fresh credential with the same data but new expiration.
+        Self::issue_credential(
+            env,
+            issuer,
+            credential.subject,
+            credential.type_,
+            credential.credential_data,
+            Some(new_expiration_date),
+            new_proof,
+        )
     }
 
     // -----------------------------------------------------------------------
@@ -1208,6 +1361,50 @@ impl CredentialIssuer {
             has_more: (start + size) < total,
         }
     }
+
+    // ── Contract Upgrade (#275) ──────────────────────────────────────────────
+
+    /// Initialize the upgrade module with an admin and initial WASM hash.
+    /// Must be called once during contract deployment.
+    pub fn init_upgrade(
+        env: Env,
+        admin: Address,
+        initial_wasm_hash: BytesN<32>,
+    ) -> Result<(), CredentialIssuerError> {
+        admin.require_auth();
+        if contract_upgrade::is_initialized(&env) {
+            return Err(CredentialIssuerError::AlreadyExists);
+        }
+        contract_upgrade::init(&env, admin, initial_wasm_hash);
+        Ok(())
+    }
+
+    /// Upgrade the contract to a new WASM hash.
+    /// Only the registered admin can perform this operation.
+    pub fn upgrade(
+        env: Env,
+        caller: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), CredentialIssuerError> {
+        caller.require_auth();
+        contract_upgrade::upgrade(&env, &caller, new_wasm_hash)
+            .map_err(|_| CredentialIssuerError::Unauthorized)
+    }
+
+    /// Return the current contract version.
+    pub fn get_contract_version(env: Env) -> u32 {
+        contract_upgrade::get_contract_version(&env)
+    }
+
+    /// Return the current deployed WASM hash.
+    pub fn get_wasm_hash(env: Env) -> Option<BytesN<32>> {
+        contract_upgrade::get_wasm_hash(&env)
+    }
+
+    /// Return the full version history for audit purposes.
+    pub fn get_version_history(env: Env) -> Vec<contract_upgrade::VersionRecord> {
+        contract_upgrade::get_version_history(&env)
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1370,6 +1567,97 @@ mod tests {
                 "IssuerDeauthorized",
             )))
         }));
+    }
+
+    // ── Expiration & auto-revocation tests (#43) ───────────────────────────
+
+    #[test]
+    fn test_revoke_expired_credentials_works() {
+        let env = setup_env();
+        let issuer = Address::generate(&env);
+        let subject = Address::generate(&env);
+        let proof = Bytes::from_slice(&env, b"valid_proof");
+
+        // Issue credential with expiration in the past
+        let past = env.ledger().timestamp() - 1000;
+        let cred_id = CredentialIssuer::issue_credential(
+            env.clone(),
+            issuer.clone(),
+            subject,
+            make_cred_type(&env),
+            Bytes::from_slice(&env, b"{\"name\":\"Alice\"}"),
+            Some(past),
+            proof,
+        )
+        .unwrap();
+
+        let revoked =
+            CredentialIssuer::revoke_expired_credentials(env.clone(), issuer, 10).unwrap();
+        assert_eq!(revoked, 1);
+
+        let status = CredentialIssuer::get_credential_status(env.clone(), cred_id);
+        assert_eq!(status, Bytes::from_slice(&env, b"revoked"));
+    }
+
+    #[test]
+    fn test_revoke_expired_credentials_skips_active() {
+        let env = setup_env();
+        let issuer = Address::generate(&env);
+        let subject = Address::generate(&env);
+        let proof = Bytes::from_slice(&env, b"valid_proof");
+
+        // Issue credential with expiration far in the future
+        let future = env.ledger().timestamp() + 1_000_000;
+        CredentialIssuer::issue_credential(
+            env.clone(),
+            issuer.clone(),
+            subject,
+            make_cred_type(&env),
+            Bytes::from_slice(&env, b"{\"name\":\"Bob\"}"),
+            Some(future),
+            proof,
+        )
+        .unwrap();
+
+        let revoked =
+            CredentialIssuer::revoke_expired_credentials(env.clone(), issuer, 10).unwrap();
+        assert_eq!(revoked, 0);
+    }
+
+    #[test]
+    fn test_renew_credential_creates_new_one() {
+        let env = setup_env();
+        let issuer = Address::generate(&env);
+        let subject = Address::generate(&env);
+        let proof = Bytes::from_slice(&env, b"valid_proof");
+        let new_proof = Bytes::from_slice(&env, b"renewed_proof");
+
+        let future = env.ledger().timestamp() + 10_000;
+        let cred_id = CredentialIssuer::issue_credential(
+            env.clone(),
+            issuer.clone(),
+            subject.clone(),
+            make_cred_type(&env),
+            Bytes::from_slice(&env, b"{\"name\":\"Charlie\"}"),
+            Some(future),
+            proof,
+        )
+        .unwrap();
+
+        let new_expiration = env.ledger().timestamp() + 1_000_000;
+        let renewed_id = CredentialIssuer::renew_credential(
+            env.clone(),
+            issuer,
+            cred_id,
+            new_expiration,
+            new_proof,
+        )
+        .unwrap();
+
+        // New credential should exist and have the new expiration
+        let renewed = CredentialIssuer::get_credential(env.clone(), renewed_id).unwrap();
+        assert_eq!(renewed.subject, subject);
+        assert_eq!(renewed.expiration_date, Some(new_expiration));
     }
 
     #[test]

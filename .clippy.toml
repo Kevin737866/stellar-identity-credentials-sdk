@@ -1,0 +1,2 @@
+# Code quality gates - see CONTRIBUTING.md for waiver process
+cognitive-complexity-threshold = 15

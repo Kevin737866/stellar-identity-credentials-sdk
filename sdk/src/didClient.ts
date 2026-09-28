@@ -16,6 +16,7 @@ import {
   Service,
   StellarIdentityConfig,
   CreateDIDOptions,
+  UpdateDIDOptions,
   TransactionOptions,
   DIDResolutionResult,
 } from './types';
@@ -241,17 +242,39 @@ export class DIDClient {
    * Update the verification methods and/or services of an existing DID.
    * Pass `undefined` for a field to leave it unchanged on-chain.
    *
+   * Supports two calling conventions:
+   * 1. `updateDID(keypair, options: UpdateDIDOptions, txOptions?)`
+   * 2. `updateDID(keypair, verificationMethods?, services?, txOptions?)`
+   *
    * @param keypair - The keypair of the DID controller.
-   * @param verificationMethods - Replacement verification methods, or undefined.
-   * @param services - Replacement services, or undefined.
+   * @param optionsOrVMs - Either `UpdateDIDOptions` or verification methods array.
+   * @param servicesOrTx - Services array (when using legacy signature) or txOptions.
    * @param txOptions - Optional transaction parameters.
    */
   async updateDID(
     keypair: Keypair,
-    verificationMethods?: VerificationMethod[],
-    services?: Service[],
+    optionsOrVMs?: UpdateDIDOptions | VerificationMethod[],
+    servicesOrTx?: Service[] | TransactionOptions,
     txOptions?: TransactionOptions,
   ): Promise<TransactionResult> {
+    let verificationMethods: VerificationMethod[] | undefined;
+    let services: Service[] | undefined;
+
+    // Detect calling convention: if first arg is an object with 'verificationMethods' or 'services'
+    if (
+      optionsOrVMs &&
+      typeof optionsOrVMs === 'object' &&
+      !Array.isArray(optionsOrVMs) &&
+      ('verificationMethods' in optionsOrVMs || 'services' in optionsOrVMs)
+    ) {
+      const opts = optionsOrVMs as UpdateDIDOptions;
+      verificationMethods = opts.verificationMethods;
+      services = opts.services;
+      txOptions = servicesOrTx as TransactionOptions | undefined;
+    } else {
+      verificationMethods = optionsOrVMs as VerificationMethod[] | undefined;
+      services = servicesOrTx as Service[] | undefined;
+    }
     const address = keypair.publicKey();
     this.assertValidStellarAddress(address);
 

@@ -8,6 +8,18 @@ export enum CircuitType {
   CredentialOwnership = 'CredentialOwnership',
   CompositeProof = 'CompositeProof',
   EqualityProof = 'EqualityProof',
+  SelectiveDisclosure = 'SelectiveDisclosure',
+}
+
+export enum PredicateType {
+  GreaterThan = 'GreaterThan',
+  LessThan = 'LessThan',
+  GreaterThanOrEqual = 'GreaterThanOrEqual',
+  LessThanOrEqual = 'LessThanOrEqual',
+  Equality = 'Equality',
+  Range = 'Range',
+  InSet = 'InSet',
+  NotInSet = 'NotInSet',
 }
 
 /**
@@ -100,6 +112,51 @@ export interface TrustEdge {
   weight: number;
   reason: string;
   timestamp: number;
+}
+
+/**
+ * A single trust attestation event as recorded by the on-chain contract.
+ * Structurally identical to {@link TrustEdge} but represents the point-in-time
+ * emission rather than the current aggregate state. Kept distinct so callers
+ * that iterate over an attestation history do not silently consume the
+ * flattened graph view.
+ */
+export interface TrustAttestation {
+  truster: string;
+  subject: string;
+  weight: number;
+  reason: string;
+  timestamp: number;
+  /** Optional human-readable note attached at emit time. */
+  note?: string;
+}
+
+/**
+ * A trust-graph snapshot rooted at a subject, bounded by a hop count. Mirrors
+ * the return value of reputation.getTrustGraph(subject, depth).
+ */
+export interface TrustGraph {
+  subject: string;
+  depth: number;
+  edges: TrustEdge[];
+  /** Convenience: distinct truster addresses reached within `depth` hops. */
+  nodes: string[];
+}
+
+/**
+ * One trust path between two DIDs. Multiple paths can be returned for a
+ * single (from, to) pair; each carries its own cumulative trust weight so
+ * callers can pick the strongest one without re-reading the graph.
+ */
+export interface TrustPath {
+  from: string;
+  to: string;
+  /** Ordered list of addresses along the path, including both endpoints. */
+  path: string[];
+  /** Sum of edge weights along the path. */
+  cumulativeWeight: number;
+  /** Number of edges in `path` (always path.length - 1). */
+  hops: number;
 }
 
 export interface ReputationBreakdown {
@@ -221,15 +278,42 @@ export interface StellarIdentityConfig {
     reputationScore: string;
     zkAttestation: string;
     complianceFilter: string;
+    schemaRegistry: string;
   };
   rpcUrl?: string;
   horizonUrl?: string;
   keypair?: Keypair;
 }
 
+export interface CredentialSchema {
+  id: string;
+  issuer: string;
+  version: number;
+  definition: string;
+  created: number;
+  updated: number;
+}
+
+export interface SchemaValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+export interface SchemaVersion {
+  version: number;
+  schemaId: string;
+  definition: string;
+  updated: number;
+}
+
 export interface CreateDIDOptions {
   verificationMethods: VerificationMethod[];
   services: Service[];
+}
+
+export interface UpdateDIDOptions {
+  verificationMethods?: VerificationMethod[];
+  services?: Service[];
 }
 
 export interface IssueCredentialOptions {
@@ -250,6 +334,36 @@ export interface ZKProofOptions {
   metadata?: Record<string, string>;
   context?: string;
   txOptions?: TransactionOptions;
+}
+
+/**
+ * Options for typed proof submission (Issue #288).
+ * Configurable expiration, metadata, and revealed attributes.
+ */
+export interface ProofOptions {
+  /** Unix timestamp (seconds) when the proof expires. 0 = no expiration. */
+  expiration?: number;
+  /** Additional metadata to attach to the proof. */
+  metadata?: Record<string, string>;
+  /** Attributes to reveal publicly with the proof. */
+  revealedAttributes?: string[];
+  /** Transaction options (fee, timeout, etc.). */
+  txOptions?: TransactionOptions;
+}
+
+/**
+ * Public inputs for nationality proof (Issue #288).
+ */
+export interface NationalityProofInputs {
+  nationalityCommitment: string;
+  allowedCountries: string[];
+}
+
+/**
+ * Public inputs for credential ownership proof (Issue #288).
+ */
+export interface CredentialOwnershipProofInputs {
+  credentialId: string;
 }
 
 export interface ProofGenerationInputs {
@@ -364,6 +478,115 @@ export interface ZKVerificationResult {
   expiresAt?: number;
 }
 
+// ---- Selective Disclosure Types (#111) ----
+
+export interface PredicateInfo {
+  attributeName: string;
+  predicateType: PredicateType;
+  threshold?: string;
+  rangeMin?: string;
+  rangeMax?: string;
+  allowedValues?: string[];
+}
+
+export interface SelectiveDisclosureOptions {
+  circuitId: string;
+  credentialId: string;
+  publicInputs: string[];
+  proofBytes: string;
+  nullifier: string;
+  revealedAttributes: string[];
+  hiddenAttributes: string[];
+  predicates: PredicateInfo[];
+  expiresAt?: number;
+  metadata?: Record<string, string>;
+  context?: string;
+  txOptions?: TransactionOptions;
+}
+
+/**
+ * Options for typed proof submission (Issue #288).
+ * Configurable expiration, metadata, and revealed attributes.
+ */
+export interface ProofOptions {
+  /** Unix timestamp (seconds) when the proof expires. 0 = no expiration. */
+  expiration?: number;
+  /** Additional metadata to attach to the proof. */
+  metadata?: Record<string, string>;
+  /** Attributes to reveal publicly with the proof. */
+  revealedAttributes?: string[];
+  /** Transaction options (fee, timeout, etc.). */
+  txOptions?: TransactionOptions;
+}
+
+/**
+ * Public inputs for nationality proof (Issue #288).
+ */
+export interface NationalityProofInputs {
+  nationalityCommitment: string;
+  allowedCountries: string[];
+}
+
+/**
+ * Public inputs for credential ownership proof (Issue #288).
+ */
+export interface CredentialOwnershipProofInputs {
+  credentialId: string;
+}
+
+export interface SelectiveDisclosureProof {
+  proofId: string;
+  credentialId: string;
+  circuitId: string;
+  publicInputs: string[];
+  proofBytes: string;
+  nullifier: string;
+  verifierAddress: string;
+  createdAt: number;
+  expiresAt?: number;
+  revealedAttributes: string[];
+  hiddenAttributes: string[];
+  predicates: PredicateInfo[];
+  metadata: Record<string, string>;
+}
+
+export interface CombinedDisclosureProof {
+  proofId: string;
+  childProofIds: string[];
+  combinedPredicates: PredicateInfo[];
+  createdAt: number;
+  expiresAt?: number;
+  metadata: Record<string, string>;
+}
+
+export interface SelectiveDisclosureVerificationResult {
+  valid: boolean;
+  proofId: string;
+  circuitId: string;
+  predicates: PredicateInfo[];
+  verifiedAt: number;
+  expiresAt?: number;
+}
+
+// ---- Expiration / Event Types ----
+
+export interface ExpirationEvent {
+  credentialId: string;
+  subject: string;
+  issuer: string;
+  expirationDate: number;
+  daysUntilExpiry: number;
+  expired: boolean;
+  timestamp: number;
+}
+
+export type ExpirationHandler = (event: ExpirationEvent) => void;
+
+export interface EventListener {
+  on(event: string, handler: (...args: any[]) => void): void;
+  off(event: string, handler: (...args: any[]) => void): void;
+}
+
 export interface ComplianceResult {
   address: string;
   status: 'cleared' | 'flagged' | 'blocked';
@@ -371,4 +594,40 @@ export interface ComplianceResult {
   sanctionsLists: string[];
   lastChecked: number;
   recommendations: string[];
+}
+
+/**
+ * On-chain compliance rule for a jurisdiction.
+ *
+ * Rules form a hierarchy addressed by dotted paths, e.g.
+ *   "GLOBAL", "US", "US-CA", "US-CA-SF"
+ * A child jurisdiction inherits from its nearest defined ancestor unless it
+ * overrides a field of the parent rule.
+ */
+export interface ComplianceRule {
+  /** Hierarchical jurisdiction path, segments separated by '-'. */
+  jurisdiction: string;
+  /** Free-form requirement key (e.g. "KYC_REQUIRED", "HIGH_RISK_THRESHOLD:70"). */
+  requirement: string;
+  enforcement: ComplianceRuleEnforcement;
+  /** Whether the rule is currently enforced on-chain. */
+  active: boolean;
+  /** Ledger timestamp (unix seconds) when the rule was last updated. */
+  updatedAt?: number;
+}
+
+export type ComplianceRuleEnforcement = 'mandatory' | 'advisory';
+
+/** Outcome of running compliance rule evaluation against an address. */
+export interface RuleEvaluationResult {
+  /** The jurisdiction that was evaluated (defaults to "GLOBAL" when none given). */
+  jurisdiction: string;
+  /** Address whose compliance was evaluated. */
+  address: string;
+  /** True when none of the active mandatory rules are violated. */
+  compliant: boolean;
+  /** Active mandatory rules that the address does not currently satisfy. */
+  violations: ComplianceRule[];
+  /** Optional screening result used as the source of truth. */
+  screening?: ComplianceResult;
 }

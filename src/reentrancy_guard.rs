@@ -26,7 +26,6 @@
 /// | ZK Attestation      | `verify_proof`                  | Low    | Read-only external calls; state change is atomic |
 /// | Compliance Filter   | `screen_address`                | Low    | No mutable callbacks |
 /// | Reputation Score    | `update_transaction_reputation` | Medium | Guard added to prevent score inflation via callback loops |
-
 use soroban_sdk::{contracterror, Env, Symbol};
 
 // ---------------------------------------------------------------------------
@@ -52,7 +51,12 @@ impl ReentrancyGuard {
     /// Returns `Err(ReentrancyError::Reentrant)` if already locked.
     pub fn acquire(env: &Env, scope: &str) -> Result<(), ReentrancyError> {
         let key = Symbol::new(env, scope);
-        if env.storage().instance().get::<Symbol, bool>(&key).unwrap_or(false) {
+        if env
+            .storage()
+            .instance()
+            .get::<Symbol, bool>(&key)
+            .unwrap_or(false)
+        {
             return Err(ReentrancyError::Reentrant);
         }
         env.storage().instance().set(&key, &true);
