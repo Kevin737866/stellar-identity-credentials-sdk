@@ -58,3 +58,48 @@ export {
   useReputation,
   useCompliance,
 } from './hooks/useStellarIdentity';
+
+// Analytics
+export { AnalyticsDashboard } from './components/AnalyticsDashboard';
+export type {
+  AnalyticsDashboardProps,
+  AnalyticsExportPayload,
+} from './components/AnalyticsDashboard';
+export { MetricCard, formatChange, inferTone } from './components/MetricCard';
+export type { MetricCardProps } from './components/MetricCard';
+export { LineChart } from './components/charts/LineChart';
+export type { LineChartProps } from './components/charts/LineChart';
+export { BarChart } from './components/charts/BarChart';
+export type { BarChartProps } from './components/charts/BarChart';
+export { DonutChart } from './components/charts/DonutChart';
+export type { DonutChartProps, DonutSegment } from './components/charts/DonutChart';
+export {
+  DATE_RANGE_PRESETS,
+  MS_PER_DAY,
+  filterSeriesByRange,
+  formatDateLabel,
+  formatNumber,
+  formatPercent,
+  getDateRangeBounds,
+  presetLabel,
+  successRate,
+  summariseSeries,
+} from './types/analytics';
+export type {
+  AnalyticsDataset,
+  DateRange,
+  DateRangePreset,
+  SeriesSummary,
+  TimeSeriesPoint,
+  VerificationBreakdown,
+} from './types/analytics';
+export {
+  downloadText,
+  exportSeriesToCsv,
+  exportSvgElementToPng,
+  intrinsicSize,
+  serializeSvg,
+  seriesToCsv,
+  svgElementToPngBlob,
+  triggerDownload,
+} from './utils/analyticsExport';
