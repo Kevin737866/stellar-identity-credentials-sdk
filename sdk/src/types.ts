@@ -185,6 +185,28 @@ export interface ReputationComparison {
   winner: 'didA' | 'didB' | 'tie';
 }
 
+export enum ReputationTier {
+  Bronze = 'Bronze',
+  Silver = 'Silver',
+  Gold = 'Gold',
+  Platinum = 'Platinum',
+  Diamond = 'Diamond',
+}
+
+export interface TierThresholds {
+  bronzeMin: number;
+  silverMin: number;
+  goldMin: number;
+  platinumMin: number;
+  diamondMin: number;
+}
+
+export interface TierRequirements {
+  tier: ReputationTier;
+  minScore: number;
+  maxScore: number;
+}
+
 export interface ReputationTierProof {
   did: string;
   tier: string;

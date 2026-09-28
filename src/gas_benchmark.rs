@@ -802,3 +802,76 @@ fn bench_add_to_sanctions_list() {
     assert!(result.is_ok());
     std::println!("[BENCH] add_sanctioned_addr   OK");
 }
+
+#[test]
+fn bench_groth16_verify_bls12_381() {
+    let env = setup_env();
+
+    let mut a_bytes = [1u8; 48];
+    a_bytes[0] = 0x80;
+    let proof_a = Bytes::from_slice(&env, &a_bytes);
+
+    let mut b_bytes = [2u8; 96];
+    b_bytes[0] = 0x80;
+    let proof_b = Bytes::from_slice(&env, &b_bytes);
+
+    let mut c_bytes = [3u8; 48];
+    c_bytes[0] = 0x80;
+    let proof_c = Bytes::from_slice(&env, &c_bytes);
+
+    let public_inputs = soroban_sdk::vec![
+        &env,
+        Bytes::from_slice(&env, b"18"),
+        Bytes::from_slice(&env, b"signal"),
+    ];
+
+    let vk_bytes = Bytes::from_slice(&env, b"bls12_381_groth16_bench_vk_key!");
+
+    let result = crate::zk_attestation::ZKAttestation::verify_groth16_proof(
+        env,
+        crate::zk_attestation::SupportedCurve::Bls12381,
+        proof_a,
+        proof_b,
+        proof_c,
+        public_inputs,
+        vk_bytes,
+    );
+    assert!(result.is_ok());
+    std::println!("[BENCH] groth16_verify_bls12_381 OK");
+}
+
+#[test]
+fn bench_groth16_verify_bn254() {
+    let env = setup_env();
+
+    let mut a_bytes = [4u8; 32];
+    a_bytes[0] = 0x40;
+    let proof_a = Bytes::from_slice(&env, &a_bytes);
+
+    let mut b_bytes = [5u8; 64];
+    b_bytes[0] = 0x40;
+    let proof_b = Bytes::from_slice(&env, &b_bytes);
+
+    let mut c_bytes = [6u8; 32];
+    c_bytes[0] = 0x40;
+    let proof_c = Bytes::from_slice(&env, &c_bytes);
+
+    let public_inputs = soroban_sdk::vec![
+        &env,
+        Bytes::from_slice(&env, b"signal_bn254"),
+    ];
+
+    let vk_bytes = Bytes::from_slice(&env, b"bn254_groth16_bench_vk_key_bytes!");
+
+    let result = crate::zk_attestation::ZKAttestation::verify_groth16_proof(
+        env,
+        crate::zk_attestation::SupportedCurve::Bn254,
+        proof_a,
+        proof_b,
+        proof_c,
+        public_inputs,
+        vk_bytes,
+    );
+    assert!(result.is_ok());
+    std::println!("[BENCH] groth16_verify_bn254 OK");
+}

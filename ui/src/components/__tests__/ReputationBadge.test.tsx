@@ -113,6 +113,22 @@ describe('ReputationBadge', () => {
     expect(await screen.findByText('Platinum')).toBeInTheDocument();
   });
 
+  test('should render with Diamond tier for top-tier scores', async () => {
+    mockSdk.reputation.getReputationAnalysis.mockResolvedValue({
+      score: 960,
+      percentile: 100,
+      factors: { transactionCount: 1000 },
+      history: [900, 930, 960],
+      lastUpdated: Date.now(),
+    });
+
+    render(
+      <ReputationBadge sdk={mockSdk} address="GABC123" keypair={mockKeypair as any} />
+    );
+
+    expect(await screen.findByText('Diamond')).toBeInTheDocument();
+  });
+
   test('should render error state on failure', async () => {
     mockSdk.reputation.getReputationAnalysis.mockRejectedValue(
       new Error('Failed to load')

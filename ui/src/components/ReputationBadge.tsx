@@ -52,8 +52,17 @@ interface ReputationBadgeProps {
 
 const TIERS: TierConfig[] = [
   {
+    name: 'Diamond',
+    minScore: 950,
+    color: 'bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-600',
+    textColor: 'text-cyan-700',
+    bgColor: 'bg-cyan-50',
+    borderColor: 'border-cyan-300',
+    icon: <Gem className="h-5 w-5 text-cyan-600" />,
+  },
+  {
     name: 'Platinum',
-    minScore: 90,
+    minScore: 800,
     color: 'bg-gradient-to-r from-purple-500 via-pink-500 to-amber-400',
     textColor: 'text-purple-700',
     bgColor: 'bg-purple-50',
@@ -62,7 +71,7 @@ const TIERS: TierConfig[] = [
   },
   {
     name: 'Gold',
-    minScore: 75,
+    minScore: 600,
     color: 'bg-amber-500',
     textColor: 'text-amber-700',
     bgColor: 'bg-amber-50',
@@ -71,7 +80,7 @@ const TIERS: TierConfig[] = [
   },
   {
     name: 'Silver',
-    minScore: 50,
+    minScore: 300,
     color: 'bg-gray-400',
     textColor: 'text-gray-700',
     bgColor: 'bg-gray-50',
@@ -80,7 +89,7 @@ const TIERS: TierConfig[] = [
   },
   {
     name: 'Bronze',
-    minScore: 25,
+    minScore: 0,
     color: 'bg-amber-700',
     textColor: 'text-amber-800',
     bgColor: 'bg-amber-50',
@@ -194,6 +203,14 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
   };
 
   const getTier = (score: number): TierConfig => {
+    if (score <= 100) {
+      if (score >= 98) return TIERS.find(t => t.name === 'Diamond')!;
+      if (score >= 85) return TIERS.find(t => t.name === 'Platinum')!;
+      if (score >= 70) return TIERS.find(t => t.name === 'Gold')!;
+      if (score >= 50) return TIERS.find(t => t.name === 'Silver')!;
+      if (score >= 25) return TIERS.find(t => t.name === 'Bronze')!;
+      return TIERS.find(t => t.name === 'Unranked')!;
+    }
     return TIERS.find(t => score >= t.minScore) || TIERS[TIERS.length - 1];
   };
 

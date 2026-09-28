@@ -18,6 +18,9 @@ import {
   ReputationFactors,
   ReputationHistoryPoint,
   ReputationScoreResult,
+  ReputationTier,
+  TierRequirements,
+  TierThresholds,
   ReputationTierProof,
   StellarIdentityConfig,
   TransactionOptions,
@@ -357,12 +360,63 @@ export class ReputationClient {
     };
   }
 
-  getReputationTier(score: number): { tier: string; color: string; description: string } {
-    if (score >= 900) return { tier: 'Prime', color: '#0F766E', description: 'Deep history, verified credentials, and strong network trust.' };
-    if (score >= 750) return { tier: 'Strong', color: '#2563EB', description: 'Reliable activity profile suitable for governance and lending.' };
-    if (score >= 550) return { tier: 'Established', color: '#D97706', description: 'Moderate trust with room to deepen signal diversity.' };
-    if (score >= 300) return { tier: 'Emerging', color: '#DC2626', description: 'Early-stage reputation with limited history.' };
-    return { tier: 'Seedling', color: '#6B7280', description: 'Sybil-resistant base tier for new or lightly used accounts.' };
+  getReputationTier(score: number): { tier: string; color: string; description: string };
+  getReputationTier(did: string): Promise<{ tier: ReputationTier; color: string; description: string }>;
+  getReputationTier(
+    input: number | string
+  ): { tier: string; color: string; description: string } | Promise<{ tier: ReputationTier; color: string; description: string }> {
+    if (typeof input === 'number') {
+      const score = input;
+      if (score >= 900) return { tier: 'Prime', color: '#0F766E', description: 'Deep history, verified credentials, and strong network trust.' };
+      if (score >= 750) return { tier: 'Strong', color: '#2563EB', description: 'Reliable activity profile suitable for governance and lending.' };
+      if (score >= 550) return { tier: 'Established', color: '#D97706', description: 'Moderate trust with room to deepen signal diversity.' };
+      if (score >= 300) return { tier: 'Emerging', color: '#DC2626', description: 'Early-stage reputation with limited history.' };
+      return { tier: 'Seedling', color: '#6B7280', description: 'Sybil-resistant base tier for new or lightly used accounts.' };
+    }
+
+    return (async () => {
+      const score = await this.getReputationScoreValue(input);
+      const tier = this.getTierFromScore(score);
+      return this.describeTier(tier);
+    })();
+  }
+
+  getTierFromScore(score: number): ReputationTier {
+    if (score >= 950) return ReputationTier.Diamond;
+    if (score >= 800) return ReputationTier.Platinum;
+    if (score >= 600) return ReputationTier.Gold;
+    if (score >= 300) return ReputationTier.Silver;
+    return ReputationTier.Bronze;
+  }
+
+  describeTier(tier: ReputationTier): { tier: ReputationTier; color: string; description: string } {
+    switch (tier) {
+      case ReputationTier.Diamond:
+        return { tier, color: '#06B6D4', description: 'Exceptional network trust and elite reputation status.' };
+      case ReputationTier.Platinum:
+        return { tier, color: '#8B5CF6', description: 'Deep history, verified credentials, and strong network trust.' };
+      case ReputationTier.Gold:
+        return { tier, color: '#F59E0B', description: 'Reliable activity profile suitable for governance and lending.' };
+      case ReputationTier.Silver:
+        return { tier, color: '#6B7280', description: 'Moderate trust with room to deepen signal diversity.' };
+      case ReputationTier.Bronze:
+      default:
+        return { tier: ReputationTier.Bronze, color: '#B45309', description: 'Early-stage reputation with limited history.' };
+    }
+  }
+
+  async getTierRequirements(tier: ReputationTier): Promise<TierRequirements> {
+    const tierMap: Record<ReputationTier, { minScore: number; maxScore: number }> = {
+      [ReputationTier.Diamond]: { minScore: 950, maxScore: 1000 },
+      [ReputationTier.Platinum]: { minScore: 800, maxScore: 949 },
+      [ReputationTier.Gold]: { minScore: 600, maxScore: 799 },
+      [ReputationTier.Silver]: { minScore: 300, maxScore: 599 },
+      [ReputationTier.Bronze]: { minScore: 0, maxScore: 299 },
+    };
+    return {
+      tier,
+      ...tierMap[tier],
+    };
   }
 
   /**
