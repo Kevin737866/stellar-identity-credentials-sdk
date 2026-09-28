@@ -1,8 +1,9 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
 use crate::admin;
+use crate::contract_upgrade;
 use crate::rate_limiter::{check_rate_limit, defaults};
 use crate::reentrancy_guard::ReentrancyGuard;
 use crate::{clamp_page_size, PaginatedCredentials, VerifiableCredential};
@@ -136,6 +137,8 @@ pub struct CredentialIssuer;
 impl CredentialIssuer {
     const MAX_CREDENTIAL_TYPE_LENGTH: u32 = 128;
     const MAX_CREDENTIAL_DATA_LENGTH: u32 = 10240;
+    /// Maximum number of credentials that can be issued in a single batch (#281).
+    const MAX_BATCH_SIZE: u32 = 50;
 
     pub fn issue_credential(
         env: Env,
@@ -470,13 +473,29 @@ impl CredentialIssuer {
     }
 
     /// Issue multiple credentials in a single transaction (#81).
-    /// Returns the list of generated credential IDs in order.
+    ///
+    /// Each credential is issued via `issue_credential`, which emits an
+    /// individual `CredentialIssued` event. After all credentials are issued,
+    /// a single `BatchCredentialIssued` event is published with the batch
+    /// size and the list of credential IDs.
+    ///
+    /// If any credential fails, the entire batch reverts (atomic).
+    /// Maximum batch size is enforced by `MAX_BATCH_SIZE` (default 50).
     pub fn batch_issue_credentials(
         env: Env,
         issuer: Address,
         items: Vec<BatchIssuanceItem>,
     ) -> Result<Vec<Bytes>, CredentialIssuerError> {
         issuer.require_auth();
+
+        // Enforce maximum batch size (#281)
+        let batch_len = items.len();
+        if batch_len == 0 {
+            return Err(CredentialIssuerError::InvalidCredential);
+        }
+        if batch_len > Self::MAX_BATCH_SIZE as usize {
+            return Err(CredentialIssuerError::InvalidCredential);
+        }
 
         let mut issued_ids = Vec::new(&env);
 
@@ -492,6 +511,12 @@ impl CredentialIssuer {
             )?;
             issued_ids.push_back(credential_id);
         }
+
+        // Emit a single BatchCredentialIssued event (#281)
+        env.events().publish(
+            (Symbol::new(&env, "BatchCredentialIssued"),),
+            (issuer.clone(), issued_ids.len() as u32, issued_ids.clone()),
+        );
 
         Ok(issued_ids)
     }
@@ -1335,6 +1360,50 @@ impl CredentialIssuer {
             total,
             has_more: (start + size) < total,
         }
+    }
+
+    // ── Contract Upgrade (#275) ──────────────────────────────────────────────
+
+    /// Initialize the upgrade module with an admin and initial WASM hash.
+    /// Must be called once during contract deployment.
+    pub fn init_upgrade(
+        env: Env,
+        admin: Address,
+        initial_wasm_hash: BytesN<32>,
+    ) -> Result<(), CredentialIssuerError> {
+        admin.require_auth();
+        if contract_upgrade::is_initialized(&env) {
+            return Err(CredentialIssuerError::AlreadyExists);
+        }
+        contract_upgrade::init(&env, admin, initial_wasm_hash);
+        Ok(())
+    }
+
+    /// Upgrade the contract to a new WASM hash.
+    /// Only the registered admin can perform this operation.
+    pub fn upgrade(
+        env: Env,
+        caller: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), CredentialIssuerError> {
+        caller.require_auth();
+        contract_upgrade::upgrade(&env, &caller, new_wasm_hash)
+            .map_err(|_| CredentialIssuerError::Unauthorized)
+    }
+
+    /// Return the current contract version.
+    pub fn get_contract_version(env: Env) -> u32 {
+        contract_upgrade::get_contract_version(&env)
+    }
+
+    /// Return the current deployed WASM hash.
+    pub fn get_wasm_hash(env: Env) -> Option<BytesN<32>> {
+        contract_upgrade::get_wasm_hash(&env)
+    }
+
+    /// Return the full version history for audit purposes.
+    pub fn get_version_history(env: Env) -> Vec<contract_upgrade::VersionRecord> {
+        contract_upgrade::get_version_history(&env)
     }
 }
 

@@ -1,7 +1,8 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
+use crate::contract_upgrade;
 use crate::rate_limiter::{check_rate_limit, defaults};
 use crate::reentrancy_guard::ReentrancyGuard;
 use crate::{clamp_page_size, PaginatedReputationHistory};
@@ -617,6 +618,50 @@ impl ReputationScore {
         env.storage()
             .persistent()
             .set(&DataKey::History(address.clone()), &history);
+    }
+
+    // ── Contract Upgrade (#275) ──────────────────────────────────────────────
+
+    /// Initialize the upgrade module with an admin and initial WASM hash.
+    /// Must be called once during contract deployment.
+    pub fn init_upgrade(
+        env: Env,
+        admin: Address,
+        initial_wasm_hash: BytesN<32>,
+    ) -> Result<(), ReputationScoreError> {
+        admin.require_auth();
+        if contract_upgrade::is_initialized(&env) {
+            return Err(ReputationScoreError::AlreadyInitialized);
+        }
+        contract_upgrade::init(&env, admin, initial_wasm_hash);
+        Ok(())
+    }
+
+    /// Upgrade the contract to a new WASM hash.
+    /// Only the registered admin can perform this operation.
+    pub fn upgrade(
+        env: Env,
+        caller: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), ReputationScoreError> {
+        caller.require_auth();
+        contract_upgrade::upgrade(&env, &caller, new_wasm_hash)
+            .map_err(|_| ReputationScoreError::Unauthorized)
+    }
+
+    /// Return the current contract version.
+    pub fn get_contract_version(env: Env) -> u32 {
+        contract_upgrade::get_contract_version(&env)
+    }
+
+    /// Return the current deployed WASM hash.
+    pub fn get_wasm_hash(env: Env) -> Option<BytesN<32>> {
+        contract_upgrade::get_wasm_hash(&env)
+    }
+
+    /// Return the full version history for audit purposes.
+    pub fn get_version_history(env: Env) -> Vec<contract_upgrade::VersionRecord> {
+        contract_upgrade::get_version_history(&env)
     }
 }
 
