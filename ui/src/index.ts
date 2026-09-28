@@ -44,6 +44,42 @@ export { DIDRecoveryWizard } from './components/DIDRecoveryWizard';
 export type { DIDRecoveryWizardProps, RecoveryMethod, RecoveryConfig, Guardian } from './components/DIDRecoveryWizard';
 export { SelectiveDisclosure } from './components/SelectiveDisclosure';
 
+// Notifications
+export { NotificationCenter } from './components/NotificationCenter';
+export type { NotificationCenterProps } from './components/NotificationCenter';
+export { NotificationRow } from './components/NotificationRow';
+export type { NotificationRowProps } from './components/NotificationRow';
+export { BellIcon } from './components/icons/BellIcon';
+export type { BellIconProps } from './components/icons/BellIcon';
+export {
+  NOTIFICATION_PRESENTATION,
+  NOTIFICATION_TONES,
+  formatRelativeTime,
+  isCredentialNotification,
+  toCredentialNotification,
+} from './types/notifications';
+export type {
+  CredentialNotification,
+  CredentialNotificationType,
+  NotificationPresentation,
+  NotificationTone,
+} from './types/notifications';
+export { NotificationStream, parseNotificationPayload } from './services/notificationStream';
+export type {
+  NotificationStreamOptions,
+  NotificationStreamStatus,
+} from './services/notificationStream';
+export {
+  useNotifications,
+  mergeNotification,
+  readStoredNotifications,
+  writeStoredNotifications,
+} from './hooks/useNotifications';
+export type {
+  UseNotificationsOptions,
+  UseNotificationsResult,
+} from './hooks/useNotifications';
+
 // Pages
 export { Dashboard } from './pages/Dashboard';
 export type { DashboardProps } from './pages/Dashboard';
