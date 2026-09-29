@@ -109,6 +109,17 @@ export {
   useCompliance,
 } from './hooks/useStellarIdentity';
 
+// Real-time credential events over WebSocket
+export {
+  useCredentialEvents,
+  CREDENTIAL_EVENT_TYPES,
+  IDENTITY_EVENT_TYPES,
+} from './hooks/useCredentialEvents';
+export type {
+  UseCredentialEventsOptions,
+  UseCredentialEventsResult,
+} from './hooks/useCredentialEvents';
+
 // Analytics
 export { AnalyticsDashboard } from './components/AnalyticsDashboard';
 export type {
