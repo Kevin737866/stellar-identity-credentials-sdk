@@ -22,6 +22,7 @@ import { Skeleton, SkeletonDetail } from '@/components/ui/skeleton';
 import { DIDClient } from '@stellar-identity/sdk';
 import { VerificationMethod, Service, DIDDocument, StellarIdentityConfig } from '@stellar-identity/sdk';
 import { Keypair } from 'stellar-sdk';
+import { useTranslation } from '@/i18n';
 import { Copy, Plus, Trash2, Edit, CheckCircle, AlertCircle } from 'lucide-react';
 import { useStellarIdentity } from '../hooks/useStellarIdentity';
 
@@ -53,6 +54,8 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
     endpoint: ''
   });
 
+  const { t, format } = useTranslation();
+
   useEffect(() => {
     loadDIDDocument();
   }, [address]);
@@ -83,11 +86,11 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
         services
       });
       
-      setSuccess(`DID created successfully: ${did}`);
+      setSuccess(t('did.createSucceeded', { did }));
       setShowCreateDialog(false);
       await loadDIDDocument();
     } catch (error: any) {
-      setError(error.message || 'Failed to create DID');
+      setError(error.message || t('did.createFailed'));
     } finally {
       setLoading(false);
     }
@@ -99,17 +102,17 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
       setError(null);
       
       await sdk.did.updateDID(keypair, verificationMethods, services);
-      setSuccess('DID updated successfully');
+      setSuccess(t('did.updateSucceeded'));
       await loadDIDDocument();
     } catch (error: any) {
-      setError(error.message || 'Failed to update DID');
+      setError(error.message || t('did.updateFailed'));
     } finally {
       setLoading(false);
     }
   };
 
   const deactivateDID = async () => {
-    if (!confirm('Are you sure you want to deactivate this DID? This action cannot be undone.')) {
+    if (!confirm(t('did.deactivateConfirm'))) {
       return;
     }
 
@@ -118,10 +121,10 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
       setError(null);
       
       await sdk.did.deactivateDID(keypair);
-      setSuccess('DID deactivated successfully');
+      setSuccess(t('did.deactivateSucceeded'));
       setDidDocument(null);
     } catch (error: any) {
-      setError(error.message || 'Failed to deactivate DID');
+      setError(error.message || t('did.deactivateFailed'));
     } finally {
       setLoading(false);
     }
@@ -129,7 +132,7 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
 
   const addVerificationMethod = () => {
     if (!newVerificationMethod.id || !newVerificationMethod.publicKey) {
-      setError('Please fill in all verification method fields');
+      setError(t('did.vmRequired'));
       return;
     }
     setVerificationMethods([...verificationMethods, { ...newVerificationMethod }]);
@@ -147,7 +150,7 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
 
   const addService = () => {
     if (!newService.id || !newService.type || !newService.endpoint) {
-      setError('Please fill in all service fields');
+      setError(t('did.serviceRequired'));
       return;
     }
     setServices([...services, { ...newService }]);
@@ -160,7 +163,7 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
-    setSuccess('Copied to clipboard!');
+    setSuccess(t('common.copied'));
   };
 
   if (loading) {
@@ -173,7 +176,7 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
             role="status"
             aria-live="polite"
             aria-busy="true"
-            aria-label="Loading DID information"
+            aria-label={t('common.loadingAria')}
           >
             <div className="flex items-center gap-3 mb-6">
               <Skeleton shape="circle" height={40} width={40} />
@@ -184,7 +187,7 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
               </div>
             </div>
             <SkeletonDetail fields={4} />
-            <span className="sr-only">Loading DID information</span>
+            <span className="sr-only">{t('common.loading')}</span>
           </div>
         </CardContent>
       </Card>
@@ -210,19 +213,19 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
-            <CardTitle>Decentralized Identity (DID)</CardTitle>
+            <CardTitle>{t('did.title')}</CardTitle>
             <div className="space-x-2">
               {!didDocument ? (
                 <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
                   <DialogTrigger asChild>
                     <Button>
                       <Plus className="h-4 w-4 mr-2" />
-                      Create DID
+                      {t('did.create')}
                     </Button>
                   </DialogTrigger>
                   <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
                     <DialogHeader>
-                      <DialogTitle>Create New DID</DialogTitle>
+                      <DialogTitle>{t('did.createNew')}</DialogTitle>
                     </DialogHeader>
                     <CreateDIDForm
                       verificationMethods={verificationMethods}
@@ -244,11 +247,11 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
                 <div className="space-x-2">
                   <Button variant="outline" onClick={updateDID}>
                     <Edit className="h-4 w-4 mr-2" />
-                    Update
+                    {t('did.update')}
                   </Button>
                   <Button variant="destructive" onClick={deactivateDID}>
                     <Trash2 className="h-4 w-4 mr-2" />
-                    Deactivate
+                    {t('did.deactivate')}
                   </Button>
                 </div>
               )}
@@ -264,8 +267,8 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
           ) : (
             <div className="text-center py-8 text-gray-500">
               <AlertCircle className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-              <p>No DID found for this address</p>
-              <p className="text-sm">Create a DID to start managing your decentralized identity</p>
+              <p>{t('did.empty')}</p>
+              <p className="text-sm">{t('did.emptyHint')}</p>
             </div>
           )}
         </CardContent>
@@ -303,16 +306,18 @@ const CreateDIDForm: React.FC<CreateDIDFormProps> = ({
   onCreate,
   loading
 }) => {
+  const { t } = useTranslation();
+
   return (
     <Tabs defaultValue="verification" className="w-full">
       <TabsList className="grid w-full grid-cols-2">
-        <TabsTrigger value="verification">Verification Methods</TabsTrigger>
-        <TabsTrigger value="services">Services</TabsTrigger>
+        <TabsTrigger value="verification">{t('did.verificationMethods')}</TabsTrigger>
+        <TabsTrigger value="services">{t('did.services')}</TabsTrigger>
       </TabsList>
       
       <TabsContent value="verification" className="space-y-4">
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold">Verification Methods</h3>
+          <h3 className="text-lg font-semibold">{t('did.verificationMethods')}</h3>
           
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -328,7 +333,7 @@ const CreateDIDForm: React.FC<CreateDIDFormProps> = ({
               />
             </div>
             <div>
-              <Label htmlFor="vm-publicKey">Public Key</Label>
+              <Label htmlFor="vm-publicKey">{t('did.publicKey')}</Label>
               <Input
                 id="vm-publicKey"
                 value={newVerificationMethod.publicKey}
@@ -343,12 +348,12 @@ const CreateDIDForm: React.FC<CreateDIDFormProps> = ({
           
           <Button onClick={onAddVerificationMethod} className="w-full">
             <Plus className="h-4 w-4 mr-2" />
-            Add Verification Method
+            {t('did.addMethod')}
           </Button>
           
           {verificationMethods.length > 0 && (
             <div className="space-y-2">
-              <h4 className="font-medium">Current Methods:</h4>
+              <h4 className="font-medium">{t('did.currentMethods')}</h4>
               {verificationMethods.map((method, index) => (
                 <div key={index} className="flex items-center justify-between p-3 border rounded">
                   <div>
@@ -371,7 +376,7 @@ const CreateDIDForm: React.FC<CreateDIDFormProps> = ({
       
       <TabsContent value="services" className="space-y-4">
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold">Services</h3>
+          <h3 className="text-lg font-semibold">{t('did.services')}</h3>
           
           <div className="grid grid-cols-3 gap-4">
             <div>
@@ -387,7 +392,7 @@ const CreateDIDForm: React.FC<CreateDIDFormProps> = ({
               />
             </div>
             <div>
-              <Label htmlFor="service-type">Type</Label>
+              <Label htmlFor="service-type">{t('credential.type')}</Label>
               <Input
                 id="service-type"
                 value={newService.type}
@@ -399,7 +404,7 @@ const CreateDIDForm: React.FC<CreateDIDFormProps> = ({
               />
             </div>
             <div>
-              <Label htmlFor="service-endpoint">Endpoint</Label>
+              <Label htmlFor="service-endpoint">{t('did.endpoint')}</Label>
               <Input
                 id="service-endpoint"
                 value={newService.endpoint}
@@ -414,12 +419,12 @@ const CreateDIDForm: React.FC<CreateDIDFormProps> = ({
           
           <Button onClick={onAddService} className="w-full">
             <Plus className="h-4 w-4 mr-2" />
-            Add Service
+            {t('did.addService')}
           </Button>
           
           {services.length > 0 && (
             <div className="space-y-2">
-              <h4 className="font-medium">Current Services:</h4>
+              <h4 className="font-medium">{t('did.currentServices')}</h4>
               {services.map((service, index) => (
                 <div key={index} className="flex items-center justify-between p-3 border rounded">
                   <div>
@@ -443,7 +448,7 @@ const CreateDIDForm: React.FC<CreateDIDFormProps> = ({
       
       <div className="flex justify-end space-x-2 pt-4">
         <Button onClick={onCreate} disabled={loading}>
-          {loading ? 'Creating...' : 'Create DID'}
+          {loading ? t('did.creating') : t('did.create')}
         </Button>
       </div>
     </Tabs>
@@ -456,6 +461,8 @@ interface DIDDocumentDisplayProps {
 }
 
 const DIDDocumentDisplay: React.FC<DIDDocumentDisplayProps> = ({ didDocument, onCopy }) => {
+  const { t, format } = useTranslation();
+
   return (
     <div className="space-y-6">
       <div>
@@ -469,7 +476,7 @@ const DIDDocumentDisplay: React.FC<DIDDocumentDisplayProps> = ({ didDocument, on
       </div>
       
       <div>
-        <Label className="text-sm font-medium">Controller</Label>
+        <Label className="text-sm font-medium">{t('did.controller')}</Label>
         <div className="flex items-center space-x-2 mt-1">
           <code className="bg-gray-100 px-3 py-2 rounded text-sm flex-1">{didDocument.controller}</code>
           <Button variant="outline" size="sm" onClick={() => onCopy(didDocument.controller)}>
@@ -479,22 +486,22 @@ const DIDDocumentDisplay: React.FC<DIDDocumentDisplayProps> = ({ didDocument, on
       </div>
       
       <div>
-        <Label className="text-sm font-medium">Created</Label>
+        <Label className="text-sm font-medium">{t('did.created')}</Label>
         <p className="text-sm text-gray-600 mt-1">
-          {new Date(didDocument.created).toLocaleString()}
+          {format.formatDateTime(didDocument.created)}
         </p>
       </div>
       
       <div>
-        <Label className="text-sm font-medium">Last Updated</Label>
+        <Label className="text-sm font-medium">{t('did.lastUpdated')}</Label>
         <p className="text-sm text-gray-600 mt-1">
-          {new Date(didDocument.updated).toLocaleString()}
+          {format.formatDateTime(didDocument.updated)}
         </p>
       </div>
       
       {didDocument.verificationMethod.length > 0 && (
         <div>
-          <Label className="text-sm font-medium">Verification Methods</Label>
+          <Label className="text-sm font-medium">{t('did.verificationMethods')}</Label>
           <div className="space-y-2 mt-2">
             {didDocument.verificationMethod.map((method, index) => (
               <Card key={index}>
@@ -503,14 +510,14 @@ const DIDDocumentDisplay: React.FC<DIDDocumentDisplayProps> = ({ didDocument, on
                     <div>
                       <p className="font-medium">{method.id}</p>
                       <p className="text-sm text-gray-600">{method.type}</p>
-                      <p className="text-xs text-gray-500 mt-1">Controller: {method.controller}</p>
+                      <p className="text-xs text-gray-500 mt-1">{t('did.controller')}: {method.controller}</p>
                     </div>
                     <Button variant="outline" size="sm" onClick={() => onCopy(method.publicKey)}>
                       <Copy className="h-4 w-4" />
                     </Button>
                   </div>
                   <div className="mt-2">
-                    <Label className="text-xs">Public Key</Label>
+                    <Label className="text-xs">{t('did.publicKey')}</Label>
                     <code className="block bg-gray-100 px-2 py-1 rounded text-xs mt-1 break-all">
                       {method.publicKey}
                     </code>
@@ -524,7 +531,7 @@ const DIDDocumentDisplay: React.FC<DIDDocumentDisplayProps> = ({ didDocument, on
       
       {didDocument.service.length > 0 && (
         <div>
-          <Label className="text-sm font-medium">Services</Label>
+          <Label className="text-sm font-medium">{t('did.services')}</Label>
           <div className="space-y-2 mt-2">
             {didDocument.service.map((service, index) => (
               <Card key={index}>
@@ -558,6 +565,7 @@ export const ConnectedDIDManager: React.FC<ConnectedDIDManagerProps> = ({
   config,
   autoConnect = false,
 }) => {
+  const { t } = useTranslation();
   const { sdk, address, keypair, isLoading, error } = useStellarIdentity({
     config,
     autoConnect,
@@ -569,7 +577,7 @@ export const ConnectedDIDManager: React.FC<ConnectedDIDManagerProps> = ({
         <CardContent className="p-6">
           <div className="flex items-center justify-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <span className="ml-2">Connecting to Stellar network...</span>
+            <span className="ml-2">{t('did.connecting')}</span>
           </div>
         </CardContent>
       </Card>
@@ -591,8 +599,8 @@ export const ConnectedDIDManager: React.FC<ConnectedDIDManagerProps> = ({
         <CardContent className="p-6">
           <div className="text-center py-8 text-gray-500">
             <AlertCircle className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-            <p>Not connected to Stellar network</p>
-            <p className="text-sm">Use the connect function to establish a connection</p>
+            <p>{t('did.notConnected')}</p>
+            <p className="text-sm">{t('did.notConnectedHint')}</p>
           </div>
         </CardContent>
       </Card>

@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton, SkeletonTable } from '@/components/ui/skeleton';
+import { useTranslation } from '../i18n';
 import { 
   ComplianceRecord, 
   ComplianceResult 
@@ -39,6 +40,7 @@ interface ComplianceCheckProps {
 }
 
 export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, keypair, disabled = false }) => {
+  const { t, format } = useTranslation();
   const [complianceData, setComplianceData] = useState<ComplianceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +59,7 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
       const result = await sdk.performComplianceCheck(addr);
       setComplianceData(result);
     } catch (error: any) {
-      setError(error.message || 'Failed to perform compliance check');
+      setError(error.message || t('compliance.checkFailed'));
     } finally {
       setLoading(false);
     }
@@ -67,7 +69,7 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
     if (customAddress && sdk.did.validateDIDFormat(`did:stellar:${customAddress}`)) {
       setCheckingAddress(customAddress);
     } else {
-      setError('Invalid Stellar address format');
+      setError(t('compliance.invalidAddress'));
     }
   };
 
@@ -84,29 +86,58 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
     }
   };
 
+  // The badge and risk-level helpers deliberately return a stable catalogue key plus
+  // the visual properties, never a translated string. Baking English into the return
+  // value would freeze the label at the moment the helper ran; resolving the label with
+  // `t()` at render time is what lets these follow a language change.
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'cleared':
-        return <Badge className="bg-green-100 text-green-800">Cleared</Badge>;
+        return {
+          key: 'cleared' as const,
+          variant: 'default' as const,
+          className: 'bg-green-100 text-green-800'
+        };
       case 'flagged':
-        return <Badge className="bg-yellow-100 text-yellow-800">Flagged</Badge>;
+        return {
+          key: 'flagged' as const,
+          variant: 'default' as const,
+          className: 'bg-yellow-100 text-yellow-800'
+        };
       case 'blocked':
-        return <Badge className="bg-red-100 text-red-800">Blocked</Badge>;
+        return {
+          key: 'blocked' as const,
+          variant: 'default' as const,
+          className: 'bg-red-100 text-red-800'
+        };
       default:
-        return <Badge variant="outline">Unknown</Badge>;
+        return {
+          key: 'unknown' as const,
+          variant: 'outline' as const,
+          className: ''
+        };
     }
   };
 
   const getRiskLevel = (score: number) => {
     if (score >= 80) {
-      return { level: 'High Risk', color: 'bg-red-500', textColor: 'text-red-700' };
+      return { key: 'high' as const, color: 'bg-red-500', textColor: 'text-red-700' };
     } else if (score >= 60) {
-      return { level: 'Medium Risk', color: 'bg-yellow-500', textColor: 'text-yellow-700' };
+      return { key: 'medium' as const, color: 'bg-yellow-500', textColor: 'text-yellow-700' };
     } else if (score >= 40) {
-      return { level: 'Low Risk', color: 'bg-blue-500', textColor: 'text-blue-700' };
+      return { key: 'low' as const, color: 'bg-blue-500', textColor: 'text-blue-700' };
     } else {
-      return { level: 'Very Low Risk', color: 'bg-green-500', textColor: 'text-green-700' };
+      return { key: 'veryLow' as const, color: 'bg-green-500', textColor: 'text-green-700' };
     }
+  };
+
+  const renderStatusBadge = (status: string) => {
+    const badge = getStatusBadge(status);
+    return (
+      <Badge variant={badge.variant} className={badge.className}>
+        {t(`compliance.verdict.${badge.key}`)}
+      </Badge>
+    );
   };
 
   if (loading) {
@@ -117,7 +148,7 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
             role="status"
             aria-live="polite"
             aria-busy="true"
-            aria-label="Performing compliance check"
+            aria-label={t('compliance.checking')}
           >
             <div className="flex items-center gap-3 mb-6">
               <Skeleton shape="circle" height={40} width={40} />
@@ -128,7 +159,7 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
               </div>
             </div>
             <SkeletonTable rows={4} columns={3} />
-            <span className="sr-only">Performing compliance check</span>
+            <span className="sr-only">{t('compliance.checking')}</span>
           </div>
         </CardContent>
       </Card>
@@ -149,7 +180,7 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
           <div className="flex justify-between items-center">
             <CardTitle className="flex items-center">
               <Shield className="h-5 w-5 mr-2" />
-              Compliance Check
+              {t('compliance.title')}
             </CardTitle>
             <div className="flex space-x-2">
               <Button
@@ -158,7 +189,7 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
                 disabled={loading}
               >
                 <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh
+                {t('compliance.refresh')}
               </Button>
             </div>
           </div>
@@ -170,18 +201,18 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
                 type="text"
                 value={customAddress}
                 onChange={(e) => setCustomAddress(e.target.value)}
-                placeholder="Enter Stellar address (G...)"
+                placeholder={t('compliance.addressPlaceholder')}
                 className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={disabled}
               />
               <Button onClick={checkCustomAddress} disabled={disabled || loading}>
                 <Search className="h-4 w-4 mr-2" />
-                Check
+                {t('compliance.check')}
               </Button>
             </div>
             
             <div className="text-sm text-gray-600">
-              Currently checking: <code className="bg-gray-100 px-2 py-1 rounded">{checkingAddress}</code>
+              {t('compliance.currentlyChecking')} <code className="bg-gray-100 px-2 py-1 rounded">{checkingAddress}</code>
             </div>
           </div>
         </CardContent>
@@ -198,26 +229,26 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center space-x-2">
                   {getStatusIcon(complianceData.status)}
-                  <span>Compliance Status</span>
+                  <span>{t('compliance.status')}</span>
                 </CardTitle>
-                {getStatusBadge(complianceData.status)}
+                {renderStatusBadge(complianceData.status)}
               </div>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-sm font-medium text-gray-600">Risk Score</label>
+                    <label className="text-sm font-medium text-gray-600">{t('compliance.riskScore')}</label>
                     <div className="flex items-center space-x-2 mt-1">
                       <Progress value={complianceData.riskScore} className="flex-1" />
-                      <span className="font-medium">{complianceData.riskScore}/100</span>
+                      <span className="font-medium">{format.formatNumber(complianceData.riskScore)}/100</span>
                     </div>
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-gray-600">Risk Level</label>
+                    <label className="text-sm font-medium text-gray-600">{t('compliance.riskLevel')}</label>
                     <div className="mt-1">
                       <Badge className={getRiskLevel(complianceData.riskScore).color}>
-                        {getRiskLevel(complianceData.riskScore).level}
+                        {t(`compliance.risk.${getRiskLevel(complianceData.riskScore).key}`)}
                       </Badge>
                     </div>
                   </div>
@@ -225,25 +256,25 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                   <div>
-                    <span className="text-gray-600">Sanctions Lists:</span>
+                    <span className="text-gray-600">{t('compliance.sanctionsLists')}:</span>
                     <span className="ml-2 font-medium">
                       {complianceData.sanctionsLists.length > 0 ? 
-                        `${complianceData.sanctionsLists.length} found` : 
-                        'None found'
+                        t('compliance.listsFound', { count: format.formatNumber(complianceData.sanctionsLists.length) }) : 
+                        t('compliance.noneFound')
                       }
                     </span>
                   </div>
                   <div>
-                    <span className="text-gray-600">Last Checked:</span>
+                    <span className="text-gray-600">{t('compliance.lastChecked')}:</span>
                     <span className="ml-2 font-medium">
-                      {new Date(complianceData.lastChecked).toLocaleString()}
+                      {format.formatDateTime(new Date(complianceData.lastChecked))}
                     </span>
                   </div>
                 </div>
 
                 {complianceData.sanctionsLists.length > 0 && (
                   <div>
-                    <label className="text-sm font-medium text-gray-600">Sanctions Lists</label>
+                    <label className="text-sm font-medium text-gray-600">{t('compliance.sanctionsLists')}</label>
                     <div className="mt-2 space-y-1">
                       {complianceData.sanctionsLists.map((list, index) => (
                         <Badge key={index} variant="destructive" className="mr-2">
@@ -263,29 +294,29 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
               <CardHeader>
                 <CardTitle className="flex items-center text-lg">
                   <Activity className="h-5 w-5 mr-2" />
-                  Compliance Metrics
+                  {t('compliance.metrics')}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
                   <div className="flex justify-between items-center">
-                    <span className="text-sm font-medium">Overall Compliance Score</span>
-                    <Badge variant="outline">{complianceData.complianceScore}/100</Badge>
+                    <span className="text-sm font-medium">{t('compliance.overallScore')}</span>
+                    <Badge variant="outline">{format.formatNumber(complianceData.complianceScore)}/100</Badge>
                   </div>
                   <Progress value={complianceData.complianceScore} />
                   
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div className="text-center p-3 bg-gray-50 rounded">
                       <div className="text-lg font-bold text-blue-600">
-                        {complianceData.totalCredentials}
+                        {format.formatNumber(complianceData.totalCredentials)}
                       </div>
-                      <div className="text-gray-600">Total Credentials</div>
+                      <div className="text-gray-600">{t('compliance.totalCredentials')}</div>
                     </div>
                     <div className="text-center p-3 bg-gray-50 rounded">
                       <div className="text-lg font-bold text-green-600">
-                        {complianceData.validCredentials}
+                        {format.formatNumber(complianceData.validCredentials)}
                       </div>
-                      <div className="text-gray-600">Valid Credentials</div>
+                      <div className="text-gray-600">{t('compliance.validCredentials')}</div>
                     </div>
                   </div>
                 </div>
@@ -296,7 +327,7 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
               <CardHeader>
                 <CardTitle className="flex items-center text-lg">
                   <CheckSquare className="h-5 w-5 mr-2" />
-                  Recommendations
+                  {t('compliance.recommendations')}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -304,6 +335,8 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
                   {complianceData.recommendations.map((recommendation, index) => (
                     <div key={index} className="flex items-start space-x-2">
                       <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                      {/* Recommendation text originates from the compliance service in
+                          English; it is service data, not localisable copy. */}
                       <span className="text-sm">{recommendation}</span>
                     </div>
                   ))}
@@ -316,7 +349,7 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
             <CardHeader>
               <CardTitle className="flex items-center text-lg">
                 <Database className="h-5 w-5 mr-2" />
-                Detailed Analysis
+                {t('compliance.detailedAnalysis')}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -329,42 +362,42 @@ export const ComplianceCheck: React.FC<ComplianceCheckProps> = ({ sdk, address, 
                       complianceData.riskScore < 80 ? 'text-yellow-600' :
                       'text-red-600'
                     }`}>
-                      {complianceData.riskScore}
+                      {format.formatNumber(complianceData.riskScore)}
                     </div>
-                    <div className="text-sm text-gray-600">Risk Score</div>
+                    <div className="text-sm text-gray-600">{t('compliance.riskScore')}</div>
                   </div>
                   <div className="text-center p-4 bg-gray-50 rounded-lg">
                     <div className="text-2xl font-bold text-purple-600">
-                      {complianceData.totalCredentials}
+                      {format.formatNumber(complianceData.totalCredentials)}
                     </div>
-                    <div className="text-sm text-gray-600">Credentials</div>
+                    <div className="text-sm text-gray-600">{t('compliance.totalCredentials')}</div>
                   </div>
                   <div className="text-center p-4 bg-gray-50 rounded-lg">
                     <div className="text-2xl font-bold text-green-600">
-                      {complianceData.validCredentials}
+                      {format.formatNumber(complianceData.validCredentials)}
                     </div>
-                    <div className="text-sm text-gray-600">Valid</div>
+                    <div className="text-sm text-gray-600">{t('compliance.validShort')}</div>
                   </div>
                 </div>
                 
                 <div className="space-y-3">
-                  <h4 className="font-medium">Compliance Summary:</h4>
+                  <h4 className="font-medium">{t('compliance.summary')}:</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                     <div className="flex items-center space-x-2">
                       <Globe className="h-4 w-4 text-blue-500" />
-                      <span>Sanctions Screening: {complianceData.sanctionsLists.length === 0 ? 'Clear' : 'Alert'}</span>
+                      <span>{t('compliance.sanctionsScreening')} {complianceData.sanctionsLists.length === 0 ? t('compliance.assessment.clear') : t('compliance.assessment.alert')}</span>
                     </div>
                     <div className="flex items-center space-x-2">
                       <Eye className="h-4 w-4 text-green-500" />
-                      <span>Identity Verification: {complianceData.validCredentials > 0 ? 'Verified' : 'Not Verified'}</span>
+                      <span>{t('compliance.identityVerification')} {complianceData.validCredentials > 0 ? t('compliance.assessment.verified') : t('compliance.assessment.notVerified')}</span>
                     </div>
                     <div className="flex items-center space-x-2">
                       <Flag className="h-4 w-4 text-yellow-500" />
-                      <span>Risk Assessment: {getRiskLevel(complianceData.riskScore).level}</span>
+                      <span>{t('compliance.riskAssessment')} {t(`compliance.risk.${getRiskLevel(complianceData.riskScore).key}`)}</span>
                     </div>
                     <div className="flex items-center space-x-2">
                       <CheckCircle className="h-4 w-4 text-green-500" />
-                      <span>Overall Status: {complianceData.status}</span>
+                      <span>{t('compliance.overallStatus')} {t(`compliance.verdict.${getStatusBadge(complianceData.status).key}`)}</span>
                     </div>
                   </div>
                 </div>

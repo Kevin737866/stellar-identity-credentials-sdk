@@ -15,6 +15,7 @@ import {
   ReputationScoreResult 
 } from '@stellar-identity/sdk';
 import { Keypair } from 'stellar-sdk';
+import { useTranslation } from '../i18n';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -35,7 +36,13 @@ import {
 type BadgeSize = 'sm' | 'md' | 'lg';
 
 interface TierConfig {
-  name: string;
+  /**
+   * Stable identifier. Never compare or branch on the display name — it is a
+   * translated string and changes with the active language.
+   */
+  id: string;
+  /** Catalogue key for the display name. */
+  nameKey: string;
   minScore: number;
   color: string;
   textColor: string;
@@ -53,7 +60,8 @@ interface ReputationBadgeProps {
 
 const TIERS: TierConfig[] = [
   {
-    name: 'Diamond',
+    id: 'diamond',
+    nameKey: 'reputation.tiers.diamond',
     minScore: 950,
     color: 'bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-600',
     textColor: 'text-cyan-700',
@@ -62,7 +70,8 @@ const TIERS: TierConfig[] = [
     icon: <Gem className="h-5 w-5 text-cyan-600" />,
   },
   {
-    name: 'Platinum',
+    id: 'platinum',
+    nameKey: 'reputation.tiers.platinum',
     minScore: 800,
     color: 'bg-gradient-to-r from-purple-500 via-pink-500 to-amber-400',
     textColor: 'text-purple-700',
@@ -71,7 +80,8 @@ const TIERS: TierConfig[] = [
     icon: <Gem className="h-5 w-5 text-purple-600" />,
   },
   {
-    name: 'Gold',
+    id: 'gold',
+    nameKey: 'reputation.tiers.gold',
     minScore: 600,
     color: 'bg-amber-500',
     textColor: 'text-amber-700',
@@ -80,7 +90,8 @@ const TIERS: TierConfig[] = [
     icon: <Award className="h-5 w-5 text-amber-600" />,
   },
   {
-    name: 'Silver',
+    id: 'silver',
+    nameKey: 'reputation.tiers.silver',
     minScore: 300,
     color: 'bg-gray-400',
     textColor: 'text-gray-700',
@@ -89,7 +100,8 @@ const TIERS: TierConfig[] = [
     icon: <Medal className="h-5 w-5 text-gray-500" />,
   },
   {
-    name: 'Bronze',
+    id: 'bronze',
+    nameKey: 'reputation.tiers.bronze',
     minScore: 0,
     color: 'bg-amber-700',
     textColor: 'text-amber-800',
@@ -98,7 +110,8 @@ const TIERS: TierConfig[] = [
     icon: <Shield className="h-5 w-5 text-amber-700" />,
   },
   {
-    name: 'Unranked',
+    id: 'unranked',
+    nameKey: 'reputation.tiers.unranked',
     minScore: 0,
     color: 'bg-gray-300',
     textColor: 'text-gray-600',
@@ -137,6 +150,7 @@ const sizeConfig = {
 
 const LoadingSkeleton: React.FC<{ size: BadgeSize }> = ({ size }) => {
   const cfg = sizeConfig[size];
+  const { t } = useTranslation();
   return (
     <Card>
       <CardContent className={cfg.cardPadding}>
@@ -144,7 +158,7 @@ const LoadingSkeleton: React.FC<{ size: BadgeSize }> = ({ size }) => {
           role="status"
           aria-live="polite"
           aria-busy="true"
-          aria-label="Loading reputation score"
+          aria-label={t('reputation.loading')}
         >
           <div className={`flex items-center justify-between ${cfg.gap}`}>
             <Skeleton height={16} shape="text" width={4} />
@@ -160,7 +174,7 @@ const LoadingSkeleton: React.FC<{ size: BadgeSize }> = ({ size }) => {
             <Skeleton height={16} shape="text" />
             <Skeleton height={16} shape="text" />
           </div>
-          <span className="sr-only">Loading reputation score</span>
+          <span className="sr-only">{t('reputation.loading')}</span>
         </div>
       </CardContent>
     </Card>
@@ -180,7 +194,12 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
   const [prevScore, setPrevScore] = useState<number | null>(null);
   const [scoreChanged, setScoreChanged] = useState(false);
 
+  const { t, format } = useTranslation();
+
   const cfg = sizeConfig[size];
+
+  // Tier display names are resolved per render, so they follow the language.
+  const tierName = (tier: TierConfig) => t(tier.nameKey);
 
   useEffect(() => {
     loadReputationData();
@@ -205,7 +224,7 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
       const data = await sdk.reputation.getReputationAnalysis(address);
       setReputationData(data);
     } catch (error: any) {
-      setError(error.message || 'Failed to load reputation data');
+      setError(error.message || t('reputation.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -213,12 +232,12 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
 
   const getTier = (score: number): TierConfig => {
     if (score <= 100) {
-      if (score >= 98) return TIERS.find(t => t.name === 'Diamond')!;
-      if (score >= 85) return TIERS.find(t => t.name === 'Platinum')!;
-      if (score >= 70) return TIERS.find(t => t.name === 'Gold')!;
-      if (score >= 50) return TIERS.find(t => t.name === 'Silver')!;
-      if (score >= 25) return TIERS.find(t => t.name === 'Bronze')!;
-      return TIERS.find(t => t.name === 'Unranked')!;
+      if (score >= 98) return TIERS.find(c => c.id === 'diamond')!;
+      if (score >= 85) return TIERS.find(c => c.id === 'platinum')!;
+      if (score >= 70) return TIERS.find(c => c.id === 'gold')!;
+      if (score >= 50) return TIERS.find(c => c.id === 'silver')!;
+      if (score >= 25) return TIERS.find(c => c.id === 'bronze')!;
+      return TIERS.find(c => c.id === 'unranked')!;
     }
     return TIERS.find(t => score >= t.minScore) || TIERS[TIERS.length - 1];
   };
@@ -261,7 +280,7 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
         <CardContent className={cfg.cardPadding}>
           <div className="text-center text-gray-500">
             <BarChart3 className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-            <p>No reputation data available</p>
+            <p>{t('reputation.noData')}</p>
           </div>
         </CardContent>
       </Card>
@@ -285,7 +304,7 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
               {React.cloneElement(tier.icon as React.ReactElement, {
                 className: `${cfg.iconSize} ${tier.textColor}`,
               })}
-              <span className={tier.textColor}>Reputation Score</span>
+              <span className={tier.textColor}>{t('reputation.title')}</span>
             </CardTitle>
             <div className="relative">
               <Badge
@@ -294,49 +313,68 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
                 onMouseLeave={() => setShowTooltip(false)}
                 onClick={() => setShowTooltip(!showTooltip)}
               >
-                {tier.name}
+                {tierName(tier)}
               </Badge>
               {showTooltip && reputationData && (
                 <div className="absolute top-full right-0 mt-2 w-72 bg-white border rounded-lg shadow-xl z-50 p-4">
                   <div className="space-y-3">
                     <div className="flex items-center space-x-2 border-b pb-2">
                       {tier.icon}
-                      <span className="font-semibold">{tier.name} Tier</span>
+                      <span className="font-semibold">
+                        {t('reputation.tierLabel', { tier: tierName(tier) })}
+                      </span>
                     </div>
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
-                        <span className="text-gray-600">Score Range</span>
+                        <span className="text-gray-600">{t('reputation.scoreRange')}</span>
                         <span className="font-medium">
-                          {tier.minScore} - {tier.name === 'Platinum' ? '100' : TIERS[TIERS.indexOf(tier) - 1]?.minScore ?? 100}
+                          {format.formatNumber(tier.minScore)} - {format.formatNumber(tier.id === 'platinum' ? 100 : TIERS[TIERS.indexOf(tier) - 1]?.minScore ?? 100)}
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600">Total Transactions</span>
-                        <span className="font-medium">{reputationData.factors?.transactionCount || 'N/A'}</span>
+                        <span className="text-gray-600">{t('reputation.totalTransactions')}</span>
+                        <span className="font-medium">
+                          {reputationData.factors?.transactionCount
+                            ? format.formatNumber(reputationData.factors.transactionCount)
+                            : t('reputation.notAvailable')}
+                        </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600">Success Rate</span>
+                        <span className="text-gray-600">{t('reputation.successRate')}</span>
                         <span className="font-medium">
                           {reputationData.factors?.successRate
-                            ? `${(reputationData.factors.successRate * 100).toFixed(1)}%`
-                            : 'N/A'}
+                            ? format.formatPercent(reputationData.factors.successRate * 100, 1)
+                            : t('reputation.notAvailable')}
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600">Credential Count</span>
-                        <span className="font-medium">{reputationData.factors?.credentialCount || 'N/A'}</span>
+                        <span className="text-gray-600">{t('reputation.credentialCount')}</span>
+                        <span className="font-medium">
+                          {reputationData.factors?.credentialCount
+                            ? format.formatNumber(reputationData.factors.credentialCount)
+                            : t('reputation.notAvailable')}
+                        </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600">Percentile</span>
-                        <span className="font-medium">{reputationData.percentile}%</span>
+                        <span className="text-gray-600">{t('reputation.percentile')}</span>
+                        <span className="font-medium">
+                          {format.formatPercent(reputationData.percentile)}
+                        </span>
                       </div>
                     </div>
                     <div className="border-t pt-2 text-xs text-gray-500">
-                      <p>Next tier: {
-                        TIERS[TIERS.indexOf(tier) - 1]?.name || 'Maximum'
-                      } at {
-                        TIERS[TIERS.indexOf(tier) - 1]?.minScore || reputationData.score
-                      } points</p>
+                      <p>
+                        {TIERS[TIERS.indexOf(tier) - 1]
+                          ? t('reputation.nextTier', {
+                              tier: tierName(TIERS[TIERS.indexOf(tier) - 1]),
+                            })
+                          : t('reputation.maximum')}{' '}
+                        {t('reputation.atPoints', {
+                          count: format.formatNumber(
+                            TIERS[TIERS.indexOf(tier) - 1]?.minScore || reputationData.score
+                          ),
+                        })}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -352,12 +390,20 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
                   scoreChanged ? 'text-green-500' : tier.textColor
                 }`}
               >
-                {reputationData.score}
+                {format.formatNumber(reputationData.score)}
               </div>
               <div className="flex items-center justify-center space-x-2">
                 {getTrendIcon(trend.trend)}
                 <span className="text-sm text-gray-600">
-                  {trend.trend === 'up' ? '+' : ''}{trend.change?.toFixed(1) || '0.0'} ({trend.percentage?.toFixed(1) || '0.0'}%)
+                  {trend.trend === 'up' ? '+' : ''}
+                  {format.formatNumber(trend.change ?? 0, {
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 1,
+                  })}{' '}
+                  ({format.formatNumber(trend.percentage ?? 0, {
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 1,
+                  })}%)
                 </span>
               </div>
             </div>
@@ -378,22 +424,26 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
 
             <div className={`grid grid-cols-2 gap-4 text-sm ${size === 'lg' ? '' : 'text-xs'}`}>
               <div>
-                <span className="text-gray-600">Percentile:</span>
-                <span className="ml-2 font-medium">{reputationData.percentile}%</span>
-              </div>
-              <div>
-                <span className="text-gray-600">Tier Progress:</span>
-                <span className="ml-2 font-medium">{Math.round(progressInTier)}%</span>
-              </div>
-              <div>
-                <span className="text-gray-600">Last Updated:</span>
+                <span className="text-gray-600">{t('reputation.percentile')}:</span>
                 <span className="ml-2 font-medium">
-                  {new Date(reputationData.lastUpdated).toLocaleDateString()}
+                  {format.formatPercent(reputationData.percentile)}
                 </span>
               </div>
               <div>
-                <span className="text-gray-600">Tier:</span>
-                <span className={`ml-2 font-medium ${tier.textColor}`}>{tier.name}</span>
+                <span className="text-gray-600">{t('reputation.tierProgress')}</span>
+                <span className="ml-2 font-medium">
+                  {format.formatPercent(progressInTier)}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-600">{t('reputation.lastUpdated')}:</span>
+                <span className="ml-2 font-medium">
+                  {format.formatDate(reputationData.lastUpdated)}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-600">{t('reputation.tier')}</span>
+                <span className={`ml-2 font-medium ${tier.textColor}`}>{tierName(tier)}</span>
               </div>
             </div>
           </div>
@@ -405,7 +455,7 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
           <CardHeader>
             <CardTitle className="flex items-center text-lg">
               <Target className="h-5 w-5 mr-2" />
-              Reputation Factors
+              {t('reputation.factors')}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -419,7 +469,7 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
                 </div>
               ))}
               {(!reputationData.factors || Object.keys(reputationData.factors).length === 0) && (
-                <p className="text-sm text-gray-400">No factor data available</p>
+                <p className="text-sm text-gray-400">{t('reputation.noFactors')}</p>
               )}
             </div>
           </CardContent>
@@ -429,7 +479,7 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
           <CardHeader>
             <CardTitle className="flex items-center text-lg">
               <Activity className="h-5 w-5 mr-2" />
-              Recent Activity
+              {t('reputation.activity')}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -437,13 +487,15 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
               {(reputationData.history || []).slice(-5).reverse().map((score, index) => (
                 <div key={index} className="flex justify-between items-center">
                   <span className="text-sm text-gray-600">
-                    {index === 0 ? 'Current' : `${index} updates ago`}
+                    {index === 0
+                      ? t('reputation.current')
+                      : t('reputation.updatesAgo', { count: index })}
                   </span>
                   <span className="font-medium">{score}</span>
                 </div>
               ))}
               {(!reputationData.history || reputationData.history.length === 0) && (
-                <p className="text-sm text-gray-400">No history available</p>
+                <p className="text-sm text-gray-400">{t('reputation.noHistory')}</p>
               )}
             </div>
           </CardContent>
@@ -452,45 +504,45 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
 
       <Card>
         <CardHeader>
-          <CardTitle className={cfg.titleSize}>Reputation Insights</CardTitle>
+          <CardTitle className={cfg.titleSize}>{t('reputation.insights')}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="text-center p-4 bg-gray-50 rounded-lg">
                 <div className={`${cfg.scoreText} font-bold text-blue-600`}>
-                  {reputationData.score}
+                  {format.formatNumber(reputationData.score)}
                 </div>
-                <div className="text-sm text-gray-600">Current Score</div>
+                <div className="text-sm text-gray-600">{t('reputation.currentScore')}</div>
               </div>
               <div className="text-center p-4 bg-gray-50 rounded-lg">
                 <div className={`${size === 'lg' ? 'text-2xl' : 'text-xl'} font-bold text-green-600`}>
-                  {reputationData.percentile}%
+                  {format.formatPercent(reputationData.percentile)}
                 </div>
-                <div className="text-sm text-gray-600">Percentile Rank</div>
+                <div className="text-sm text-gray-600">{t('reputation.percentileRank')}</div>
               </div>
               <div className="text-center p-4 bg-gray-50 rounded-lg">
                 <div className={`${size === 'lg' ? 'text-2xl' : 'text-xl'} font-bold text-purple-600`}>
-                  {Object.keys(reputationData.factors || {}).length}
+                  {format.formatNumber(Object.keys(reputationData.factors || {}).length)}
                 </div>
-                <div className="text-sm text-gray-600">Active Factors</div>
+                <div className="text-sm text-gray-600">{t('reputation.activeFactors')}</div>
               </div>
             </div>
             
             <div className="space-y-2">
-              <h4 className="font-medium">Recommendations:</h4>
+              <h4 className="font-medium">{t('reputation.recommendations')}</h4>
               <ul className="text-sm text-gray-600 space-y-1">
                 {reputationData.score < 60 && (
-                  <li>• Focus on successful transactions to improve your score</li>
+                  <li>{t('reputation.recommendationTransactions')}</li>
                 )}
                 {Object.keys(reputationData.factors || {}).length < 3 && (
-                  <li>• Obtain more verifiable credentials to strengthen your reputation</li>
+                  <li>{t('reputation.recommendationCredentials')}</li>
                 )}
                 {trend.trend === 'down' && (
-                  <li>• Recent activity shows a declining trend - consider reviewing recent transactions</li>
+                  <li>{t('reputation.recommendationDeclining')}</li>
                 )}
                 {reputationData.score >= 80 && (
-                  <li>• Excellent reputation! Maintain your current activity level</li>
+                  <li>{t('reputation.recommendationExcellent')}</li>
                 )}
               </ul>
             </div>

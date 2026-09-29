@@ -34,11 +34,33 @@ export interface SeriesSummary {
   changePct: number;
 }
 
+/**
+ * The available date ranges, with their English labels.
+ *
+ * @deprecated The `label` is hard-coded English. Use
+ * {@link getDateRangePresets}, which resolves labels through the i18n
+ * catalogue. Kept because it is part of the published API and because a
+ * consumer may pass its own label in.
+ */
 export const DATE_RANGE_PRESETS: Array<{ preset: DateRangePreset; label: string }> = [
   { preset: '7d', label: '7 days' },
   { preset: '30d', label: '30 days' },
   { preset: '90d', label: '90 days' },
 ];
+
+/**
+ * The date ranges, with labels resolved for the active language.
+ *
+ * @param t - Translator from `useTranslation()`. Omit for the English labels.
+ */
+export function getDateRangePresets(
+  t?: (key: string) => string,
+): Array<{ preset: DateRangePreset; label: string }> {
+  return DATE_RANGE_PRESETS.map(({ preset }) => ({
+    preset,
+    label: t ? t(`analytics.preset.${preset}`) : presetLabel(preset),
+  }));
+}
 
 const PRESET_DAYS: Record<DateRangePreset, number> = {
   '7d': 7,
@@ -102,16 +124,30 @@ export function formatPercent(value: number, fractionDigits = 1): string {
   return `${value.toFixed(fractionDigits)}%`;
 }
 
-export function formatNumber(value: number, fractionDigits = 0): string {
-  return value.toLocaleString('en-US', {
+/**
+ * Group a number using `locale`'s conventions.
+ *
+ * @param locale - A BCP-47 tag. Defaults to `'en-US'` to preserve the previous
+ *   behaviour for callers outside a React tree; inside one, pass
+ *   `format.intlLocale` from `useTranslation()`.
+ */
+export function formatNumber(value: number, fractionDigits = 0, locale = 'en-US'): string {
+  // `en-US` was previously hard-coded here, so charts stayed in English
+  // regardless of the user's language.
+  return value.toLocaleString(locale, {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
   });
 }
 
-/** Short axis label, e.g. `12 Mar`. */
-export function formatDateLabel(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString('en-US', {
+/**
+ * Short axis label, e.g. `12 Mar`.
+ *
+ * @param locale - A BCP-47 tag. Defaults to `'en-US'`; inside a React tree,
+ *   pass `format.intlLocale` from `useTranslation()`.
+ */
+export function formatDateLabel(timestamp: number, locale = 'en-US'): string {
+  return new Date(timestamp).toLocaleDateString(locale, {
     day: 'numeric',
     month: 'short',
   });
