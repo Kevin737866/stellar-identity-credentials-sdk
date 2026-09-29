@@ -17,6 +17,8 @@ const icons = [
   'Maximize2', 'Info', 'Users', 'Link', 'Star', 'Award', 'Network',
   'GitBranch', 'Layers', 'Move', 'RotateCcw', 'Filter', 'ChevronRight',
   'ChevronLeft', 'ArrowRight', 'ArrowLeft', 'Check', 'X', 'AlertOctagon',
+  'Share', 'Share2', 'Copy', 'FileDown', 'Wallet', 'Fingerprint', 'BadgeCheck',
+  'LayoutDashboard', 'CheckCircle2', 'KeyRound',
 ];
 
 const mocks = {};
@@ -24,4 +26,13 @@ icons.forEach((name) => {
   mocks[name] = createIcon(name);
 });
 
-module.exports = mocks;
+// A Proxy resolves any icon not on the list above to a generic span, so adding
+// an icon to a component does not also require editing this mock. Known names
+// still resolve to their stable `icon-<name>` testid.
+const fallback = createIcon('unknown');
+module.exports = new Proxy(mocks, {
+  get(target, prop) {
+    if (typeof prop !== 'string' || prop in target) return target[prop];
+    return fallback;
+  },
+});

@@ -21,6 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Skeleton, SkeletonList } from '@/components/ui/skeleton';
 import { 
   ZKProofsClient, 
   ZKProof, 
@@ -243,9 +244,22 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
     return (
       <Card>
         <CardContent className="p-6">
-          <div className="flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <span className="ml-2">Loading zero-knowledge proofs...</span>
+          <div
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+            aria-label="Loading zero-knowledge proofs"
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <Skeleton shape="circle" height={40} width={40} />
+              <div style={{ flex: 1 }}>
+                <Skeleton height={16} shape="text" width={6} />
+                <div style={{ height: 'var(--space-2)' }} />
+                <Skeleton height={11} shape="text" width={9} />
+              </div>
+            </div>
+            <SkeletonList rows={3} />
+            <span className="sr-only">Loading zero-knowledge proofs</span>
           </div>
         </CardContent>
       </Card>

@@ -18,6 +18,7 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Skeleton, SkeletonDetail } from '@/components/ui/skeleton';
 import { DIDClient } from '@stellar-identity/sdk';
 import { VerificationMethod, Service, DIDDocument, StellarIdentityConfig } from '@stellar-identity/sdk';
 import { Keypair } from 'stellar-sdk';
@@ -163,12 +164,27 @@ export const DIDManager: React.FC<DIDManagerProps> = ({ sdk, address, keypair })
   };
 
   if (loading) {
+    // A skeleton matching the card layout below, so content does not jump
+    // when the DID resolves.
     return (
       <Card>
         <CardContent className="p-6">
-          <div className="flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <span className="ml-2">Loading DID information...</span>
+          <div
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+            aria-label="Loading DID information"
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <Skeleton shape="circle" height={40} width={40} />
+              <div style={{ flex: 1 }}>
+                <Skeleton height={16} shape="text" width={5} />
+                <div style={{ height: 'var(--space-2)' }} />
+                <Skeleton height={11} shape="text" width={8} />
+              </div>
+            </div>
+            <SkeletonDetail fields={4} />
+            <span className="sr-only">Loading DID information</span>
           </div>
         </CardContent>
       </Card>

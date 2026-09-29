@@ -48,6 +48,12 @@ jobs:
       - name: Run UI tests with coverage
         run: cd ui && npx jest --coverage --coverageThreshold='{"global":{"branches":80,"functions":80,"lines":80,"statements":80}}'
 
+      - name: Accessibility tests (axe-core, WCAG 2.1 AA)
+        # jest-axe is registered in ui/jest.setup.ts, so the dedicated suites
+        # run as part of the normal UI test step. This step runs them in
+        # isolation to make an a11y regression obvious in the job log.
+        run: cd ui && npx jest --ci src/components/__tests__/accessibility.test.tsx src/hooks/__tests__/useFocusTrap.test.tsx
+
       - name: Lint
         run: |
           npm run lint
