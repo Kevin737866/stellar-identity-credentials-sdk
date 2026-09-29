@@ -31,11 +31,15 @@ export { Logger, LogLevel } from './logger';
 export { GDPREngine } from './gdpr';
 export type { ConsentRecord, ProcessingRecord, GDPRComplianceOptions } from './gdpr';
 export { DataMinimizationEngine } from './dataMinimization';
-export type { 
-  MinimalDisclosurePolicy, 
-  BlindedAttribute, 
-  SaltedHashCommitment, 
-  AttributeExpiration 
+export type {
+  MinimalDisclosurePolicy,
+  BlindedAttribute,
+  SaltedHashCommitment,
+  AttributeExpiration,
+  // Issue #189: new Data Minimization types
+  ProofRequest,
+  AuditEntry,
+  ConsentReceipt,
 } from './dataMinimization';
 
 export { ComplianceClient } from './compliance';
@@ -508,3 +512,24 @@ export class StellarIdentitySDK {
 // W3C Bitstring Status List (#267)
 export { StatusListClient } from './statusListClient';
 export type { StatusListMetadata } from './statusListClient';
+
+// Privacy Enhancements — Issues #188, #189, #190, #191
+export { DataPortabilityManager } from './dataPortability';
+export type {
+  W3CVerifiableCredential,
+  CredentialExportPackage,
+} from './dataPortability';
+
+export { ConsentManager } from './consentManager';
+export type {
+  ConsentScope,
+  ConsentRecord as ConsentManagerRecord,
+  ConsentHistoryEntry,
+} from './consentManager';
+
+export { AnonymousCredentialManager } from './anonymousCredentials';
+export type {
+  AnonymousCredential,
+  AttributeProof,
+  AnonymousPresentation,
+} from './anonymousCredentials';

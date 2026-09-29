@@ -59,3 +59,44 @@ stellar-identity-config-*.json
 # PR description files (local workflow artifacts)
 pr-106.md
 pr-110.md
+
+# Test snapshots
+**/__snapshots__/
+*.snap
+
+# Build artifacts
+dist/
+build/
+*.js.map
+
+# Logs
+*.log
+ci.log
+gh_run.log
+cargo_check.log
+
+# Runtime files
+*.wasm
+target/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python scripts (temp fix scripts)
+fix_errors.py
+fix_errors_2.py
+
+# Sandbox outputs
+sandbox/*.json
