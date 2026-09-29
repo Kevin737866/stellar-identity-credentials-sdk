@@ -24,10 +24,15 @@ import {
   StellarIdentityError,
   DIDError,
   ConfigurationError,
+  ValidationError,
   ErrorCode,
   mapContractError,
+  invalidAddress,
+  invalidDID,
+  fieldTooLong,
 } from './errors';
 import { CacheManager, DataType } from './cacheManager';
+import { withRetry as withRetryEngine, RetryOptions as RetryEngineOptions } from './retry';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -127,8 +132,9 @@ export class DIDClient {
   constructor(config: StellarIdentityConfig) {
     if (!config.contracts?.didRegistry) {
       throw new ConfigurationError(
-        ErrorCode.ConfigInvalidRpcUrl,
+        ErrorCode.ConfigMissingContract,
         'config.contracts.didRegistry is required',
+        { contract: 'didRegistry' },
       );
     }
     this.config = config;
@@ -488,9 +494,13 @@ export class DIDClient {
 
     const submission = await this.rpc.sendTransaction(prepared as Transaction);
     if (submission.status === 'ERROR') {
+      // `NetworkTransactionFailed` rather than a config code: the endpoint is
+      // reachable, the transaction simply was not accepted. Classifying it as
+      // a configuration error stopped the retry engine from ever retrying.
       throw new DIDError(
-        ErrorCode.ConfigInvalidRpcUrl,
+        ErrorCode.NetworkTransactionFailed,
         `Transaction submission failed: ${JSON.stringify(submission.errorResult)}`,
+        { errorResult: submission.errorResult },
       );
     }
 
@@ -521,16 +531,18 @@ export class DIDClient {
 
       if (status.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
         throw new DIDError(
-          ErrorCode.ConfigInvalidRpcUrl,
+          ErrorCode.NetworkTransactionFailed,
           `Transaction ${hash} failed on-chain`,
+          { hash, status: 'FAILED' },
         );
       }
       // NOT_FOUND or PENDING → keep polling.
     }
 
     throw new DIDError(
-      ErrorCode.ConfigInvalidRpcUrl,
+      ErrorCode.NetworkTimeout,
       `Transaction ${hash} not confirmed after ${maxAttempts} attempts`,
+      { hash, maxAttempts },
     );
   }
 
@@ -579,28 +591,25 @@ export class DIDClient {
   }
 
   /**
-   * Retry an async operation with exponential back-off.
+   * Retry a transient RPC operation.
+   *
+   * Delegates to the shared {@link withRetry} engine from `retry.ts`, which is
+   * error-classification-aware. The previous private implementation here
+   * retried *every* failure, so a permanent error — a contract rejection, a
+   * malformed DID, insufficient funds — was attempted three times with
+   * back-off before surfacing. The shared engine consults each error's
+   * `retryable` flag and re-throws permanent failures immediately.
    */
   private async withRetry<T>(
     fn: () => Promise<T>,
-    options: RetryOptions = {},
+    options: { attempts?: number; delayMs?: number } = {},
   ): Promise<T> {
-    const attempts = options.attempts ?? DEFAULT_RETRY_ATTEMPTS;
-    const delayMs = options.delayMs ?? DEFAULT_RETRY_DELAY_MS;
-    let lastError: unknown;
-
-    for (let i = 0; i < attempts; i++) {
-      try {
-        return await fn();
-      } catch (error) {
-        lastError = error;
-        if (i < attempts - 1) {
-          await sleep(delayMs * 2 ** i); // exponential back-off
-        }
-      }
-    }
-
-    throw this.handleError(lastError);
+    const engineOptions: RetryEngineOptions = {
+      maxAttempts: options.attempts ?? DEFAULT_RETRY_ATTEMPTS,
+      baseDelayMs: options.delayMs ?? DEFAULT_RETRY_DELAY_MS,
+      operationName: 'didClient.rpc',
+    };
+    return withRetryEngine(fn, engineOptions);
   }
 
   // ── Private — authentication helper ──────────────────────────────────────
@@ -767,27 +776,26 @@ export class DIDClient {
 
   private assertValidStellarAddress(address: string): void {
     if (!this.isValidStellarAddress(address)) {
-      throw new ConfigurationError(
-        ErrorCode.ConfigInvalidRpcUrl,
-        `Invalid Stellar address: ${address}`,
-      );
+      // A bad address is a caller input problem, not a configuration problem.
+      // Reporting `ConfigInvalidRpcUrl` here made every malformed-DID call
+      // look like a network misconfiguration, so consumers could not tell the
+      // two apart without parsing the message.
+      throw invalidAddress(address);
     }
   }
 
   private assertValidDIDFormat(did: string): void {
     if (!this.validateDIDFormat(did)) {
-      throw new DIDError(
-        ErrorCode.ConfigInvalidRpcUrl,
-        `Invalid DID format: ${did}`,
-      );
+      throw invalidDID(did);
     }
   }
 
   private assertNonEmpty(value: string, fieldName: string): void {
     if (!value || value.trim().length === 0) {
-      throw new ConfigurationError(
-        ErrorCode.ConfigInvalidRpcUrl,
+      throw new ValidationError(
+        ErrorCode.ValidationMissingField,
         `${fieldName} must not be empty`,
+        { fieldName },
       );
     }
   }
@@ -798,18 +806,16 @@ export class DIDClient {
     fieldName: string,
   ): void {
     if (value.length > max) {
-      throw new ConfigurationError(
-        ErrorCode.ConfigInvalidRpcUrl,
-        `${fieldName} exceeds maximum length of ${max} characters`,
-      );
+      throw fieldTooLong(fieldName, max, value.length);
     }
   }
 
   private assertVerificationMethods(vms: VerificationMethod[]): void {
     if (vms.length > LIMITS.MAX_VERIFICATION_METHODS) {
-      throw new ConfigurationError(
-        ErrorCode.ConfigInvalidRpcUrl,
+      throw new ValidationError(
+        ErrorCode.ValidationFieldTooLong,
         `Too many verification methods (max ${LIMITS.MAX_VERIFICATION_METHODS})`,
+        { fieldName: 'verificationMethods', max: LIMITS.MAX_VERIFICATION_METHODS, actual: vms.length },
       );
     }
     for (const vm of vms) {
@@ -817,9 +823,10 @@ export class DIDClient {
       this.assertMaxLength(vm.type, LIMITS.MAX_VM_TYPE_LENGTH, 'Verification method type');
       this.assertValidStellarAddress(vm.controller);
       if (!vm.publicKey || !/^[0-9a-fA-F]+$/.test(vm.publicKey)) {
-        throw new ConfigurationError(
-          ErrorCode.ConfigInvalidRpcUrl,
+        throw new ValidationError(
+          ErrorCode.ValidationInvalidCredential,
           'Verification method publicKey must be a hex string',
+          { fieldName: 'publicKey' },
         );
       }
     }
@@ -827,9 +834,10 @@ export class DIDClient {
 
   private assertServices(services: Service[]): void {
     if (services.length > LIMITS.MAX_SERVICES) {
-      throw new ConfigurationError(
-        ErrorCode.ConfigInvalidRpcUrl,
+      throw new ValidationError(
+        ErrorCode.ValidationFieldTooLong,
         `Too many services (max ${LIMITS.MAX_SERVICES})`,
+        { fieldName: 'services', max: LIMITS.MAX_SERVICES, actual: services.length },
       );
     }
     for (const svc of services) {
@@ -842,9 +850,10 @@ export class DIDClient {
       try {
         new URL(svc.endpoint);
       } catch {
-        throw new ConfigurationError(
-          ErrorCode.ConfigInvalidRpcUrl,
+        throw new ValidationError(
+          ErrorCode.ValidationFieldTooLong,
           `Service endpoint is not a valid URL: ${svc.endpoint}`,
+          { fieldName: 'endpoint', endpoint: svc.endpoint },
         );
       }
     }

@@ -13,12 +13,14 @@ This guide covers every aspect of error handling in the SDK: error codes, classi
 5. [Type guards](#5-type-guards)
 6. [Recovery hints](#6-recovery-hints)
 7. [Automatic retry with exponential back-off](#7-automatic-retry-with-exponential-back-off)
-8. [Circuit breaker](#8-circuit-breaker)
-9. [Error monitoring hooks](#9-error-monitoring-hooks)
-10. [External reporters (Sentry, Datadog, webhooks)](#10-external-reporters)
-11. [Common scenarios and solutions](#11-common-scenarios-and-solutions)
-12. [Convenience builders](#12-convenience-builders)
-13. [Migrating from v0.x](#13-migrating-from-v0x)
+8. [Retry metrics](#8-retry-metrics)
+9. [Circuit breaker](#9-circuit-breaker)
+10. [Error monitoring hooks](#10-error-monitoring-hooks)
+11. [External reporters (Sentry, Datadog, webhooks)](#11-external-reporters)
+12. [Serialization and deserialization](#12-serialization-and-deserialization)
+13. [Common scenarios and solutions](#13-common-scenarios-and-solutions)
+14. [Convenience builders](#14-convenience-builders)
+15. [Migrating from v0.x](#15-migrating-from-v0x)
 
 ---
 
@@ -133,6 +135,32 @@ All ZK errors are `contract` class and non-retryable except where the underlying
 
 Validation errors are never retryable — fix the input. Rate limit errors are retryable after the reset window.
 
+
+### Generic contract errors (10xxx)
+
+| Code | Name | Class | Retryable | Cause |
+|------|------|-------|-----------|-------|
+| 10001 | `CONTRACT_ERROR` | contract | no | Generic contract rejection; inspect `details` |
+| 10002 | `ContractCallFailed` | contract | no | Call failed; simulate to read the reason |
+| 10003 | `ContractUnexpectedResult` | contract | no | Deployed ABI differs from the expected one |
+| 10004 | `ContractCallReverted` | contract | no | Reverted; retrying unchanged will fail again |
+
+### Cache errors (11xxx)
+
+| Code | Name | Class | Retryable | Cause |
+|------|------|-------|-----------|-------|
+| 11001 | `CacheBackendUnavailable` | unknown | yes | Persistent store unavailable; caching bypassed |
+| 11002 | `CacheSerializationError` | unknown | yes | Entry could not be (de)serialized; discarded |
+| 11003 | `CacheInvalidationError` | unknown | yes | Entry could not be invalidated; may serve stale data |
+
+### Retry errors (12xxx)
+
+| Code | Name | Class | Retryable | Cause |
+|------|------|-------|-----------|-------|
+| 12001 | `RetryAborted` | network | no | Loop aborted before completion |
+| 12002 | `RetryTimeoutExceeded` | network | no | Attempt/delay budget exhausted |
+| 12003 | `CircuitOpen` | network | **yes** | Breaker open; calls resume after the reset timeout |
+
 ---
 
 ## 3. Error classification
@@ -215,6 +243,7 @@ Import domain-specific guards to narrow types without casting:
 import {
   isDIDError, isCredentialError, isNetworkError,
   isValidationError, isRateLimitError, isRetryableError,
+  isContractError, isCacheError, isRetryError,
 } from '@stellar-identity/sdk';
 
 catch (err) {
@@ -225,6 +254,9 @@ catch (err) {
   if (isNetworkError(err)) { /* network-specific handling */ }
   if (isValidationError(err)) { /* show user the validation message */ }
   if (isRateLimitError(err)) { /* back off */ }
+  if (isContractError(err)) { /* the chain rejected this; do not retry */ }
+  if (isCacheError(err)) { /* non-fatal — fall back to a direct read */ }
+  if (isRetryError(err)) { /* the retry budget was exhausted */ }
 }
 ```
 
@@ -328,7 +360,39 @@ Example with defaults (`base=500, mult=2, max=30 000`):
 
 ---
 
-## 8. Circuit breaker
+## 8. Retry metrics
+
+Retries are invisible in application logs: every retried call eventually returns a value, so nothing looks wrong. `getRetryMetrics` exposes process-wide counters so a scraper can see the endpoint degrading *before* calls start failing outright.
+
+```typescript
+import { getRetryMetrics } from '@stellar-identity/sdk';
+
+const m = getRetryMetrics();
+m.succeeded;              // completed on the first attempt
+m.succeededAfterRetry;    // completed, but only after retrying
+m.failed;                 // exhausted the attempt budget
+m.abortedNonRetryable;    // abandoned: the error was permanent
+m.totalAttempts;          // individual attempts made
+m.totalDelayMs;           // time spent sleeping between attempts
+m.maxDelayMs;             // longest single back-off
+m.errorsByCode;           // failure count per ErrorCode
+```
+
+The signal worth alerting on is a rising `succeededAfterRetry` with a flat `failed` — retries are absorbing an outage that will otherwise become visible to users.
+
+```typescript
+const m = getRetryMetrics();
+const attempts = m.succeeded + m.succeededAfterRetry + m.failed;
+if (attempts > 100 && m.succeededAfterRetry / attempts > 0.1) {
+  alert('Elevated retry rate — endpoint is degraded');
+}
+```
+
+Counters are process-local and never reset automatically, so a scraper can compute a rate over any window. `resetRetryMetrics()` zeroes them; use it in tests, not in production.
+
+---
+
+## 9. Circuit breaker
 
 The circuit breaker prevents cascading failures when an RPC endpoint is persistently unavailable.
 
@@ -363,7 +427,7 @@ const doc = await withRetryAndCircuitBreaker(
 
 ---
 
-## 9. Error monitoring hooks
+## 10. Error monitoring hooks
 
 Subscribe to error events globally or by domain/code/class without modifying call sites.
 
@@ -455,7 +519,7 @@ console.log('By domain:',      stats.byDomain);
 
 ---
 
-## 10. External reporters
+## 11. External reporters
 
 Implement `ErrorReporter` to send errors to an external service:
 
@@ -488,7 +552,34 @@ ErrorMonitor.global().addReporter(new DatadogReporter());
 
 ---
 
-## 11. Common scenarios and solutions
+## 12. Serialization and deserialization
+
+`toJSON()` flattens an error into a plain object, and `fromJSON()` rebuilds a typed one. Because every code's `errorClass`, `retryable`, and `recovery` are derived from the `ERROR_META` and `RECOVERY_HINTS` tables, the numeric `code` alone is enough to recover the full classification.
+
+```typescript
+import { fromJSON, isSerializedError, NetworkError } from '@stellar-identity/sdk';
+
+// In the client
+try {
+  await sdk.did.resolveDID(did);
+} catch (err) {
+  await logger.error(JSON.stringify(err.toJSON()));
+}
+
+// In the reporting service or a queue worker
+const record = JSON.parse(payload);
+if (isSerializedError(record)) {
+  const err = fromJSON(record);
+  // `instanceof` still works on the far side of the transport boundary.
+  if (err instanceof NetworkError && err.retryable) requeue(record);
+}
+```
+
+`fromJSON` is total: given anything that is not a recognisable serialized error it returns a plain `StellarIdentityError` rather than throwing, so it is safe to call on arbitrary JSON.
+
+---
+
+## 13. Common scenarios and solutions
 
 ### DID not found
 
@@ -606,7 +697,7 @@ async function robustResolveDID(did: string) {
 
 ---
 
-## 12. Convenience builders
+## 14. Convenience builders
 
 Create typed validation errors without constructing them manually:
 
@@ -623,7 +714,7 @@ function validateCreateDIDInput(address: string, didStr: string, endpoint: strin
 
 ---
 
-## 13. Migrating from v0.x
+## 15. Migrating from v0.x
 
 ### New exports
 

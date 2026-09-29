@@ -11,6 +11,7 @@
     "sdk/src/compliance.ts",
     "sdk/src/walletConnector.ts",
     "sdk/src/cacheManager.ts",
+    "sdk/src/cacheBackend.ts",
     "sdk/src/dataMinimization.ts",
     "sdk/src/eventSubscriber.ts",
     "sdk/src/logger.ts"

@@ -155,7 +155,13 @@ export async function withRetry<T>(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      return await fn();
+      const result = await fn();
+      // A success on attempt 1 is a clean success; anything later means the
+      // endpoint recovered and the caller should know retries are firing.
+      if (attempt === 1) globalMetrics.succeeded++;
+      else globalMetrics.succeededAfterRetry++;
+      recordMetrics(attempt, 0, null);
+      return result;
     } catch (raw) {
       const err = raw instanceof StellarIdentityError
         ? raw
@@ -165,6 +171,8 @@ export async function withRetry<T>(
 
       // Non-retryable — notify if configured, then re-throw immediately
       if (!isRetryableError(err)) {
+        globalMetrics.abortedNonRetryable++;
+        recordMetrics(attempt, 0, err);
         if (options.notifyOnNonRetryable && options.onRetry) {
           options.onRetry({ attempt: -1, maxAttempts, error: err, delayMs: 0, operation: operationName });
         }
@@ -175,6 +183,7 @@ export async function withRetry<T>(
       if (attempt === maxAttempts) break;
 
       const delayMs = calculateDelay(attempt, err, delayOpts);
+      recordMetrics(attempt, delayMs, err);
 
       if (options.onRetry) {
         options.onRetry({ attempt: attempt + 1, maxAttempts, error: err, delayMs, operation: operationName });
@@ -185,11 +194,94 @@ export async function withRetry<T>(
   }
 
   // All attempts exhausted
+  globalMetrics.failed++;
   throw new NetworkError(
     ErrorCode.NetworkMaxRetriesExceeded,
     `${operationName} failed after ${maxAttempts} attempts. Last error: ${lastError?.message ?? 'unknown'}`,
     { lastError: lastError?.toJSON(), maxAttempts, operationName },
   );
+}
+
+// ── Retry metrics ─────────────────────────────────────────────────────────────
+
+/**
+ * Aggregate counters describing retry behaviour.
+ *
+ * @category Retry
+ */
+export interface RetryMetrics {
+  /** Calls that completed on the first attempt. */
+  succeeded: number;
+  /** Calls that ultimately returned a value, after one or more retries. */
+  succeededAfterRetry: number;
+  /** Calls that exhausted their attempt budget. */
+  failed: number;
+  /** Calls abandoned because the error was not retryable. */
+  abortedNonRetryable: number;
+  /** Total individual attempts made, including successful first attempts. */
+  totalAttempts: number;
+  /** Total milliseconds spent sleeping between attempts. */
+  totalDelayMs: number;
+  /** Longest single back-off delay observed. */
+  maxDelayMs: number;
+  /** Failures bucketed by the error code that caused them. */
+  errorsByCode: Record<number, number>;
+}
+
+/**
+ * Process-wide retry metrics.
+ *
+ * Instrumenting retries is the only way to answer "is the endpoint degrading?"
+ * in production — a rising `succeededAfterRetry` count with a flat `failed`
+ * count is a warning that turns into an outage if ignored, and it is invisible
+ * in application logs because every call ultimately returned a value.
+ *
+ * Counters are process-local and never reset automatically, so a scraper can
+ * compute a rate over any window it chooses.
+ *
+ * ```ts
+ * const stats = getRetryMetrics();
+ * const retryRate = stats.totalAttempts / (stats.succeeded + stats.failed);
+ * ```
+ *
+ * @category Retry
+ */
+let globalMetrics: RetryMetrics = createRetryMetrics();
+
+/** A fresh, zeroed metrics object. */
+export function createRetryMetrics(): RetryMetrics {
+  return {
+    succeeded: 0,
+    succeededAfterRetry: 0,
+    failed: 0,
+    abortedNonRetryable: 0,
+    totalAttempts: 0,
+    totalDelayMs: 0,
+    maxDelayMs: 0,
+    errorsByCode: {},
+  };
+}
+
+/** Snapshot the current retry metrics. @category Retry */
+export function getRetryMetrics(): RetryMetrics {
+  return { ...globalMetrics, errorsByCode: { ...globalMetrics.errorsByCode } };
+}
+
+/** Reset the retry counters to zero. Intended for tests. @category Retry */
+export function resetRetryMetrics(): void {
+  globalMetrics = createRetryMetrics();
+}
+
+/** Record an attempt against the global counters. */
+function recordMetrics(attempt: number, delayMs: number, error: StellarIdentityError | null): void {
+  globalMetrics.totalAttempts++;
+  if (delayMs > 0) {
+    globalMetrics.totalDelayMs += delayMs;
+    if (delayMs > globalMetrics.maxDelayMs) globalMetrics.maxDelayMs = delayMs;
+  }
+  if (error) {
+    globalMetrics.errorsByCode[error.code] = (globalMetrics.errorsByCode[error.code] ?? 0) + 1;
+  }
 }
 
 // ── Circuit Breaker ───────────────────────────────────────────────────────────
@@ -271,6 +363,7 @@ export class CircuitBreaker {
       if (this.openedAt !== null && Date.now() - this.openedAt >= this.resetTimeoutMs) {
         this.transition('half-open');
       } else {
+        globalMetrics.abortedNonRetryable++;
         throw new NetworkError(
           ErrorCode.NetworkConnectionFailed,
           `Circuit breaker "${this.name}" is OPEN. Calls are blocked until ${

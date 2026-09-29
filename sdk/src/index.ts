@@ -5,6 +5,7 @@ declare var require: (id: string) => any;
 
 import { Keypair } from 'stellar-sdk';
 import { GDPREngine } from './gdpr';
+import { PersistentCacheManager, WebStorageBackend } from './cacheBackend';
 
 export const UTILS = {
   generateKeypair: () => Keypair.random(),
@@ -16,6 +17,18 @@ export { ReputationClient } from './reputation';
 export { ZKProofsClient } from './zkProofs';
 export { SchemaRegistryClient } from './schemaClient';
 export { CacheManager, DataType } from './cacheManager';
+export {
+  MemoryBackend,
+  WebStorageBackend,
+  PersistentCacheManager,
+} from './cacheBackend';
+export type {
+  StorageBackend,
+  WebStorageLike,
+  PersistentCacheEntry,
+  PersistentCacheStats,
+  PersistentCacheConfig,
+} from './cacheBackend';
 export { compressPayload, decompressPayload, compressionRatio } from './compression';
 export { EventSubscriber } from './eventSubscriber';
 export type {
@@ -187,6 +200,9 @@ export {
   isValidationError,
   isRateLimitError,
   isRetryableError,
+  // Serialization round-trip (#206)
+  fromJSON,
+  isSerializedError,
   // Convenience builders
   missingField,
   fieldTooLong,
@@ -194,11 +210,22 @@ export {
   invalidDID,
   // Recovery hints map
   RECOVERY_HINTS,
+  // Error classes added for contract / cache / retry failures (#206)
+  ContractError,
+  CacheError,
+  RetryError,
+  // Type guards for the classes above
+  isContractError,
+  isCacheError,
+  isRetryError,
 } from './errors';
-export type { ErrorClass } from './errors';
+export type { ErrorClass, SerializedStellarError } from './errors';
 
 export {
   withRetry,
+  getRetryMetrics,
+  resetRetryMetrics,
+  createRetryMetrics,
   calculateDelay,
   CircuitBreaker,
   withRetryAndCircuitBreaker,
@@ -329,6 +356,8 @@ export class StellarIdentitySDK {
   public zkProofs: ZKProofsClient;
   public schemaRegistry: SchemaRegistryClient;
   public cache: CacheManager;
+  /** Persistent, tag-invalidation-aware cache layered over `cache`. */
+  public persistentCache: PersistentCacheManager;
   public events: EventSubscriber;
   public gdpr: GDPREngine;
   public batch: BatchClient;
@@ -345,6 +374,9 @@ export class StellarIdentitySDK {
     this.zkProofs = new ZKProofsClient(config);
     this.schemaRegistry = new SchemaRegistryClient(config);
     this.cache = new CacheManager();
+    this.persistentCache = new PersistentCacheManager({
+      backend: WebStorageBackend.fromGlobal() ?? undefined,
+    });
     this.events = new EventSubscriber(config);
     this.gdpr = new GDPREngine(this.did, this.credentials);
     this.batch = new BatchClient(config, {
@@ -378,12 +410,23 @@ export class StellarIdentitySDK {
     this.config = mergeConfig(base, overrides || {});
     validateConfig(this.config);
 
-    // Re-initialize all clients with new config
+    // Re-initialize all clients with new config.
+    //
+    // `schemaRegistry` and `gdpr` were previously omitted here, which left
+    // them holding the *previous* network's config after a switch — so a
+    // schema lookup after switching to mainnet silently queried testnet.
     this.did = new DIDClient(this.config);
     this.credentials = new CredentialClient(this.config);
     this.reputation = new ReputationClient(this.config);
     this.zkProofs = new ZKProofsClient(this.config);
+    this.schemaRegistry = new SchemaRegistryClient(this.config);
     this.events = new EventSubscriber(this.config);
+    this.gdpr = new GDPREngine(this.did, this.credentials);
+
+    // Cached documents and reputation scores are network-scoped, so a switch
+    // must not carry them over: a testnet credential status is meaningless on
+    // mainnet. See #207.
+    this.cache.clearAll();
     this.batch = new BatchClient(this.config, {
       didClient: this.did,
       credentialClient: this.credentials,
