@@ -33,6 +33,20 @@ export type { CheckboxProps } from './components/ui/checkbox';
 export { Layout } from './components/Layout';
 export type { LayoutProps, NavItem } from './components/Layout';
 
+// Responsive layout primitives
+export { MobileNav, MOBILE_NAV_MORE_ID } from './components/MobileNav';
+export type { MobileNavProps, MobileNavItem } from './components/MobileNav';
+export { ResponsiveTable } from './components/ResponsiveTable';
+export type { ResponsiveTableProps, ResponsiveTableColumn } from './components/ResponsiveTable';
+export {
+  BREAKPOINTS,
+  getBreakpoint,
+  useBreakpoint,
+  useMediaQuery,
+  useViewportWidth,
+} from './hooks/useBreakpoint';
+export type { Breakpoint, BreakpointInfo } from './hooks/useBreakpoint';
+
 // Feature Components
 export { DIDManager, ConnectedDIDManager } from './components/DIDManager';
 export { CredentialWallet } from './components/CredentialWallet';
@@ -43,6 +57,42 @@ export { RegulatoryDashboard } from './components/RegulatoryDashboard';
 export { DIDRecoveryWizard } from './components/DIDRecoveryWizard';
 export type { DIDRecoveryWizardProps, RecoveryMethod, RecoveryConfig, Guardian } from './components/DIDRecoveryWizard';
 export { SelectiveDisclosure } from './components/SelectiveDisclosure';
+
+// Notifications
+export { NotificationCenter } from './components/NotificationCenter';
+export type { NotificationCenterProps } from './components/NotificationCenter';
+export { NotificationRow } from './components/NotificationRow';
+export type { NotificationRowProps } from './components/NotificationRow';
+export { BellIcon } from './components/icons/BellIcon';
+export type { BellIconProps } from './components/icons/BellIcon';
+export {
+  NOTIFICATION_PRESENTATION,
+  NOTIFICATION_TONES,
+  formatRelativeTime,
+  isCredentialNotification,
+  toCredentialNotification,
+} from './types/notifications';
+export type {
+  CredentialNotification,
+  CredentialNotificationType,
+  NotificationPresentation,
+  NotificationTone,
+} from './types/notifications';
+export { NotificationStream, parseNotificationPayload } from './services/notificationStream';
+export type {
+  NotificationStreamOptions,
+  NotificationStreamStatus,
+} from './services/notificationStream';
+export {
+  useNotifications,
+  mergeNotification,
+  readStoredNotifications,
+  writeStoredNotifications,
+} from './hooks/useNotifications';
+export type {
+  UseNotificationsOptions,
+  UseNotificationsResult,
+} from './hooks/useNotifications';
 
 // Pages
 export { Dashboard } from './pages/Dashboard';
@@ -58,3 +108,48 @@ export {
   useReputation,
   useCompliance,
 } from './hooks/useStellarIdentity';
+
+// Analytics
+export { AnalyticsDashboard } from './components/AnalyticsDashboard';
+export type {
+  AnalyticsDashboardProps,
+  AnalyticsExportPayload,
+} from './components/AnalyticsDashboard';
+export { MetricCard, formatChange, inferTone } from './components/MetricCard';
+export type { MetricCardProps } from './components/MetricCard';
+export { LineChart } from './components/charts/LineChart';
+export type { LineChartProps } from './components/charts/LineChart';
+export { BarChart } from './components/charts/BarChart';
+export type { BarChartProps } from './components/charts/BarChart';
+export { DonutChart } from './components/charts/DonutChart';
+export type { DonutChartProps, DonutSegment } from './components/charts/DonutChart';
+export {
+  DATE_RANGE_PRESETS,
+  MS_PER_DAY,
+  filterSeriesByRange,
+  formatDateLabel,
+  formatNumber,
+  formatPercent,
+  getDateRangeBounds,
+  presetLabel,
+  successRate,
+  summariseSeries,
+} from './types/analytics';
+export type {
+  AnalyticsDataset,
+  DateRange,
+  DateRangePreset,
+  SeriesSummary,
+  TimeSeriesPoint,
+  VerificationBreakdown,
+} from './types/analytics';
+export {
+  downloadText,
+  exportSeriesToCsv,
+  exportSvgElementToPng,
+  intrinsicSize,
+  serializeSvg,
+  seriesToCsv,
+  svgElementToPngBlob,
+  triggerDownload,
+} from './utils/analyticsExport';

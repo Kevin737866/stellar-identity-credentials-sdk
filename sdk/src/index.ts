@@ -431,3 +431,7 @@ export class StellarIdentitySDK {
     return recommendations;
   }
 }
+
+// W3C Bitstring Status List (#267)
+export { StatusListClient } from './statusListClient';
+export type { StatusListMetadata } from './statusListClient';
