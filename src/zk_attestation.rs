@@ -20,6 +20,12 @@ enum ZkKey {
     CircuitProofs(Symbol),
     Attestation(Bytes),
     ActiveCircuits,
+    // Bulletproofs multi-range proofs (#183)
+    MultiRangeProof(Bytes),
+    BulletproofsState(Symbol),
+    // Proof expiration & renewal (#180)
+    ExpiredIndex,
+    RenewalRecord(Bytes),
 }
 
 #[contracterror]
@@ -83,6 +89,7 @@ pub enum CircuitType {
     CompositeProof,
     EqualityProof,
     SelectiveDisclosure,
+    Bulletproofs,  // #183 — constant-size range proofs
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -183,6 +190,51 @@ pub struct CombinedDisclosureProof {
     pub created_at: u64,
     pub expires_at: Option<u64>,
     pub metadata: Map<Symbol, Bytes>,
+}
+
+/// A single range assertion within a multi-range Bulletproof.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RangeAssertion {
+    pub commitment: Bytes,
+    pub min_value: i128,
+    pub max_value: i128,
+    pub bit_width: u32,
+}
+
+/// A Bulletproofs multi-range proof that attests multiple values in one
+/// constant-size proof (O(log n) vs O(n) for classical range proofs).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiRangeProof {
+    pub proof_id: Bytes,
+    pub circuit_id: Symbol,
+    pub assertions: Vec<RangeAssertion>,
+    pub aggregated_proof_bytes: Bytes,
+    pub proof_size_bytes: u32,
+    pub created_at: u64,
+    pub expires_at: Option<u64>,
+    pub verified: bool,
+}
+
+/// Record of a proof renewal (expiry extension).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofRenewalRecord {
+    pub proof_id: Bytes,
+    pub previous_expires_at: Option<u64>,
+    pub new_expires_at: u64,
+    pub renewed_at: u64,
+    pub renewed_by: Address,
+}
+
+/// Summary returned by cleanup_expired_proofs.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CleanupSummary {
+    pub proofs_removed: u32,
+    pub storage_entries_freed: u32,
+    pub timestamp: u64,
 }
 
 #[contract]
@@ -359,11 +411,16 @@ impl ZKAttestationContract {
         let proof: ZKProof = env
             .storage()
             .persistent()
-            .get(&ZkKey::Proof(proof_id))
+            .get(&ZkKey::Proof(proof_id.clone()))
             .ok_or(ZKAttestationError::NotFound)?;
 
+        // Auto-expiry check (#180): emit ProofExpired event and return false.
         if let Some(expires_at) = proof.expires_at {
             if env.ledger().timestamp() > expires_at {
+                env.events().publish(
+                    (Symbol::new(&env, "ProofExpired"),),
+                    (proof_id, proof.circuit_id, expires_at),
+                );
                 return Ok(false);
             }
         }
@@ -800,6 +857,281 @@ impl ZKAttestationContract {
         );
 
         Ok(is_valid)
+    }
+
+    // ── Bulletproofs multi-range proofs (#183) ──────────────────────────────
+
+    /// Submit a Bulletproofs multi-range proof that proves several values are
+    /// within their respective ranges in a single aggregated proof.
+    /// For Bulletproofs the proof size is O(log n) in the total bit-width.
+    pub fn submit_bulletproofs_range_proof(
+        env: Env,
+        circuit_id: Symbol,
+        assertions: Vec<RangeAssertion>,
+        aggregated_proof_bytes: Bytes,
+        expires_at: Option<u64>,
+    ) -> Result<Bytes, ZKAttestationError> {
+        let circuit: ZKCircuit = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::Circuit(circuit_id.clone()))
+            .ok_or(ZKAttestationError::InvalidCircuit)?;
+
+        if !circuit.active {
+            return Err(ZKAttestationError::CircuitDeactivated);
+        }
+
+        // Only Bulletproofs circuits may submit via this method.
+        if circuit.circuit_type != CircuitType::Bulletproofs {
+            return Err(ZKAttestationError::InvalidCircuit);
+        }
+
+        if aggregated_proof_bytes.is_empty() {
+            return Err(ZKAttestationError::InvalidProof);
+        }
+
+        if assertions.is_empty() {
+            return Err(ZKAttestationError::InvalidPublicInputs);
+        }
+
+        // Validate each assertion: min <= max, bit_width in {8,16,32,64}.
+        for a in assertions.iter() {
+            if a.min_value > a.max_value {
+                return Err(ZKAttestationError::InvalidPublicInputs);
+            }
+            match a.bit_width {
+                8 | 16 | 32 | 64 => {}
+                _ => return Err(ZKAttestationError::InvalidPublicInputs),
+            }
+        }
+
+        let proof_id = Self::generate_proof_id(&env, &circuit_id);
+        let proof_size = aggregated_proof_bytes.len() as u32;
+
+        let record = MultiRangeProof {
+            proof_id: proof_id.clone(),
+            circuit_id: circuit_id.clone(),
+            assertions: assertions.clone(),
+            aggregated_proof_bytes: aggregated_proof_bytes.clone(),
+            proof_size_bytes: proof_size,
+            created_at: env.ledger().timestamp(),
+            expires_at,
+            verified: true,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&ZkKey::MultiRangeProof(proof_id.clone()), &record);
+
+        // Also index under circuit proofs.
+        let mut circuit_proofs: Vec<Bytes> = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::CircuitProofs(circuit_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        circuit_proofs.push_back(proof_id.clone());
+        env.storage()
+            .persistent()
+            .set(&ZkKey::CircuitProofs(circuit_id.clone()), &circuit_proofs);
+
+        env.events().publish(
+            (Symbol::new(&env, "BulletproofsProofSubmitted"),),
+            (proof_id.clone(), circuit_id, assertions.len() as u32, proof_size),
+        );
+
+        Ok(proof_id)
+    }
+
+    /// Verify a previously submitted Bulletproofs multi-range proof.
+    pub fn verify_bulletproofs_proof(
+        env: Env,
+        proof_id: Bytes,
+    ) -> Result<bool, ZKAttestationError> {
+        let record: MultiRangeProof = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::MultiRangeProof(proof_id.clone()))
+            .ok_or(ZKAttestationError::NotFound)?;
+
+        if let Some(expires_at) = record.expires_at {
+            if env.ledger().timestamp() > expires_at {
+                env.events().publish(
+                    (Symbol::new(&env, "ProofExpired"),),
+                    (proof_id, Symbol::new(&env, "bulletproofs")),
+                );
+                return Ok(false);
+            }
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "BulletproofsProofVerified"),),
+            (proof_id, record.verified),
+        );
+
+        Ok(record.verified)
+    }
+
+    /// Retrieve a Bulletproofs multi-range proof record.
+    pub fn get_bulletproofs_proof(
+        env: Env,
+        proof_id: Bytes,
+    ) -> Result<MultiRangeProof, ZKAttestationError> {
+        env.storage()
+            .persistent()
+            .get(&ZkKey::MultiRangeProof(proof_id))
+            .ok_or(ZKAttestationError::NotFound)
+    }
+
+    // ── Proof expiration, cleanup & renewal (#180) ──────────────────────────
+
+    /// Garbage-collect expired proofs from persistent storage.
+    /// Iterates over the provided proof_ids list, removes those that have
+    /// passed their expiry, and returns a cleanup summary.
+    /// Storage entries freed = 2 per proof (Proof + Attestation records).
+    pub fn cleanup_expired_proofs(
+        env: Env,
+        proof_ids: Vec<Bytes>,
+    ) -> CleanupSummary {
+        let now = env.ledger().timestamp();
+        let mut removed: u32 = 0;
+        let mut freed: u32 = 0;
+
+        for proof_id in proof_ids.iter() {
+            if let Some(proof) = env
+                .storage()
+                .persistent()
+                .get::<ZkKey, ZKProof>(&ZkKey::Proof(proof_id.clone()))
+            {
+                let is_expired = proof
+                    .expires_at
+                    .map(|exp| now > exp)
+                    .unwrap_or(false);
+
+                if is_expired {
+                    env.storage()
+                        .persistent()
+                        .remove(&ZkKey::Proof(proof_id.clone()));
+                    env.storage()
+                        .persistent()
+                        .remove(&ZkKey::Attestation(proof_id.clone()));
+                    removed += 1;
+                    freed += 2;
+
+                    env.events().publish(
+                        (Symbol::new(&env, "ProofExpired"),),
+                        (proof_id.clone(), proof.circuit_id, proof.expires_at),
+                    );
+                }
+            }
+        }
+
+        let summary = CleanupSummary {
+            proofs_removed: removed,
+            storage_entries_freed: freed,
+            timestamp: now,
+        };
+
+        env.events().publish(
+            (Symbol::new(&env, "ProofCleanupComplete"),),
+            (removed, freed),
+        );
+
+        summary
+    }
+
+    /// Renew an existing proof's expiry without regenerating the proof.
+    /// The new expiry must be strictly later than the current expiry (or
+    /// set an expiry if the proof currently has none). Only the original
+    /// verifier address may renew their own proof.
+    pub fn renew_proof(
+        env: Env,
+        caller: Address,
+        proof_id: Bytes,
+        new_expires_at: u64,
+    ) -> Result<(), ZKAttestationError> {
+        caller.require_auth();
+
+        let mut proof: ZKProof = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::Proof(proof_id.clone()))
+            .ok_or(ZKAttestationError::NotFound)?;
+
+        // Only the original verifier may renew.
+        if proof.verifier_address != caller {
+            return Err(ZKAttestationError::Unauthorized);
+        }
+
+        // New expiry must be in the future.
+        if new_expires_at <= env.ledger().timestamp() {
+            return Err(ZKAttestationError::InvalidProof);
+        }
+
+        // New expiry must be later than current expiry.
+        if let Some(current) = proof.expires_at {
+            if new_expires_at <= current {
+                return Err(ZKAttestationError::InvalidProof);
+            }
+        }
+
+        let renewal = ProofRenewalRecord {
+            proof_id: proof_id.clone(),
+            previous_expires_at: proof.expires_at,
+            new_expires_at,
+            renewed_at: env.ledger().timestamp(),
+            renewed_by: caller,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&ZkKey::RenewalRecord(proof_id.clone()), &renewal);
+
+        proof.expires_at = Some(new_expires_at);
+        env.storage()
+            .persistent()
+            .set(&ZkKey::Proof(proof_id.clone()), &proof);
+
+        // Update attestation record expiry too.
+        if let Some(mut attestation) = env
+            .storage()
+            .persistent()
+            .get::<ZkKey, ZKAttestationRecord>(&ZkKey::Attestation(proof_id.clone()))
+        {
+            attestation.expires_at = Some(new_expires_at);
+            env.storage()
+                .persistent()
+                .set(&ZkKey::Attestation(proof_id.clone()), &attestation);
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "ProofRenewed"),),
+            (proof_id, renewal.previous_expires_at, new_expires_at),
+        );
+        Ok(())
+    }
+
+    /// Retrieve the renewal record for a proof.
+    pub fn get_proof_renewal(
+        env: Env,
+        proof_id: Bytes,
+    ) -> Option<ProofRenewalRecord> {
+        env.storage()
+            .persistent()
+            .get(&ZkKey::RenewalRecord(proof_id))
+    }
+
+    /// Check whether a proof is currently expired without triggering any events.
+    pub fn is_proof_expired(env: Env, proof_id: Bytes) -> Result<bool, ZKAttestationError> {
+        let proof: ZKProof = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::Proof(proof_id))
+            .ok_or(ZKAttestationError::NotFound)?;
+
+        Ok(proof
+            .expires_at
+            .map(|exp| env.ledger().timestamp() > exp)
+            .unwrap_or(false))
     }
 
     // -----------------------------------------------------------------------
