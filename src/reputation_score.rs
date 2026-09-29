@@ -77,6 +77,34 @@ pub struct Config {
 }
 
 #[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum ReputationTier {
+    Bronze = 0,
+    Silver = 1,
+    Gold = 2,
+    Platinum = 3,
+    Diamond = 4,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TierThresholds {
+    pub bronze_min: u32,
+    pub silver_min: u32,
+    pub gold_min: u32,
+    pub platinum_min: u32,
+    pub diamond_min: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TierRequirements {
+    pub tier: ReputationTier,
+    pub min_score: u32,
+    pub max_score: u32,
+}
+
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
     Config,
@@ -86,6 +114,7 @@ pub enum DataKey {
     History(Address),
     Trust(Address),
     Population,
+    TierThresholds,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -299,6 +328,129 @@ impl ReputationScore {
         Ok(profile.score >= scaled)
     }
 
+    /// Get the current reputation tier for an address.
+    pub fn get_reputation_tier(env: Env, address: Address) -> ReputationTier {
+        let score = Self::get_reputation_score(env.clone(), address);
+        let raw_score = score / SCORE_SCALE;
+        Self::tier_from_raw_score(&env, raw_score)
+    }
+
+    /// Return min/max score requirements for a given tier.
+    pub fn get_tier_requirements(env: Env, tier: ReputationTier) -> TierRequirements {
+        let thresholds = Self::get_tier_thresholds(env);
+        match tier {
+            ReputationTier::Bronze => TierRequirements {
+                tier,
+                min_score: thresholds.bronze_min,
+                max_score: if thresholds.silver_min > 0 {
+                    thresholds.silver_min - 1
+                } else {
+                    0
+                },
+            },
+            ReputationTier::Silver => TierRequirements {
+                tier,
+                min_score: thresholds.silver_min,
+                max_score: if thresholds.gold_min > 0 {
+                    thresholds.gold_min - 1
+                } else {
+                    0
+                },
+            },
+            ReputationTier::Gold => TierRequirements {
+                tier,
+                min_score: thresholds.gold_min,
+                max_score: if thresholds.platinum_min > 0 {
+                    thresholds.platinum_min - 1
+                } else {
+                    0
+                },
+            },
+            ReputationTier::Platinum => TierRequirements {
+                tier,
+                min_score: thresholds.platinum_min,
+                max_score: if thresholds.diamond_min > 0 {
+                    thresholds.diamond_min - 1
+                } else {
+                    0
+                },
+            },
+            ReputationTier::Diamond => TierRequirements {
+                tier,
+                min_score: thresholds.diamond_min,
+                max_score: 1000,
+            },
+        }
+    }
+
+    /// Get currently configured tier thresholds (default: 0, 300, 600, 800, 950).
+    pub fn get_tier_thresholds(env: Env) -> TierThresholds {
+        env.storage()
+            .instance()
+            .get(&DataKey::TierThresholds)
+            .unwrap_or(TierThresholds {
+                bronze_min: 0,
+                silver_min: 300,
+                gold_min: 600,
+                platinum_min: 800,
+                diamond_min: 950,
+            })
+    }
+
+    /// Set configurable tier thresholds. Admin only.
+    pub fn set_tier_thresholds(
+        env: Env,
+        caller: Address,
+        thresholds: TierThresholds,
+    ) -> Result<(), ReputationScoreError> {
+        caller.require_auth();
+        let admin = Self::get_admin(&env);
+        if caller != admin {
+            return Err(ReputationScoreError::NotAdmin);
+        }
+
+        if !(thresholds.bronze_min <= thresholds.silver_min
+            && thresholds.silver_min <= thresholds.gold_min
+            && thresholds.gold_min <= thresholds.platinum_min
+            && thresholds.platinum_min <= thresholds.diamond_min
+            && thresholds.diamond_min <= 1000)
+        {
+            return Err(ReputationScoreError::InvalidInput);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::TierThresholds, &thresholds);
+
+        env.events().publish(
+            (Symbol::new(&env, "TierThresholdsConfigured"),),
+            (
+                thresholds.bronze_min,
+                thresholds.silver_min,
+                thresholds.gold_min,
+                thresholds.platinum_min,
+                thresholds.diamond_min,
+            ),
+        );
+
+        Ok(())
+    }
+
+    fn tier_from_raw_score(env: &Env, raw_score: u32) -> ReputationTier {
+        let thresholds = Self::get_tier_thresholds(env.clone());
+        if raw_score >= thresholds.diamond_min {
+            ReputationTier::Diamond
+        } else if raw_score >= thresholds.platinum_min {
+            ReputationTier::Platinum
+        } else if raw_score >= thresholds.gold_min {
+            ReputationTier::Gold
+        } else if raw_score >= thresholds.silver_min {
+            ReputationTier::Silver
+        } else {
+            ReputationTier::Bronze
+        }
+    }
+
     // ── Mutations ─────────────────────────────────────────────────────────────
 
     /// Record a transaction outcome and update the caller's reputation score.
@@ -324,6 +476,8 @@ impl ReputationScore {
 
         let config = Self::get_config(&env);
         let mut profile = Self::load_profile(&env, address.clone())?;
+        let old_raw = profile.score / SCORE_SCALE;
+        let old_tier = Self::tier_from_raw_score(&env, old_raw);
 
         profile.total_transactions += 1;
         if success {
@@ -357,9 +511,23 @@ impl ReputationScore {
         );
 
         env.events().publish(
-            (Symbol::new(&env, "ReputationScoreUpdated"), address),
+            (Symbol::new(&env, "ReputationScoreUpdated"), address.clone()),
             (profile.score, success),
         );
+
+        let new_raw = profile.score / SCORE_SCALE;
+        let new_tier = Self::tier_from_raw_score(&env, new_raw);
+        if new_tier > old_tier {
+            env.events().publish(
+                (Symbol::new(&env, "TierUpgraded"), address),
+                (old_tier, new_tier, new_raw),
+            );
+        } else if new_tier < old_tier {
+            env.events().publish(
+                (Symbol::new(&env, "TierDowngraded"), address),
+                (old_tier, new_tier, new_raw),
+            );
+        }
 
         ReentrancyGuard::release(&env, "update_rep");
         Ok(profile.score)
@@ -378,6 +546,8 @@ impl ReputationScore {
 
         let config = Self::get_config(&env);
         let mut profile = Self::load_profile(&env, address.clone())?;
+        let old_raw = profile.score / SCORE_SCALE;
+        let old_tier = Self::tier_from_raw_score(&env, old_raw);
 
         profile.total_credentials += 1;
         if valid {
@@ -398,9 +568,23 @@ impl ReputationScore {
         Self::append_history(&env, &address, profile.score, credential_type.clone());
 
         env.events().publish(
-            (Symbol::new(&env, "ReputationScoreUpdated"), address),
+            (Symbol::new(&env, "ReputationScoreUpdated"), address.clone()),
             (profile.score, credential_type, valid),
         );
+
+        let new_raw = profile.score / SCORE_SCALE;
+        let new_tier = Self::tier_from_raw_score(&env, new_raw);
+        if new_tier > old_tier {
+            env.events().publish(
+                (Symbol::new(&env, "TierUpgraded"), address),
+                (old_tier, new_tier, new_raw),
+            );
+        } else if new_tier < old_tier {
+            env.events().publish(
+                (Symbol::new(&env, "TierDowngraded"), address),
+                (old_tier, new_tier, new_raw),
+            );
+        }
 
         Ok(profile.score)
     }
@@ -1145,5 +1329,115 @@ mod tests {
         let intruder = Address::generate(&env);
         let result = ReputationScore::update_config(env.clone(), intruder, default_config());
         assert_eq!(result.unwrap_err(), ReputationScoreError::NotAdmin);
+    }
+
+    // ── Reputation Tier System (#270) ─────────────────────────────────────────
+
+    #[test]
+    fn test_tier_boundaries() {
+        let env = setup_env();
+        let (_, user) = bootstrap(&env);
+
+        assert_eq!(
+            ReputationScore::get_reputation_tier(env.clone(), user.clone()),
+            ReputationTier::Bronze
+        );
+
+        assert_eq!(ReputationScore::tier_from_raw_score(&env, 0), ReputationTier::Bronze);
+        assert_eq!(ReputationScore::tier_from_raw_score(&env, 299), ReputationTier::Bronze);
+        assert_eq!(ReputationScore::tier_from_raw_score(&env, 300), ReputationTier::Silver);
+        assert_eq!(ReputationScore::tier_from_raw_score(&env, 599), ReputationTier::Silver);
+        assert_eq!(ReputationScore::tier_from_raw_score(&env, 600), ReputationTier::Gold);
+        assert_eq!(ReputationScore::tier_from_raw_score(&env, 799), ReputationTier::Gold);
+        assert_eq!(ReputationScore::tier_from_raw_score(&env, 800), ReputationTier::Platinum);
+        assert_eq!(ReputationScore::tier_from_raw_score(&env, 949), ReputationTier::Platinum);
+        assert_eq!(ReputationScore::tier_from_raw_score(&env, 950), ReputationTier::Diamond);
+        assert_eq!(ReputationScore::tier_from_raw_score(&env, 1000), ReputationTier::Diamond);
+    }
+
+    #[test]
+    fn test_tier_upgrade_and_downgrade_events() {
+        let env = setup_env();
+        let (admin, user) = bootstrap(&env);
+
+        ReputationScore::set_tier_thresholds(
+            env.clone(),
+            admin,
+            TierThresholds {
+                bronze_min: 0,
+                silver_min: 90,
+                gold_min: 150,
+                platinum_min: 200,
+                diamond_min: 250,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            ReputationScore::get_reputation_tier(env.clone(), user.clone()),
+            ReputationTier::Bronze
+        );
+
+        let _ = ReputationScore::update_transaction_reputation(env.clone(), user.clone(), true, 100).unwrap();
+        assert_eq!(
+            ReputationScore::get_reputation_tier(env.clone(), user.clone()),
+            ReputationTier::Silver
+        );
+
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(&env, "TierUpgraded")))
+        }));
+
+        let _ = ReputationScore::update_transaction_reputation(env.clone(), user.clone(), false, 50).unwrap();
+        assert_eq!(
+            ReputationScore::get_reputation_tier(env.clone(), user.clone()),
+            ReputationTier::Bronze
+        );
+
+        let events_after = env.events().all();
+        assert!(events_after.iter().any(|e| {
+            let topics = e.0.clone();
+            topics.contains(&soroban_sdk::Val::Symbol(Symbol::new(&env, "TierDowngraded")))
+        }));
+    }
+
+    #[test]
+    fn test_threshold_reconfiguration() {
+        let env = setup_env();
+        let (admin, _) = bootstrap(&env);
+        let non_admin = Address::generate(&env);
+
+        let new_thresholds = TierThresholds {
+            bronze_min: 0,
+            silver_min: 250,
+            gold_min: 500,
+            platinum_min: 750,
+            diamond_min: 900,
+        };
+
+        let res = ReputationScore::set_tier_thresholds(env.clone(), non_admin, new_thresholds.clone());
+        assert_eq!(res.unwrap_err(), ReputationScoreError::NotAdmin);
+
+        assert!(ReputationScore::set_tier_thresholds(env.clone(), admin, new_thresholds.clone()).is_ok());
+        let fetched = ReputationScore::get_tier_thresholds(env);
+        assert_eq!(fetched, new_thresholds);
+    }
+
+    #[test]
+    fn test_querying_tier_requirements() {
+        let env = setup_env();
+        bootstrap(&env);
+
+        let bronze_req = ReputationScore::get_tier_requirements(env.clone(), ReputationTier::Bronze);
+        assert_eq!(bronze_req.tier, ReputationTier::Bronze);
+        assert_eq!(bronze_req.min_score, 0);
+        assert_eq!(bronze_req.max_score, 299);
+
+        let diamond_req = ReputationScore::get_tier_requirements(env, ReputationTier::Diamond);
+        assert_eq!(diamond_req.tier, ReputationTier::Diamond);
+        assert_eq!(diamond_req.min_score, 950);
+        assert_eq!(diamond_req.max_score, 1000);
     }
 }

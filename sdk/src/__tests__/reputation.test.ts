@@ -338,6 +338,31 @@ describe('ReputationClient', () => {
     it('should return Seedling tier for score < 300', () => {
       expect(client.getReputationTier(150).tier).toBe('Seedling');
     });
+
+    it('should categorize score into ReputationTier enum values correctly', () => {
+      expect(client.getTierFromScore(960)).toBe('Diamond');
+      expect(client.getTierFromScore(850)).toBe('Platinum');
+      expect(client.getTierFromScore(650)).toBe('Gold');
+      expect(client.getTierFromScore(350)).toBe('Silver');
+      expect(client.getTierFromScore(200)).toBe('Bronze');
+    });
+
+    it('should query tier requirements for tiers', async () => {
+      const diamondReq = await client.getTierRequirements('Diamond' as any);
+      expect(diamondReq.minScore).toBe(950);
+      expect(diamondReq.maxScore).toBe(1000);
+
+      const bronzeReq = await client.getTierRequirements('Bronze' as any);
+      expect(bronzeReq.minScore).toBe(0);
+      expect(bronzeReq.maxScore).toBe(299);
+    });
+
+    it('should resolve reputation tier for address asynchronously', async () => {
+      stellarSdk.scValToNative.mockReturnValue(9600n);
+      const res = await client.getReputationTier(VALID_ADDRESS);
+      expect(res.tier).toBe('Diamond');
+      expect(res.color).toBe('#06B6D4');
+    });
   });
 
   describe('meetsReputationThreshold', () => {

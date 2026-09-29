@@ -24,3 +24,5 @@
 [BENCH] submit_proof
 [BENCH] verify_proof
 [BENCH] batch_verify_proofs(2)
+[BENCH] groth16_verify_bls12_381
+[BENCH] groth16_verify_bn254

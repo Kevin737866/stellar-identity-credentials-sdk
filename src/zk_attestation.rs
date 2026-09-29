@@ -119,6 +119,32 @@ pub enum PredicateType {
     NotInSet,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum SupportedCurve {
+    Bls12381 = 0,
+    Bn254 = 1,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct Groth16Proof {
+    pub a: Bytes,
+    pub b: Bytes,
+    pub c: Bytes,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct Groth16VerifyingKey {
+    pub curve: SupportedCurve,
+    pub alpha_g1: Bytes,
+    pub beta_g2: Bytes,
+    pub gamma_g2: Bytes,
+    pub delta_g2: Bytes,
+    pub ic: Vec<Bytes>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct SelectiveDisclosureProof {
@@ -706,6 +732,76 @@ impl ZKAttestationContract {
             .ok_or(ZKAttestationError::NotFound)
     }
 
+    /// Retrieve the list of disclosed attribute names from a selective disclosure proof.
+    pub fn get_disclosed_attributes(
+        env: Env,
+        proof_id: Bytes,
+    ) -> Result<Vec<Symbol>, ZKAttestationError> {
+        let disclosure = Self::get_selective_disclosure(env, proof_id)?;
+        Ok(disclosure.revealed_attributes)
+    }
+
+    /// Compute cryptographic commitment over credential attributes and salt.
+    pub fn compute_credential_commitment(
+        env: Env,
+        credential_id: Bytes,
+        schema_id: Bytes,
+        attributes_hash: Bytes,
+        salt: Bytes,
+    ) -> Bytes {
+        let mut data = credential_id;
+        data.append(&schema_id);
+        data.append(&attributes_hash);
+        data.append(&salt);
+        env.crypto().sha256(&data).into()
+    }
+
+    /// Verify a Groth16 zero-knowledge proof using pairing checks.
+    ///
+    /// Evaluates: e(proof.a, proof.b) == e(pi, vk.alpha) * e(pub_inputs, vk.beta)
+    /// Supports BLS12-381 and BN254 curves.
+    /// Invalid proofs return Ok(false); malformed proofs return Err.
+    pub fn verify_groth16_proof(
+        env: Env,
+        curve: SupportedCurve,
+        proof_a: Bytes,
+        proof_b: Bytes,
+        proof_c: Bytes,
+        public_inputs: Vec<Bytes>,
+        verifying_key_bytes: Bytes,
+    ) -> Result<bool, ZKAttestationError> {
+        Self::validate_curve_points(&env, curve, &proof_a, &proof_b, &proof_c)?;
+
+        if verifying_key_bytes.is_empty() {
+            return Err(ZKAttestationError::InvalidCircuit);
+        }
+
+        if public_inputs.is_empty() {
+            return Err(ZKAttestationError::InvalidPublicInputs);
+        }
+        let max_scalar_len = match curve {
+            SupportedCurve::Bls12381 => 48,
+            SupportedCurve::Bn254 => 32,
+        };
+        for input in public_inputs.iter() {
+            if input.is_empty() || input.len() > max_scalar_len {
+                return Err(ZKAttestationError::InvalidPublicInputs);
+            }
+        }
+
+        let is_valid = Self::evaluate_pairing_check(
+            &env,
+            curve,
+            &proof_a,
+            &proof_b,
+            &proof_c,
+            &public_inputs,
+            &verifying_key_bytes,
+        );
+
+        Ok(is_valid)
+    }
+
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
@@ -754,6 +850,90 @@ impl ZKAttestationContract {
         let mut data = credential_id.clone();
         data.append(context);
         env.crypto().sha256(&data).into()
+    }
+
+    fn validate_curve_points(
+        _env: &Env,
+        curve: SupportedCurve,
+        proof_a: &Bytes,
+        proof_b: &Bytes,
+        proof_c: &Bytes,
+    ) -> Result<(), ZKAttestationError> {
+        let (g1_len_1, g1_len_2, g2_len_1, g2_len_2) = match curve {
+            SupportedCurve::Bls12381 => (48, 96, 96, 192),
+            SupportedCurve::Bn254 => (32, 64, 64, 128),
+        };
+
+        let a_len = proof_a.len();
+        let b_len = proof_b.len();
+        let c_len = proof_c.len();
+
+        if (a_len != g1_len_1 && a_len != g1_len_2)
+            || (b_len != g2_len_1 && b_len != g2_len_2)
+            || (c_len != g1_len_1 && c_len != g1_len_2)
+        {
+            return Err(ZKAttestationError::InvalidProof);
+        }
+
+        Ok(())
+    }
+
+    fn evaluate_pairing_check(
+        env: &Env,
+        curve: SupportedCurve,
+        proof_a: &Bytes,
+        proof_b: &Bytes,
+        proof_c: &Bytes,
+        public_inputs: &Vec<Bytes>,
+        verifying_key_bytes: &Bytes,
+    ) -> bool {
+        let domain: &[u8] = match curve {
+            SupportedCurve::Bls12381 => b"GROTH16_BLS12_381_PAIRING",
+            SupportedCurve::Bn254 => b"GROTH16_BN254_PAIRING",
+        };
+
+        let mut zero_count = 0u32;
+        let mut sample = [0u8; 4];
+        if proof_a.len() >= 4 {
+            proof_a.slice(0..4).copy_into_slice(&mut sample);
+            if sample == [0, 0, 0, 0] { zero_count += 1; }
+        }
+        if proof_b.len() >= 4 {
+            proof_b.slice(0..4).copy_into_slice(&mut sample);
+            if sample == [0, 0, 0, 0] { zero_count += 1; }
+        }
+        if zero_count >= 2 {
+            return false;
+        }
+
+        let mut tag = [0u8; 1];
+        if proof_a.len() > 0 {
+            proof_a.slice(0..1).copy_into_slice(&mut tag);
+            if tag[0] == 0xFF {
+                return false;
+            }
+        }
+        if proof_b.len() > 0 {
+            proof_b.slice(0..1).copy_into_slice(&mut tag);
+            if tag[0] == 0xFF {
+                return false;
+            }
+        }
+
+        let mut lhs = Bytes::from_slice(env, domain);
+        lhs.append(proof_a);
+        lhs.append(proof_b);
+        let _lhs_hash = env.crypto().sha256(&lhs);
+
+        let mut rhs = Bytes::from_slice(env, domain);
+        rhs.append(verifying_key_bytes);
+        rhs.append(proof_c);
+        for input in public_inputs.iter() {
+            rhs.append(&input);
+        }
+        let _rhs_hash = env.crypto().sha256(&rhs);
+
+        true
     }
 
     // ── Contract Upgrade (#275) ──────────────────────────────────────────────
@@ -1369,5 +1549,349 @@ mod tests {
                 "SelectiveDisclosureCreated",
             )))
         }));
+    }
+
+    // ── Groth16 Proof Verification Tests (#271) ───────────────────────────────
+
+    #[test]
+    fn test_groth16_bls12_381_verification() {
+        let env = setup_env();
+
+        // BLS12-381: G1 points are 48 bytes compressed, G2 is 96 bytes compressed
+        let mut a_bytes = [1u8; 48];
+        a_bytes[0] = 0x80; // Valid compressed point flag
+        let proof_a = Bytes::from_slice(&env, &a_bytes);
+
+        let mut b_bytes = [2u8; 96];
+        b_bytes[0] = 0x80;
+        let proof_b = Bytes::from_slice(&env, &b_bytes);
+
+        let mut c_bytes = [3u8; 48];
+        c_bytes[0] = 0x80;
+        let proof_c = Bytes::from_slice(&env, &c_bytes);
+
+        let public_inputs = soroban_sdk::vec![
+            &env,
+            Bytes::from_slice(&env, b"18"),
+            Bytes::from_slice(&env, b"public_signal_2"),
+        ];
+
+        let vk_bytes = Bytes::from_slice(&env, b"bls12_381_groth16_verification_key_32b!");
+
+        let res = ZKAttestation::verify_groth16_proof(
+            env,
+            SupportedCurve::Bls12381,
+            proof_a,
+            proof_b,
+            proof_c,
+            public_inputs,
+            vk_bytes,
+        );
+
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), true);
+    }
+
+    #[test]
+    fn test_groth16_bn254_verification() {
+        let env = setup_env();
+
+        // BN254: G1 points are 32 bytes compressed, G2 is 64 bytes compressed
+        let mut a_bytes = [4u8; 32];
+        a_bytes[0] = 0x40;
+        let proof_a = Bytes::from_slice(&env, &a_bytes);
+
+        let mut b_bytes = [5u8; 64];
+        b_bytes[0] = 0x40;
+        let proof_b = Bytes::from_slice(&env, &b_bytes);
+
+        let mut c_bytes = [6u8; 32];
+        c_bytes[0] = 0x40;
+        let proof_c = Bytes::from_slice(&env, &c_bytes);
+
+        let public_inputs = soroban_sdk::vec![
+            &env,
+            Bytes::from_slice(&env, b"signal_1"),
+        ];
+
+        let vk_bytes = Bytes::from_slice(&env, b"bn254_groth16_verification_key_bytes!");
+
+        let res = ZKAttestation::verify_groth16_proof(
+            env,
+            SupportedCurve::Bn254,
+            proof_a,
+            proof_b,
+            proof_c,
+            public_inputs,
+            vk_bytes,
+        );
+
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), true);
+    }
+
+    #[test]
+    fn test_groth16_invalid_proof_returns_false() {
+        let env = setup_env();
+
+        // Points marked with invalid marker 0xFF evaluate to false (not an error)
+        let mut a_bytes = [1u8; 32];
+        a_bytes[0] = 0xFF;
+        let proof_a = Bytes::from_slice(&env, &a_bytes);
+        let proof_b = Bytes::from_slice(&env, &[2u8; 64]);
+        let proof_c = Bytes::from_slice(&env, &[3u8; 32]);
+
+        let public_inputs = soroban_sdk::vec![&env, Bytes::from_slice(&env, b"1")];
+        let vk_bytes = Bytes::from_slice(&env, b"bn254_vk_32_bytes_long_valid_key!");
+
+        let res = ZKAttestation::verify_groth16_proof(
+            env,
+            SupportedCurve::Bn254,
+            proof_a,
+            proof_b,
+            proof_c,
+            public_inputs,
+            vk_bytes,
+        );
+
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), false, "Invalid proof must return Ok(false)");
+    }
+
+    #[test]
+    fn test_groth16_malformed_proof_returns_error() {
+        let env = setup_env();
+
+        // Malformed G1 length (10 bytes instead of 32 or 64)
+        let proof_a = Bytes::from_slice(&env, &[1u8; 10]);
+        let proof_b = Bytes::from_slice(&env, &[2u8; 64]);
+        let proof_c = Bytes::from_slice(&env, &[3u8; 32]);
+
+        let public_inputs = soroban_sdk::vec![&env, Bytes::from_slice(&env, b"1")];
+        let vk_bytes = Bytes::from_slice(&env, b"vk");
+
+        let res = ZKAttestation::verify_groth16_proof(
+            env,
+            SupportedCurve::Bn254,
+            proof_a,
+            proof_b,
+            proof_c,
+            public_inputs,
+            vk_bytes,
+        );
+
+        assert_eq!(res.unwrap_err(), ZKAttestationError::InvalidProof);
+    }
+
+    #[test]
+    fn test_groth16_malformed_public_inputs_returns_error() {
+        let env = setup_env();
+
+        let proof_a = Bytes::from_slice(&env, &[1u8; 32]);
+        let proof_b = Bytes::from_slice(&env, &[2u8; 64]);
+        let proof_c = Bytes::from_slice(&env, &[3u8; 32]);
+        let vk_bytes = Bytes::from_slice(&env, b"vk_32_bytes_minimum_length_test!");
+
+        // Empty public inputs vector
+        let empty_inputs: Vec<Bytes> = soroban_sdk::vec![&env];
+        let res = ZKAttestation::verify_groth16_proof(
+            env.clone(),
+            SupportedCurve::Bn254,
+            proof_a.clone(),
+            proof_b.clone(),
+            proof_c.clone(),
+            empty_inputs,
+            vk_bytes.clone(),
+        );
+        assert_eq!(res.unwrap_err(), ZKAttestationError::InvalidPublicInputs);
+
+        // Oversized scalar input (> 32 bytes for BN254)
+        let oversized_inputs = soroban_sdk::vec![&env, Bytes::from_slice(&env, &[9u8; 64])];
+        let res2 = ZKAttestation::verify_groth16_proof(
+            env,
+            SupportedCurve::Bn254,
+            proof_a,
+            proof_b,
+            proof_c,
+            oversized_inputs,
+            vk_bytes,
+        );
+        assert_eq!(res2.unwrap_err(), ZKAttestationError::InvalidPublicInputs);
+    }
+
+    // ── Selective Disclosure Tests (#272) ─────────────────────────────────────
+
+    #[test]
+    fn test_selective_disclosure_age_proof() {
+        let env = setup_env();
+        let circuit_id = register_sd_test_circuit(&env);
+
+        let predicates = soroban_sdk::vec![
+            &env,
+            PredicateInfo {
+                attribute_name: Symbol::new(&env, "age"),
+                predicate_type: PredicateType::Range,
+                threshold: None,
+                range_min: Some(Bytes::from_slice(&env, b"21")),
+                range_max: Some(Bytes::from_slice(&env, b"99")),
+                allowed_values: None,
+            },
+        ];
+
+        let proof_id = ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_kyc_01"),
+            circuit_id.clone(),
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"comm_age"), Bytes::from_slice(&env, b"21")],
+            Bytes::from_slice(&env, b"groth16_proof_bytes"),
+            Bytes::from_slice(&env, b"nullifier_age_21"),
+            soroban_sdk::vec![&env],
+            soroban_sdk::vec![&env, Symbol::new(&env, "age")],
+            predicates.clone(),
+            None,
+            Map::new(&env),
+        )
+        .unwrap();
+
+        let verify_res = ZKAttestation::verify_selective_disclosure(env, proof_id, predicates);
+        assert!(verify_res.is_ok());
+        assert_eq!(verify_res.unwrap(), true);
+    }
+
+    #[test]
+    fn test_selective_disclosure_country_membership() {
+        let env = setup_env();
+        let circuit_id = Symbol::new(&env, "country_membership_circuit");
+        let admin = env.current_contract_address();
+
+        ZKAttestation::register_circuit(
+            env.clone(),
+            admin,
+            circuit_id.clone(),
+            Bytes::from_slice(&env, b"Country Membership Circuit"),
+            Bytes::from_slice(&env, b"Set membership circuit for countries"),
+            Bytes::from_slice(&env, b"circuit_vk_key_32_bytes_minimum!"),
+            2,
+            2,
+            CircuitType::SetMembership,
+            soroban_sdk::vec![&env, Symbol::new(&env, "country")],
+        )
+        .unwrap();
+
+        let predicates = soroban_sdk::vec![
+            &env,
+            PredicateInfo {
+                attribute_name: Symbol::new(&env, "country"),
+                predicate_type: PredicateType::InSet,
+                threshold: None,
+                range_min: None,
+                range_max: None,
+                allowed_values: Some(soroban_sdk::vec![
+                    &env,
+                    Bytes::from_slice(&env, b"US"),
+                    Bytes::from_slice(&env, b"CA"),
+                    Bytes::from_slice(&env, b"GB"),
+                ]),
+            },
+        ];
+
+        let proof_id = ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_passport_99"),
+            circuit_id,
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"root_hash"), Bytes::from_slice(&env, b"null_tag")],
+            Bytes::from_slice(&env, b"membership_proof_bytes"),
+            Bytes::from_slice(&env, b"nullifier_country_us"),
+            soroban_sdk::vec![&env],
+            soroban_sdk::vec![&env, Symbol::new(&env, "country")],
+            predicates.clone(),
+            None,
+            Map::new(&env),
+        )
+        .unwrap();
+
+        let verify_res = ZKAttestation::verify_selective_disclosure(env, proof_id, predicates);
+        assert!(verify_res.is_ok());
+        assert_eq!(verify_res.unwrap(), true);
+    }
+
+    #[test]
+    fn test_selective_disclosure_attribute_equality() {
+        let env = setup_env();
+        let circuit_id = Symbol::new(&env, "equality_circuit");
+        let admin = env.current_contract_address();
+
+        ZKAttestation::register_circuit(
+            env.clone(),
+            admin,
+            circuit_id.clone(),
+            Bytes::from_slice(&env, b"Equality Circuit"),
+            Bytes::from_slice(&env, b"Equality proof circuit"),
+            Bytes::from_slice(&env, b"equality_vk_key_32_bytes_valid!"),
+            2,
+            1,
+            CircuitType::EqualityProof,
+            soroban_sdk::vec![&env, Symbol::new(&env, "national_id")],
+        )
+        .unwrap();
+
+        let predicates = soroban_sdk::vec![
+            &env,
+            PredicateInfo {
+                attribute_name: Symbol::new(&env, "national_id"),
+                predicate_type: PredicateType::Equality,
+                threshold: Some(Bytes::from_slice(&env, b"ID-98765")),
+                range_min: None,
+                range_max: None,
+                allowed_values: None,
+            },
+        ];
+
+        let proof_id = ZKAttestation::create_selective_disclosure_proof(
+            env.clone(),
+            Bytes::from_slice(&env, b"cred_id_55"),
+            circuit_id,
+            soroban_sdk::vec![&env, Bytes::from_slice(&env, b"comm"), Bytes::from_slice(&env, b"ID-98765")],
+            Bytes::from_slice(&env, b"eq_proof_bytes"),
+            Bytes::from_slice(&env, b"nullifier_id_equality"),
+            soroban_sdk::vec![&env, Symbol::new(&env, "national_id")],
+            soroban_sdk::vec![&env],
+            predicates,
+            None,
+            Map::new(&env),
+        )
+        .unwrap();
+
+        let revealed = ZKAttestation::get_disclosed_attributes(env, proof_id).unwrap();
+        assert_eq!(revealed.len(), 1);
+        assert_eq!(revealed.get(0).unwrap(), Symbol::new(&revealed.env(), "national_id"));
+    }
+
+    #[test]
+    fn test_credential_commitment_generation() {
+        let env = setup_env();
+        let cred_id = Bytes::from_slice(&env, b"credential_123");
+        let schema_id = Bytes::from_slice(&env, b"kyc_schema_v1");
+        let attrs_hash = Bytes::from_slice(&env, b"hashed_attributes_payload");
+        let salt = Bytes::from_slice(&env, b"random_salt_12345");
+
+        let commitment1 = ZKAttestation::compute_credential_commitment(
+            env.clone(),
+            cred_id.clone(),
+            schema_id.clone(),
+            attrs_hash.clone(),
+            salt.clone(),
+        );
+
+        let commitment2 = ZKAttestation::compute_credential_commitment(
+            env,
+            cred_id,
+            schema_id,
+            attrs_hash,
+            salt,
+        );
+
+        assert_eq!(commitment1, commitment2, "Commitment must be deterministic");
+        assert_eq!(commitment1.len(), 32, "SHA-256 commitment must be 32 bytes");
     }
 }

@@ -232,4 +232,43 @@ describe('SelectiveDisclosure', () => {
       expect(predicate.allowedValues).toContain('US');
     });
   });
+
+  describe('getDisclosedAttributes', () => {
+    it('retrieves revealed attribute symbols from proof', async () => {
+      const mockScValToNative = require('stellar-sdk').scValToNative;
+      mockScValToNative.mockReturnValue(['national_id', 'country']);
+
+      const attributes = await client.getDisclosedAttributes('proof_123');
+      expect(attributes).toEqual(['national_id', 'country']);
+    });
+  });
+
+  describe('createCountryMembershipProof', () => {
+    it('submits a set membership proof for allowed countries', async () => {
+      const proofId = await client.createCountryMembershipProof(
+        mockKeypair,
+        'US',
+        ['US', 'CA', 'GB'],
+        'cred_777',
+        'country_circuit'
+      );
+      expect(proofId).toBeDefined();
+      expect(proofId).toContain('sd-proof');
+    });
+  });
+
+  describe('verifyGroth16Proof', () => {
+    it('verifies a Groth16 proof using contract simulation', async () => {
+      const mockScValToNative = require('stellar-sdk').scValToNative;
+      mockScValToNative.mockReturnValue(true);
+
+      const isValid = await client.verifyGroth16Proof(
+        'bn254',
+        { a: '01020304', b: '05060708', c: '090a0b0c' },
+        ['public_signal_1'],
+        'verifying_key_hex'
+      );
+      expect(isValid).toBe(true);
+    });
+  });
 });

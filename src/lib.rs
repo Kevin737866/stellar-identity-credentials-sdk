@@ -23,6 +23,8 @@ pub mod zk_attestation;
 #[cfg(test)]
 mod e2e_identity_lifecycle;
 #[cfg(test)]
+mod e2e_testnet;
+#[cfg(test)]
 mod fuzz_test_script;
 #[cfg(test)]
 mod integration_tests;
@@ -73,6 +75,9 @@ pub use reputation_oracle::PaginatedFeeds;
 pub use reputation_oracle::ReputationOracle;
 pub use reputation_oracle::ReputationOracleError;
 pub use reputation_score::ReputationScore;
+pub use reputation_score::ReputationTier;
+pub use reputation_score::TierRequirements;
+pub use reputation_score::TierThresholds;
 pub use schema_registry::CredentialSchemaRegistry;
 pub use status_list::BitstringStatusList;
 pub use status_list::StatusListError;
@@ -81,6 +86,7 @@ pub use zk_attestation::CombinedDisclosureProof;
 pub use zk_attestation::PredicateInfo;
 pub use zk_attestation::PredicateType;
 pub use zk_attestation::SelectiveDisclosureProof;
+pub use zk_attestation::SupportedCurve;
 pub use zk_attestation::ZKAttestationContract;
 pub use zk_attestation::ZKAttestationContractClient;
 pub use zk_attestation::ZKAttestationRecord;
