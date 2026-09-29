@@ -505,6 +505,26 @@ export class StellarIdentitySDK {
   }
 }
 
+// Multi-network support (#212)
+export {
+  STELLAR_NETWORKS,
+  NETWORK_PRESETS,
+  getNetworkPreset,
+  isCanonicalNetwork,
+  createCustomNetwork,
+  resolveNetwork,
+  validateNetworkConfig,
+  assertNetworkValid,
+  assertNetworkCompatible,
+  detectNetwork,
+  describeNetwork,
+} from './networks';
+export type {
+  StellarNetworkName,
+  StellarNetworkConfig,
+  NetworkDetectionResult,
+} from './networks';
+
 // W3C Bitstring Status List (#267)
 export { StatusListClient } from './statusListClient';
 export type { StatusListMetadata } from './statusListClient';
