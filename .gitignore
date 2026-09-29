@@ -59,3 +59,17 @@ stellar-identity-config-*.json
 # PR description files (local workflow artifacts)
 pr-106.md
 pr-110.md
+
+# Python scripts (fix helpers, not part of source)
+fix_errors*.py
+
+# Log files checked into repo
+ci.log
+gh_run.log
+cargo_check.log
+
+# Baseline/benchmark text files (generated)
+gas-benchmark-baseline.txt
+
+# Sandbox generated files
+sandbox/*.generated.*
