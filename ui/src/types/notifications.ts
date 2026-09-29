@@ -27,6 +27,30 @@ export interface NotificationPresentation {
   tone: NotificationTone;
 }
 
+/**
+ * Tone per notification type. Tones are CSS-variable references, not text, so
+ * they are not localised.
+ */
+export const NOTIFICATION_TONES_BY_TYPE: Record<
+  CredentialNotificationType,
+  NotificationTone
+> = {
+  'credential-issued': 'success',
+  'credential-verified': 'info',
+  'credential-revoked': 'danger',
+  'credential-expiring': 'warning',
+  'offer-received': 'info',
+};
+
+/**
+ * English presentation per notification type.
+ *
+ * @deprecated The `label` here is a hard-coded English string. Use
+ * {@link getNotificationPresentation}, which resolves the label through the
+ * i18n catalogue so the text follows the active language. This export is kept
+ * for consumers that pass pre-translated text in, and because it is part of
+ * the published API.
+ */
 export const NOTIFICATION_PRESENTATION: Record<
   CredentialNotificationType,
   NotificationPresentation
@@ -37,6 +61,27 @@ export const NOTIFICATION_PRESENTATION: Record<
   'credential-expiring': { label: 'Credential expiring soon', tone: 'warning' },
   'offer-received': { label: 'Credential offer received', tone: 'info' },
 };
+
+/**
+ * Presentation for a notification type, with the label translated.
+ *
+ * The kebab-case notification type doubles as the translation key
+ * (`notifications.type.<type>`), so adding a notification type automatically
+ * has a place in the catalogue.
+ *
+ * @param type - The notification type.
+ * @param t - The translator from `useTranslation()`. Omit to fall back to the
+ *   deprecated English table.
+ */
+export function getNotificationPresentation(
+  type: CredentialNotificationType,
+  t?: (key: string) => string,
+): NotificationPresentation {
+  return {
+    label: t ? t(`notifications.type.${type}`) : NOTIFICATION_PRESENTATION[type].label,
+    tone: NOTIFICATION_TONES_BY_TYPE[type],
+  };
+}
 
 export const NOTIFICATION_TONES: Record<NotificationTone, string> = {
   success: 'var(--color-success-600)',
@@ -95,7 +140,14 @@ export function toCredentialNotification(
   };
 }
 
-/** Format a timestamp as a short relative age, e.g. `4m ago`. */
+/**
+ * Format a timestamp as a short relative age, e.g. `4m ago`.
+ *
+ * @deprecated This hard-codes English abbreviations. Use
+ * `format.formatRelativeTime(timestamp)` from `useTranslation()`, which routes
+ * through `Intl.RelativeTimeFormat` and gets the plural rules and word order
+ * right for the active language. Kept for callers outside a React tree.
+ */
 export function formatRelativeTime(timestamp: number, now: number = Date.now()): string {
   const elapsedSeconds = Math.floor((now - timestamp) / 1000);
 

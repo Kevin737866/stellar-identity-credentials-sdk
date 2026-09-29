@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { NotificationStreamStatus } from '../services/notificationStream';
 import { CredentialNotification } from '../types/notifications';
+import { useTranslation } from '../i18n';
 import { BellIcon } from './icons/BellIcon';
 import { NotificationRow } from './NotificationRow';
 
@@ -25,12 +26,17 @@ export interface NotificationCenterProps {
   maxVisible?: number;
 }
 
-const STATUS_LABELS: Record<NotificationStreamStatus, string> = {
-  idle: 'Inactive',
-  connecting: 'Connecting…',
-  open: 'Live',
-  closed: 'Disconnected',
-  error: 'Unavailable',
+/**
+ * Translation keys for the live-feed indicator, not the labels themselves: a
+ * module-scope record of translated strings is fixed at import time and cannot
+ * follow a language change, so the key is resolved inside the component.
+ */
+const STATUS_LABEL_KEYS: Record<NotificationStreamStatus, string> = {
+  idle: 'notifications.status.idle',
+  connecting: 'notifications.status.connecting',
+  open: 'notifications.status.open',
+  closed: 'notifications.status.closed',
+  error: 'notifications.status.error',
 };
 
 const footerButtonStyle = (enabled: boolean, accent: boolean): React.CSSProperties => ({
@@ -63,13 +69,19 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   onSelect,
   onClearAll,
   status,
-  title = 'Notifications',
-  emptyMessage = 'No notifications yet',
+  title,
+  emptyMessage,
   maxVisible = 10,
 }) => {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
   const containerRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
+  const { t } = useTranslation();
+
+  // The props are pre-translated text, so a supplied value wins over the
+  // catalogue; only the default is translated.
+  const resolvedTitle = title ?? t('notifications.title');
+  const resolvedEmptyMessage = emptyMessage ?? t('notifications.empty');
 
   const isControlled = open !== undefined;
   const isOpen = isControlled ? open : uncontrolledOpen;
@@ -129,7 +141,11 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
       <button
         type="button"
         onClick={() => setOpen(!isOpen)}
-        aria-label={unread > 0 ? `${title}, ${unread} unread` : title}
+        aria-label={
+          unread > 0
+            ? `${resolvedTitle}, ${t('notifications.unreadCount', { count: unread })}`
+            : resolvedTitle
+        }
         aria-haspopup="dialog"
         aria-expanded={isOpen}
         aria-controls={isOpen ? panelId : undefined}
@@ -176,7 +192,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         <div
           id={panelId}
           role="dialog"
-          aria-label={title}
+          aria-label={resolvedTitle}
           style={{
             position: 'absolute',
             top: 'calc(100% + var(--space-2))',
@@ -201,7 +217,9 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
               borderBottom: '1px solid var(--color-border)',
             }}
           >
-            <span style={{ fontWeight: 'var(--font-weight-semibold)' as never }}>{title}</span>
+            <span style={{ fontWeight: 'var(--font-weight-semibold)' as never }}>
+              {resolvedTitle}
+            </span>
             {status ? (
               <span
                 role="status"
@@ -214,7 +232,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                       : 'var(--color-text-secondary)',
                 }}
               >
-                {STATUS_LABELS[status]}
+                {t(STATUS_LABEL_KEYS[status])}
               </span>
             ) : null}
           </div>
@@ -230,7 +248,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                 color: 'var(--color-text-secondary)',
               }}
             >
-              {emptyMessage}
+              {resolvedEmptyMessage}
             </p>
           ) : (
             <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
@@ -239,6 +257,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                   key={notification.id}
                   notification={notification}
                   onActivate={handleActivate}
+                  t={t}
                 />
               ))}
             </ul>
@@ -258,7 +277,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
               disabled={unreadIsZero || !onMarkAllAsRead}
               style={footerButtonStyle(!unreadIsZero && Boolean(onMarkAllAsRead), !unreadIsZero)}
             >
-              Mark all as read
+              {t('notifications.markAllRead')}
             </button>
             {onClearAll ? (
               <button
@@ -266,7 +285,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                 onClick={onClearAll}
                 style={footerButtonStyle(true, false)}
               >
-                Clear all
+                {t('notifications.clearAll')}
               </button>
             ) : null}
           </div>
