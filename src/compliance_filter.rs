@@ -1173,6 +1173,43 @@ impl ComplianceFilter {
         contract_upgrade::get_contract_version(&env)
     }
 
+    // ── Semantic version & cross-contract compatibility (#198) ───────────────
+    //
+    // `get_contract_version` above reports the monotonic *upgrade* counter,
+    // which only means "how many times has this WASM been swapped". The
+    // functions below report the semantic version of the compiled code, which
+    // is what a peer contract needs in order to decide whether an
+    // interaction is safe.
+
+    /// The semantic version this contract was compiled at.
+    pub fn get_semantic_version(env: Env) -> crate::contract_version::SemanticVersion {
+        crate::contract_version::get_version(&env)
+    }
+
+    /// The semantic version as a dotted string, e.g. `1.0.0`.
+    pub fn get_semantic_version_string(env: Env) -> soroban_sdk::Bytes {
+        crate::contract_version::version_to_bytes(&env, &crate::contract_version::get_version(&env))
+    }
+
+    /// Evaluate whether `provider` is safe to call from this contract.
+    ///
+    /// Call this at the top of a cross-contract entry point to turn a silent
+    /// ABI mismatch into a clear, catchable error.
+    pub fn check_peer_compatibility(
+        env: Env,
+        provider: crate::contract_version::SemanticVersion,
+    ) -> crate::contract_version::CompatibilityReport {
+        crate::contract_version::check_remote_version(&env, &provider)
+    }
+
+    /// Fail unless `provider` is compatible with this contract.
+    pub fn require_peer_compatibility(
+        env: Env,
+        provider: crate::contract_version::SemanticVersion,
+    ) -> Result<(), crate::contract_version::VersionError> {
+        crate::contract_version::require_compatible(&env, &provider)
+    }
+
     /// Return the current deployed WASM hash.
     pub fn get_wasm_hash(env: Env) -> Option<BytesN<32>> {
         contract_upgrade::get_wasm_hash(&env)
