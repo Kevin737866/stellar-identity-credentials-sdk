@@ -14,6 +14,44 @@ pub enum PerformanceError {
     InvalidParameters = 5,
 }
 
+// ── Proof compression (#179) ────────────────────────────────────────────────
+
+/// Proofs at or below this size are stored verbatim. A PackBits control byte
+/// per run costs more than it can save on inputs this short.
+const MIN_COMPRESSIBLE_PROOF_BYTES: u32 = 64;
+/// Longest run a single PackBits control byte can encode (control 129).
+const MAX_PACKBITS_RUN: u32 = 128;
+/// Largest control byte still meaning "literal run" rather than "repeat".
+const PACKBITS_MAX_CONTROL: u8 = 127;
+/// The reserved no-op control byte; never emitted by the encoder.
+const PACKBITS_NOOP: u8 = 128;
+/// Stored verbatim.
+const CODEC_RAW: u8 = 0;
+/// Stored PackBits-compressed.
+const CODEC_PACKBITS: u8 = 1;
+const BPS_DENOMINATOR: u64 = 10_000;
+const BPS_DENOMINATOR_U32: u32 = 10_000;
+/// `skip_reason` values on `ProofCompression`.
+const SKIP_NONE: u32 = 0;
+/// `compression_enabled` was false.
+const SKIP_DISABLED: u32 = 1;
+/// At or below `MIN_COMPRESSIBLE_PROOF_BYTES`.
+const SKIP_TOO_SMALL: u32 = 2;
+/// Compression ran but did not beat the original size.
+const SKIP_NO_GAIN: u32 = 3;
+
+// ── Validation cache (#163) ──────────────────────────────────────────────────
+
+/// Storage bound on the validation cache, so a caller cannot grow it without
+/// limit by varying the data it validates.
+const MAX_VALIDATION_CACHE_ENTRIES: u32 = 256;
+/// Default verdict lifetime: one hour.
+const DEFAULT_VALIDATION_CACHE_TTL: u64 = 3600;
+
+const VALIDATION_CACHE: &str = "validation_cache";
+const SCHEMA_VERSIONS: &str = "schema_cache_versions";
+const VALIDATION_CACHE_TTL: &str = "validation_cache_ttl";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct PerformanceMetrics {
@@ -49,6 +87,34 @@ pub struct CachedProof {
     pub expires_at: u64,
     pub access_count: u32,
     pub performance_metrics: PerformanceMetrics,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ProofCompression {
+    pub proof_id: Bytes,
+    pub original_size: u32,
+    pub stored_size: u32,
+    /// `stored_size * 10000 / original_size`; `10000` means no saving.
+    pub ratio_bps: u32,
+    pub savings_bps: u32,
+    pub compressed: bool,
+    /// One of the `SKIP_*` constants; `0` when the proof was compressed.
+    pub skip_reason: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct CachedValidation {
+    pub schema_id: Symbol,
+    pub schema_hash: Bytes,
+    pub data_hash: Bytes,
+    pub is_valid: bool,
+    /// Schema cache version this entry was written under.
+    pub schema_version: u64,
+    pub computed_at: u64,
+    pub expires_at: u64,
+    pub hit_count: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -581,5 +647,472 @@ impl PerformanceOptimizer {
         };
 
         Ok(metrics)
+    }
+
+    // ── Proof compression (#179) ──────────────────────────────────────────────
+
+    /// Compress a proof and store it, returning what it cost.
+    ///
+    /// Honours `compression_enabled` from `OptimizationConfig`, which until now
+    /// was written by `initialize_optimization_config` and then read by nothing
+    /// at all. The stored form carries a one-byte codec tag, so
+    /// `decompress_proof` can tell a compressed body from a verbatim one without
+    /// a parallel index, and a body written by an older scheme still reads back.
+    ///
+    /// The stored form is **never larger** than the input: when the codec does
+    /// not beat the original the proof is kept verbatim. Padding the ledger with
+    /// a bigger copy of the same bytes would be a straight loss, and on
+    /// high-entropy field element data that is the expected outcome.
+    pub fn compress_proof(
+        env: Env,
+        proof_id: Bytes,
+        proof_bytes: Bytes,
+    ) -> Result<ProofCompression, PerformanceError> {
+        let config: OptimizationConfig = env
+            .storage()
+            .persistent()
+            .get(&Symbol::new(&env, "optimization_config"))
+            .ok_or(PerformanceError::InvalidParameters)?;
+
+        let original_size = proof_bytes.len();
+        let eligible =
+            config.compression_enabled && original_size > MIN_COMPRESSIBLE_PROOF_BYTES;
+
+        let (codec, body) = if eligible {
+            let packed = Self::packbits_compress(&env, &proof_bytes);
+            if packed.len() < original_size {
+                (CODEC_PACKBITS, packed)
+            } else {
+                (CODEC_RAW, proof_bytes.clone())
+            }
+        } else {
+            (CODEC_RAW, proof_bytes.clone())
+        };
+
+        let mut framed = Bytes::new(&env);
+        framed.push_back(codec);
+        for byte in body.iter() {
+            framed.push_back(byte);
+        }
+        let stored_size = framed.len();
+
+        env.storage().persistent().set(
+            &Symbol::new(&env, &Self::compression_storage_key(&proof_id)),
+            &framed,
+        );
+
+        // Guarded: an empty proof has no meaningful ratio, and dividing by its
+        // size would panic.
+        let ratio_bps: u32 = if original_size == 0 {
+            BPS_DENOMINATOR_U32
+        } else {
+            (((stored_size as u64) * (BPS_DENOMINATOR as u64)) / (original_size as u64))
+                .min(BPS_DENOMINATOR as u64) as u32
+        };
+
+        env.events().publish(
+            (Symbol::new(&env, "ProofCompressed"), proof_id.clone()),
+            (original_size, stored_size, codec as u32),
+        );
+
+        Ok(ProofCompression {
+            proof_id,
+            original_size,
+            stored_size,
+            ratio_bps,
+            savings_bps: BPS_DENOMINATOR_U32 - ratio_bps,
+            compressed: codec == CODEC_PACKBITS,
+            skip_reason: if codec == CODEC_PACKBITS {
+                SKIP_NONE
+            } else if !config.compression_enabled {
+                SKIP_DISABLED
+            } else if original_size <= MIN_COMPRESSIBLE_PROOF_BYTES {
+                SKIP_TOO_SMALL
+            } else {
+                SKIP_NO_GAIN
+            },
+        })
+    }
+
+    /// Read a stored proof back as its original bytes.
+    ///
+    /// Decompression is transparent: the caller cannot tell a compressed proof
+    /// from a verbatim one.
+    pub fn decompress_proof(env: Env, proof_id: Bytes) -> Result<Bytes, PerformanceError> {
+        let framed: Bytes = env
+            .storage()
+            .persistent()
+            .get(&Symbol::new(&env, &Self::compression_storage_key(&proof_id)))
+            .ok_or(PerformanceError::CacheMiss)?;
+
+        let codec = match framed.get(0) {
+            Some(c) => c,
+            None => return Err(PerformanceError::InvalidParameters),
+        };
+
+        let mut body = Bytes::new(&env);
+        let mut i: u32 = 1;
+        while i < framed.len() {
+            if let Some(b) = framed.get(i) {
+                body.push_back(b);
+            }
+            i += 1;
+        }
+
+        if codec == CODEC_RAW {
+            Ok(body)
+        } else if codec == CODEC_PACKBITS {
+            Self::packbits_decompress(&env, &body)
+        } else {
+            Err(PerformanceError::InvalidParameters)
+        }
+    }
+
+    fn compression_storage_key(proof_id: &Bytes) -> String {
+        format!("compressed_proof:{}", proof_id.to_string())
+    }
+
+    /// PackBits: a control byte below 128 introduces `n + 1` literal bytes; one
+    /// above 128 repeats the next byte `257 - n` times. Control byte 128 is a
+    /// no-op and is never emitted.
+    ///
+    /// O(n) in both directions with no back-references, so decompression cost is
+    /// bounded by the input size and cannot be turned into an expansion bomb.
+    fn packbits_compress(env: &Env, input: &Bytes) -> Bytes {
+        let mut out = Bytes::new(env);
+        let len = input.len();
+        let mut i: u32 = 0;
+
+        while i < len {
+            let byte = input.get(i).unwrap_or(0);
+            let mut run: u32 = 1;
+            while run < MAX_PACKBITS_RUN && i + run < len && input.get(i + run) == Some(byte) {
+                run += 1;
+            }
+
+            if run >= 2 {
+                out.push_back((257 - run) as u8);
+                out.push_back(byte);
+                i += run;
+                continue;
+            }
+
+            // A single byte cannot be a repeat, since 257 - 1 is out of range,
+            // so gather literals until a run of two or more begins.
+            let mut literal: u32 = 1;
+            while literal < MAX_PACKBITS_RUN && i + literal < len {
+                let here = input.get(i + literal).unwrap_or(0);
+                let next = input.get(i + literal + 1);
+                if next == Some(here) {
+                    break;
+                }
+                literal += 1;
+            }
+
+            out.push_back((literal - 1) as u8);
+            for k in 0..literal {
+                if let Some(b) = input.get(i + k) {
+                    out.push_back(b);
+                }
+            }
+            i += literal;
+        }
+
+        out
+    }
+
+    fn packbits_decompress(env: &Env, input: &Bytes) -> Result<Bytes, PerformanceError> {
+        let mut out = Bytes::new(env);
+        let len = input.len();
+        let mut i: u32 = 0;
+
+        while i < len {
+            let control = match input.get(i) {
+                Some(c) => c,
+                None => return Err(PerformanceError::InvalidParameters),
+            };
+            i += 1;
+
+            // 127 is a valid control byte meaning a 128-byte literal run, so
+            // the literal branch is `< 128` and not `< 127`.
+            if control < PACKBITS_NOOP {
+                // Copy the next `control + 1` literals.
+                let take = control as u32 + 1;
+                if i + take > len {
+                    return Err(PerformanceError::InvalidParameters);
+                }
+                for _ in 0..take {
+                    if let Some(b) = input.get(i) {
+                        out.push_back(b);
+                    }
+                    i += 1;
+                }
+            } else if control > PACKBITS_NOOP {
+                // Repeat the next byte `257 - control` times.
+                let byte = match input.get(i) {
+                    Some(b) => b,
+                    None => return Err(PerformanceError::InvalidParameters),
+                };
+                i += 1;
+                for _ in 0..(257 - control as u32) {
+                    out.push_back(byte);
+                }
+            }
+            // control == PACKBITS_NOOP is a no-op; a conforming encoder never
+            // emits one.
+        }
+
+        Ok(out)
+    }
+
+    // ── Schema validation cache (#163) ────────────────────────────────────────
+
+    /// Memoize a validation verdict for `(schema_id, data)` and return it.
+    ///
+    /// On a hit the cached verdict wins and `fresh_verdict` is ignored; on a
+    /// miss the caller's freshly computed verdict is what gets stored. That
+    /// shape leaves the expensive validation in the caller's own validator and
+    /// keeps only the memoization here, which is the part that is safe to put
+    /// on-chain.
+    ///
+    /// The key folds in the schema's content hash *and* its cache version, so
+    /// `invalidate_schema_cache` orphans every prior entry for that schema by
+    /// bumping one number, with nothing to enumerate or delete.
+    pub fn validate_cached(
+        env: Env,
+        schema_id: Symbol,
+        schema_hash: Bytes,
+        data: Bytes,
+        fresh_verdict: bool,
+    ) -> Result<CachedValidation, PerformanceError> {
+        let now = env.ledger().timestamp();
+        let version = Self::schema_version(&env, schema_id.clone());
+        let data_hash = Self::hash_bytes(&env, &data);
+        let key = Self::validation_key(&env, version, &schema_hash, &data_hash);
+
+        let mut cache = Self::validation_cache(&env);
+
+        if let Some(entry) = cache.get(&key) {
+            // An expired entry is treated as a miss and simply overwritten.
+            if now <= entry.expires_at {
+                let mut updated = entry;
+                updated.hit_count = updated.hit_count.saturating_add(1);
+                cache.set(&key, &updated);
+                env.storage().temporary().set(&Symbol::new(&env, VALIDATION_CACHE), &cache);
+                Self::bump_validation_counter(&env, "validation_cache_hits");
+                return Ok(updated);
+            }
+        }
+
+        let entry = CachedValidation {
+            schema_id,
+            schema_hash,
+            data_hash,
+            is_valid: fresh_verdict,
+            schema_version: version,
+            computed_at: now,
+            expires_at: now.saturating_add(Self::validation_cache_ttl(&env)),
+            hit_count: 0,
+        };
+
+        cache.set(&key, &entry);
+        Self::evict_to_limit(&mut cache);
+        env.storage().temporary().set(&Symbol::new(&env, VALIDATION_CACHE), &cache);
+        Self::bump_validation_counter(&env, "validation_cache_misses");
+
+        Ok(entry)
+    }
+
+    /// Cached verdict for `(schema_id, data)`, or `CacheMiss`.
+    ///
+    /// The read-only half of `validate_cached`, for callers that want to know
+    /// whether the cache can answer without contributing a verdict.
+    pub fn get_cached_validation(
+        env: Env,
+        schema_id: Symbol,
+        schema_hash: Bytes,
+        data: Bytes,
+    ) -> Result<CachedValidation, PerformanceError> {
+        let version = Self::schema_version(&env, schema_id);
+        let data_hash = Self::hash_bytes(&env, &data);
+        let key = Self::validation_key(&env, version, &schema_hash, &data_hash);
+
+        let entry = Self::validation_cache(&env)
+            .get(&key)
+            .ok_or(PerformanceError::CacheMiss)?;
+        if env.ledger().timestamp() > entry.expires_at {
+            return Err(PerformanceError::CacheMiss);
+        }
+        Ok(entry)
+    }
+
+    /// Invalidate every cached verdict for `schema_id` by bumping its version.
+    ///
+    /// Returns the new version. Old entries are deliberately not deleted: their
+    /// keys no longer resolve, and the temporary storage they live in expires
+    /// them on its own.
+    pub fn invalidate_schema_cache(env: Env, schema_id: Symbol) -> u64 {
+        let mut versions: Map<Symbol, u64> = env
+            .storage()
+            .persistent()
+            .get(&Symbol::new(&env, SCHEMA_VERSIONS))
+            .unwrap_or_else(|| Map::new(&env));
+
+        let next = versions.get(schema_id.clone()).unwrap_or(0).saturating_add(1);
+        versions.set(schema_id.clone(), next);
+        env.storage().persistent().set(&Symbol::new(&env, SCHEMA_VERSIONS), &versions);
+
+        env.events()
+            .publish((Symbol::new(&env, "SchemaCacheInvalidated"), schema_id), next);
+
+        next
+    }
+
+    /// Validation cache counters, including a guarded hit rate.
+    pub fn get_validation_cache_stats(env: Env) -> Map<Symbol, Bytes> {
+        let mut stats = Map::new(&env);
+        let hits = Self::validation_counter(&env, "validation_cache_hits");
+        let misses = Self::validation_counter(&env, "validation_cache_misses");
+
+        stats.set(
+            Symbol::new(&env, "validation_cache_hits"),
+            Bytes::from_slice(&env, &hits.to_be_bytes()),
+        );
+        stats.set(
+            Symbol::new(&env, "validation_cache_misses"),
+            Bytes::from_slice(&env, &misses.to_be_bytes()),
+        );
+
+        // Guarded: a fresh contract has made zero accesses, and dividing by the
+        // total would otherwise panic rather than report 0%.
+        let accesses = hits as u64 + misses as u64;
+        let rate: u32 = if accesses > 0 {
+            ((hits as u64 * 100) / accesses) as u32
+        } else {
+            0
+        };
+
+        stats.set(
+            Symbol::new(&env, "validation_cache_hit_rate_percent"),
+            Bytes::from_slice(&env, &rate.to_be_bytes()),
+        );
+        stats.set(
+            Symbol::new(&env, "validation_cache_entries"),
+            Bytes::from_slice(&env, &Self::validation_cache(&env).len().to_be_bytes()),
+        );
+        stats.set(
+            Symbol::new(&env, "validation_cache_ttl"),
+            Bytes::from_slice(&env, &Self::validation_cache_ttl(&env).to_be_bytes()),
+        );
+        stats
+    }
+
+    /// Configure how long a cached verdict stays valid.
+    pub fn set_validation_cache_ttl(env: Env, ttl: u64) {
+        env.storage()
+            .persistent()
+            .set(&Symbol::new(&env, VALIDATION_CACHE_TTL), &ttl);
+    }
+
+    /// Drop expired entries. Returns how many were removed.
+    pub fn cleanup_validation_cache(env: Env) -> u32 {
+        let now = env.ledger().timestamp();
+        let mut cache = Self::validation_cache(&env);
+        let before = cache.len();
+
+        let mut expired: Vec<Bytes> = Vec::new(&env);
+        for (key, entry) in cache.iter() {
+            if now > entry.expires_at {
+                expired.push_back(key);
+            }
+        }
+        for key in expired.iter() {
+            cache.remove(&key);
+        }
+
+        let removed = before.saturating_sub(cache.len());
+        env.storage().temporary().set(&Symbol::new(&env, VALIDATION_CACHE), &cache);
+        removed
+    }
+
+    // ── Validation cache helpers ─────────────────────────────────────────────
+
+    fn validation_cache(env: &Env) -> Map<Bytes, CachedValidation> {
+        env.storage()
+            .temporary()
+            .get(&Symbol::new(env, VALIDATION_CACHE))
+            .unwrap_or_else(|| Map::new(env))
+    }
+
+    fn schema_version(env: &Env, schema_id: Symbol) -> u64 {
+        let versions: Map<Symbol, u64> = env
+            .storage()
+            .persistent()
+            .get(&Symbol::new(env, SCHEMA_VERSIONS))
+            .unwrap_or_else(|| Map::new(env));
+        versions.get(schema_id).unwrap_or(0)
+    }
+
+    /// Length-delimited by construction: the version and the two hashes are
+    /// hashed with fixed widths, so no two distinct triples can collide by
+    /// concatenation the way bare `id ++ data` could.
+    fn validation_key(
+        env: &Env,
+        version: u64,
+        schema_hash: &Bytes,
+        data_hash: &Bytes,
+    ) -> Bytes {
+        let mut hasher = Sha256::new();
+        hasher.update(b"validation-cache-v1");
+        hasher.update(version.to_be_bytes());
+        hasher.update(schema_hash.to_array().as_slice());
+        hasher.update(data_hash.to_array().as_slice());
+        Bytes::from_slice(env, &hasher.finalize())
+    }
+
+    fn hash_bytes(env: &Env, data: &Bytes) -> Bytes {
+        let mut hasher = Sha256::new();
+        hasher.update(data.to_array().as_slice());
+        Bytes::from_slice(env, &hasher.finalize())
+    }
+
+    fn validation_cache_ttl(env: &Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&Symbol::new(env, VALIDATION_CACHE_TTL))
+            .unwrap_or(DEFAULT_VALIDATION_CACHE_TTL)
+    }
+
+    fn validation_counter(env: &Env, name: &str) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&Symbol::new(env, name))
+            .unwrap_or(0u32)
+    }
+
+    fn bump_validation_counter(env: &Env, name: &str) {
+        let value = Self::validation_counter(env, name).saturating_add(1);
+        env.storage()
+            .persistent()
+            .set(&Symbol::new(env, name), &value);
+    }
+
+    /// Keep the cache inside `MAX_VALIDATION_CACHE_ENTRIES`, dropping the
+    /// earliest-computed entry each time.
+    fn evict_to_limit(cache: &mut Map<Bytes, CachedValidation>) {
+        while cache.len() > MAX_VALIDATION_CACHE_ENTRIES {
+            let mut oldest_key: Option<Bytes> = None;
+            let mut oldest_at = u64::MAX;
+            for (key, entry) in cache.iter() {
+                if entry.computed_at < oldest_at {
+                    oldest_at = entry.computed_at;
+                    oldest_key = Some(key);
+                }
+            }
+            match oldest_key {
+                Some(k) => cache.remove(&k),
+                None => break,
+            }
+        }
     }
 }
