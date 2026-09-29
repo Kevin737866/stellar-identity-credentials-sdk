@@ -958,3 +958,114 @@ export function evaluateRuleAgainstScreen(
   if (screening.riskScore > 70) return true;
   return false;
 }
+
+// ── Jurisdiction Compliance Rule Engine (#273) ─────────────────────────────
+
+/**
+ * Set the parent jurisdiction for hierarchical rule inheritance.
+ * e.g. setJurisdictionParent("EU:DE", "EU") means DE inherits EU rules.
+ */
+export async function setJurisdictionParent(
+  admin: Keypair,
+  child: string,
+  parent: string,
+): Promise<void> {
+  return callContractMethod('set_jurisdiction_parent', [
+    nativeToScVal(new Address(admin.publicKey()).toScVal()),
+    nativeToScVal(encodeStr(child)),
+    nativeToScVal(encodeStr(parent)),
+  ], admin);
+}
+
+/**
+ * Register a compliance rule with evaluation conditions.
+ */
+export async function registerComplianceRuleWithConditions(
+  admin: Keypair,
+  jurisdiction: string,
+  requirement: string,
+  enforcement: string,
+  condition: {
+    maxTransactionAmount?: number;
+    minTransactionAmount?: number;
+    requiredCredentialType?: string;
+    minIdentityVerificationLevel?: number;
+  },
+): Promise<void> {
+  const conditionScVal = nativeToScVal({
+    max_transaction_amount: condition.maxTransactionAmount != null
+      ? scValToNative(nativeToScVal(condition.maxTransactionAmount)) : undefined,
+    min_transaction_amount: condition.minTransactionAmount != null
+      ? scValToNative(nativeToScVal(condition.minTransactionAmount)) : undefined,
+    required_credential_type: condition.requiredCredentialType != null
+      ? nativeToScVal(encodeStr(condition.requiredCredentialType)) : undefined,
+    min_identity_verification_level: condition.minIdentityVerificationLevel != null
+      ? scValToNative(nativeToScVal(condition.minIdentityVerificationLevel)) : undefined,
+  });
+  return callContractMethod('register_compliance_rule_with_conditions', [
+    nativeToScVal(new Address(admin.publicKey()).toScVal()),
+    nativeToScVal(encodeStr(jurisdiction)),
+    nativeToScVal(encodeStr(requirement)),
+    nativeToScVal(encodeStr(enforcement)),
+    conditionScVal,
+  ], admin);
+}
+
+/**
+ * Evaluate compliance rules for a subject in a given jurisdiction.
+ * Returns violated rules with details.
+ */
+export async function evaluateComplianceRules(
+  subject: string,
+  jurisdiction: string,
+  options: {
+    transactionAmount?: number;
+    credentialTypes?: string[];
+    identityVerificationLevel?: number;
+  },
+): Promise<{
+  violations: Array<{ jurisdiction: string; requirement: string; violationDetail: string }>;
+  totalRulesEvaluated: number;
+}> {
+  const result = await simulateContractMethod('evaluate_compliance_rules', [
+    nativeToScVal({
+      subject: new Address(subject).toScVal(),
+      jurisdiction: nativeToScVal(encodeStr(jurisdiction)),
+      transaction_amount: options.transactionAmount != null
+        ? nativeToScVal(options.transactionAmount) : undefined,
+      credential_types: nativeToScVal(
+        (options.credentialTypes ?? []).map(ct => encodeStr(ct)),
+      ),
+      identity_verification_level: nativeToScVal(options.identityVerificationLevel ?? 0),
+    }),
+  ]);
+  return scValToNative(result) as any;
+}
+
+/**
+ * Batch evaluate compliance rules for multiple subjects.
+ */
+export async function batchEvaluateRules(
+  inputs: Array<{
+    subject: string;
+    jurisdiction: string;
+    transactionAmount?: number;
+    credentialTypes?: string[];
+    identityVerificationLevel?: number;
+  }>,
+): Promise<Array<any>> {
+  const inputsScVal = nativeToScVal(
+    inputs.map(input => ({
+      subject: new Address(input.subject).toScVal(),
+      jurisdiction: nativeToScVal(encodeStr(input.jurisdiction)),
+      transaction_amount: input.transactionAmount != null
+        ? nativeToScVal(input.transactionAmount) : undefined,
+      credential_types: nativeToScVal(
+        (input.credentialTypes ?? []).map(ct => encodeStr(ct)),
+      ),
+      identity_verification_level: nativeToScVal(input.identityVerificationLevel ?? 0),
+    })),
+  );
+  const result = await simulateContractMethod('batch_evaluate_rules', [inputsScVal]);
+  return scValToNative(result) as any[];
+}
