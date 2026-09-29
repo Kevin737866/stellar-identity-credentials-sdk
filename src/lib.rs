@@ -2,12 +2,14 @@ extern crate alloc;
 
 pub mod admin;
 pub mod audit_trail;
+pub mod batch_optimizer;
 pub mod compliance_filter;
 pub mod contract_upgrade;
 pub mod credential_issuer;
 pub mod credential_offer;
 pub mod did_recovery;
 pub mod did_registry;
+pub mod event_index;
 pub mod gas_benchmark;
 pub mod performance_optimizer;
 pub mod rate_limiter;
@@ -17,6 +19,7 @@ pub mod reputation_score;
 pub mod schema_registry;
 pub mod status_list;
 pub mod storage_optimization;
+pub mod validation;
 pub mod zk_attestation;
 
 #[cfg(test)]
@@ -52,6 +55,14 @@ pub use did_registry::DIDRegistry;
 pub use did_registry::MultiSigConfig;
 pub use did_registry::PendingMultiSigOperation;
 pub use did_registry::Signer;
+pub use event_index::EventFilter;
+pub use event_index::EventRecord;
+pub use event_index::EventStreamPage;
+pub use event_index::IndexedEventType;
+pub use event_index::PaginatedEvents;
+pub use rate_limiter::RateLimitConfig;
+pub use rate_limiter::RateLimitError;
+pub use rate_limiter::RateLimitStatus;
 pub use reputation_oracle::DisputeStatus;
 pub use reputation_oracle::OracleDataFeed;
 pub use reputation_oracle::OracleDispute;
@@ -72,10 +83,6 @@ pub use zk_attestation::SelectiveDisclosureProof;
 pub use zk_attestation::ZKAttestationContract;
 pub use zk_attestation::ZKAttestationContractClient;
 pub use zk_attestation::ZKAttestationRecord;
-
-pub use status_list::BitstringStatusList;
-pub use status_list::StatusListError;
-pub use status_list::StatusListMeta;
 
 #[contracttype]
 #[derive(Clone)]
