@@ -41,6 +41,11 @@ pub use compliance_filter::ComplianceRuleCondition;
 pub use compliance_filter::RuleViolation;
 pub use compliance_filter::ComplianceEvaluationInput;
 pub use compliance_filter::ComplianceEvaluationResult;
+pub use compliance_filter::IncrementalUpdate;
+pub use compliance_filter::SanctionsListSource;
+pub use compliance_filter::SanctionsListSyncState;
+pub use compliance_filter::TravelRuleAuditRecord;
+pub use compliance_filter::TravelRuleInfo;
 pub use credential_issuer::CredentialIssuer;
 pub use credential_offer::CredentialOffer;
 pub use credential_offer::CredentialOfferContract;
@@ -97,6 +102,10 @@ pub use zk_attestation::SupportedCurve;
 pub use zk_attestation::ZKAttestationContract;
 pub use zk_attestation::ZKAttestationContractClient;
 pub use zk_attestation::ZKAttestationRecord;
+pub use zk_attestation::CleanupSummary;
+pub use zk_attestation::MultiRangeProof;
+pub use zk_attestation::ProofRenewalRecord;
+pub use zk_attestation::RangeAssertion;
 
 #[contracttype]
 #[derive(Clone)]

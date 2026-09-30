@@ -1,46 +1,85 @@
 {
+  "$schema": "https://typedoc.org/schema.json",
   "entryPoints": [
     "sdk/src/index.ts",
     "sdk/src/types.ts",
     "sdk/src/errors.ts",
+    "sdk/src/retry.ts",
+    "sdk/src/config.ts",
+    "sdk/src/networks.ts",
+    "sdk/src/cacheManager.ts",
+    "sdk/src/cacheBackend.ts",
     "sdk/src/didClient.ts",
     "sdk/src/didResolver.ts",
+    "sdk/src/didCache.ts",
     "sdk/src/credentialClient.ts",
     "sdk/src/reputation.ts",
     "sdk/src/zkProofs.ts",
     "sdk/src/compliance.ts",
+    "sdk/src/schemaClient.ts",
+    "sdk/src/statusListClient.ts",
+    "sdk/src/revocationRegistry.ts",
+    "sdk/src/revocationTypes.ts",
     "sdk/src/walletConnector.ts",
     "sdk/src/cacheManager.ts",
     "sdk/src/cacheBackend.ts",
     "sdk/src/dataMinimization.ts",
+    "sdk/src/gdpr.ts",
+    "sdk/src/compression.ts",
+    "sdk/src/expirationManager.ts",
     "sdk/src/eventSubscriber.ts",
-    "sdk/src/logger.ts"
+    "sdk/src/eventStream.ts",
+    "sdk/src/middleware.ts",
+    "sdk/src/batch.ts",
+    "sdk/src/logger.ts",
+    "sdk/src/errorMonitor.ts",
+    "sdk/src/networkMonitor.ts",
+    "sdk/src/regulatoryReporting.ts",
+    "sdk/src/trustGraph.ts"
   ],
   "out": "docs/api",
   "includeVersion": true,
-  "readme": "README.md",
+  "readme": "docs/api-readme.md",
   "name": "Stellar Identity SDK",
   "excludePrivate": true,
   "excludeProtected": false,
   "excludeExternals": true,
-  "plugin": [],
   "categorizeByGroup": true,
-  "categoryOrder": ["Client", "Types", "Errors", "Utilities", "*"],
+  "categoryOrder": [
+    "Client",
+    "Types",
+    "Errors",
+    "Retry",
+    "Configuration",
+    "Utilities",
+    "*"
+  ],
   "sort": ["source-order"],
+  "navigation": {
+    "includeCategories": true,
+    "includeGroups": true
+  },
   "visibilityFilters": {
     "protected": false,
     "private": false,
     "inherited": true,
     "external": false
   },
-  "navigation": {
-    "includeCategories": true,
-    "includeGroups": true
-  },
   "highlightLanguages": ["typescript", "rust", "bash", "json"],
   "githubPages": true,
   "cleanOutputDir": true,
+  "validation": {
+    "notExported": true,
+    "invalidLink": true,
+    "notDocumented": true
+  },
   "compilerOptions": {
     "skipLibCheck": true
-  }
+  },
+  // TypeDoc reports the compiler's own diagnostics. The SDK currently has
+  // pre-existing type errors (mostly in zkProofs.ts), and gating the docs
+  // build on those would block every docs change until an unrelated fix lands.
+  // `npm run typecheck` is where those are actually enforced. The validations
+  // that matter to *documentation* — notExported and notDocumented — still run.
+  "skipErrorChecking": true
 }

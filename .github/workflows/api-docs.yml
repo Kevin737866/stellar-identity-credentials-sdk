@@ -1,0 +1,66 @@
+name: API Documentation
+
+# Builds the TypeDoc API reference (#213) on every push, and publishes it to
+# GitHub Pages on the default branch. The `check` job runs on pull requests too
+# so a PR that breaks the docs build — or that exports a public symbol with no
+# JSDoc — fails before merge rather than after deploy.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; a queued run supersedes an in-flight one.
+concurrency:
+  group: pages-docs
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Verify documentation builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `notDocumented` and `notExported` are the two validations that earn
+      # their keep here: the first catches a public export with no JSDoc, the
+      # second catches a symbol referenced in a type but not actually exported.
+      - name: Build API documentation
+        run: npm run docs:check
+
+      - name: Upload the built site
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/api
+
+  deploy:
+    name: Deploy to GitHub Pages
+    # A PR's docs build is verified by `check`; only a push to the default
+    # branch should publish.
+    if: github.event_name != 'pull_request'
+    needs: check
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

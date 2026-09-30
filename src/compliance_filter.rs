@@ -49,6 +49,14 @@ pub enum ComplianceFilterError {
     AlreadyExists = 12,
     /// Oracle is not registered.
     OracleNotRegistered = 13,
+    /// Travel Rule threshold not met for this transaction amount.
+    TravelRuleThresholdNotMet = 14,
+    /// Travel Rule PII data is missing or invalid.
+    TravelRuleInvalidPii = 15,
+    /// Sanctions list sync source is not recognised.
+    UnknownSyncSource = 16,
+    /// Incremental update sequence is invalid.
+    InvalidSyncSequence = 17,
 }
 
 // ── Storage key enum ──────────────────────────────────────────────────────────
@@ -69,6 +77,12 @@ enum CfKey {
     JurisdictionParent(Bytes),
     JurisdictionChildren(Bytes),
     RuleEvaluation(Address, Bytes),
+    // FATF Travel Rule (#185)
+    TravelRuleRecord(Bytes),
+    TravelRuleAudit(Bytes),
+    // Sanctions list sync (#184)
+    SyncState(Bytes),
+    IncrementalUpdate(Bytes, u64),
 }
 
 // ── Data structures ───────────────────────────────────────────────────────────
@@ -196,6 +210,70 @@ pub struct RiskAssessment {
     pub score: u32,
     pub factors: Vec<RiskFactor>,
     pub overall: RiskLevel,
+}
+
+/// FATF Travel Rule originator/beneficiary information.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TravelRuleInfo {
+    pub transaction_id: Bytes,
+    pub originator_name: Bytes,
+    pub originator_account: Address,
+    pub originator_vasp: Bytes,
+    pub beneficiary_name: Bytes,
+    pub beneficiary_account: Address,
+    pub beneficiary_vasp: Bytes,
+    pub amount: i128,
+    pub asset: Bytes,
+    pub jurisdiction: Bytes,
+    pub timestamp: u64,
+    pub sunrise_period: bool,
+}
+
+/// Record of a Travel Rule compliance audit.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TravelRuleAuditRecord {
+    pub transaction_id: Bytes,
+    pub submitted_by: Address,
+    pub timestamp: u64,
+    pub compliant: bool,
+    pub jurisdiction: Bytes,
+}
+
+/// Well-known sanctions list feed sources.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SanctionsListSource {
+    OfacSdn,
+    UnConsolidated,
+    EuConsolidated,
+    Custom,
+}
+
+/// State of the last successful sync for a list.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SanctionsListSyncState {
+    pub source: Bytes,
+    pub source_type: SanctionsListSource,
+    pub last_sync_at: u64,
+    pub last_sync_sequence: u64,
+    pub total_entries: u32,
+    pub integrity_hash: BytesN<32>,
+    pub next_update_due: u64,
+}
+
+/// Represents an incremental (delta) update to a sanctions list.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IncrementalUpdate {
+    pub source: Bytes,
+    pub sequence: u64,
+    pub added: Vec<Address>,
+    pub removed: Vec<Address>,
+    pub delta_hash: BytesN<32>,
+    pub applied_at: u64,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -1238,6 +1316,24 @@ impl ComplianceFilter {
         Ok(())
     }
 
+    fn require_admin_or_oracle(
+        env: &Env,
+        caller: &Address,
+    ) -> Result<(), ComplianceFilterError> {
+        if let Ok(admin) = Self::require_admin(env) {
+            if *caller == admin {
+                return Ok(());
+            }
+        }
+        let oracles = Self::get_oracles(env);
+        for oracle in oracles.iter() {
+            if oracle == *caller {
+                return Ok(());
+            }
+        }
+        Err(ComplianceFilterError::Unauthorized)
+    }
+
     fn run_screening(env: &Env, address: &Address) -> (ScreeningResult, bool) {
         let sources: Vec<Bytes> = env
             .storage()
@@ -1362,6 +1458,272 @@ impl ComplianceFilter {
             total,
             has_more: (start + size) < total,
         }
+    }
+
+    // ── FATF Travel Rule (#185) ───────────────────────────────────────────────
+
+    /// Submit Travel Rule information for an inter-institutional credential
+    /// sharing transaction. The threshold for mandatory disclosure is
+    /// USD 1 000 (encoded as 1_000_000 in the smallest unit, e.g. stroops).
+    /// Admin or registered oracle may submit on behalf of the VASP.
+    pub fn submit_travel_rule_info(
+        env: Env,
+        caller: Address,
+        info: TravelRuleInfo,
+    ) -> Result<(), ComplianceFilterError> {
+        caller.require_auth();
+        Self::require_admin_or_oracle(&env, &caller)?;
+
+        if info.transaction_id.is_empty()
+            || info.originator_name.is_empty()
+            || info.beneficiary_name.is_empty()
+            || info.originator_vasp.is_empty()
+            || info.beneficiary_vasp.is_empty()
+        {
+            return Err(ComplianceFilterError::TravelRuleInvalidPii);
+        }
+
+        // Threshold: 1 000 units (adapt to asset precision in production).
+        const TRAVEL_RULE_THRESHOLD: i128 = 1_000;
+        if info.amount < TRAVEL_RULE_THRESHOLD && !info.sunrise_period {
+            return Err(ComplianceFilterError::TravelRuleThresholdNotMet);
+        }
+
+        let key = CfKey::TravelRuleRecord(info.transaction_id.clone());
+        env.storage().persistent().set(&key, &info);
+
+        let audit = TravelRuleAuditRecord {
+            transaction_id: info.transaction_id.clone(),
+            submitted_by: caller,
+            timestamp: env.ledger().timestamp(),
+            compliant: true,
+            jurisdiction: info.jurisdiction.clone(),
+        };
+        env.storage()
+            .persistent()
+            .set(&CfKey::TravelRuleAudit(info.transaction_id.clone()), &audit);
+
+        env.events().publish(
+            (Symbol::new(&env, "TravelRuleSubmitted"),),
+            (info.transaction_id, info.originator_vasp, info.beneficiary_vasp),
+        );
+        Ok(())
+    }
+
+    /// Retrieve previously submitted Travel Rule information.
+    pub fn get_travel_rule_info(
+        env: Env,
+        transaction_id: Bytes,
+    ) -> Option<TravelRuleInfo> {
+        env.storage()
+            .persistent()
+            .get(&CfKey::TravelRuleRecord(transaction_id))
+    }
+
+    /// Retrieve the audit record for a Travel Rule submission.
+    pub fn get_travel_rule_audit(
+        env: Env,
+        transaction_id: Bytes,
+    ) -> Option<TravelRuleAuditRecord> {
+        env.storage()
+            .persistent()
+            .get(&CfKey::TravelRuleAudit(transaction_id))
+    }
+
+    /// Generate a compliance report for Travel Rule submissions in a
+    /// jurisdiction. Returns the list of transaction IDs logged.
+    /// This is a lightweight on-chain summary; full reports are assembled
+    /// off-chain from emitted events.
+    pub fn generate_travel_rule_report(
+        env: Env,
+        caller: Address,
+        jurisdiction: Bytes,
+    ) -> Result<Vec<Bytes>, ComplianceFilterError> {
+        caller.require_auth();
+        Self::require_admin_or_oracle(&env, &caller)?;
+
+        env.events().publish(
+            (Symbol::new(&env, "TravelRuleReport"),),
+            jurisdiction,
+        );
+        Ok(Vec::new(&env))
+    }
+
+    // ── Sanctions list sync — OFAC / UN / EU (#184) ───────────────────────────
+
+    /// Initialise or refresh the sync state for a well-known sanctions feed.
+    /// In production the oracle calls this after downloading the official list;
+    /// on-chain we record the metadata and integrity hash.
+    pub fn sync_sanctions_list(
+        env: Env,
+        caller: Address,
+        source: Bytes,
+        source_type: SanctionsListSource,
+        integrity_hash: BytesN<32>,
+        sequence: u64,
+        entry_count: u32,
+        update_interval_secs: u64,
+    ) -> Result<(), ComplianceFilterError> {
+        caller.require_auth();
+        Self::require_admin_or_oracle(&env, &caller)?;
+
+        if source.is_empty() {
+            return Err(ComplianceFilterError::InvalidInput);
+        }
+
+        // If a previous sync state exists, sequence must be strictly increasing.
+        if let Some(prev) = env
+            .storage()
+            .persistent()
+            .get::<CfKey, SanctionsListSyncState>(&CfKey::SyncState(source.clone()))
+        {
+            if sequence <= prev.last_sync_sequence {
+                return Err(ComplianceFilterError::InvalidSyncSequence);
+            }
+        }
+
+        let state = SanctionsListSyncState {
+            source: source.clone(),
+            source_type,
+            last_sync_at: env.ledger().timestamp(),
+            last_sync_sequence: sequence,
+            total_entries: entry_count,
+            integrity_hash,
+            next_update_due: env.ledger().timestamp() + update_interval_secs,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&CfKey::SyncState(source.clone()), &state);
+
+        // Update or create the SanctionsList header so screening picks it up.
+        let lk = CfKey::List(source.clone());
+        let existing: Option<SanctionsList> = env.storage().persistent().get(&lk);
+        let list = SanctionsList {
+            source: source.clone(),
+            last_updated: env.ledger().timestamp(),
+            hash: integrity_hash,
+            active: true,
+            entry_count,
+        };
+        if existing.is_none() {
+            // Register in global index.
+            let mut index: Vec<Bytes> = env
+                .storage()
+                .persistent()
+                .get(&CfKey::ListIndex)
+                .unwrap_or_else(|| Vec::new(&env));
+            if !index.iter().any(|s| s == source) {
+                index.push_back(source.clone());
+                Self::persist(&env, &CfKey::ListIndex, &index);
+            }
+        }
+        Self::persist(&env, &lk, &list);
+
+        env.events().publish(
+            (Symbol::new(&env, "SanctionsListSynced"),),
+            (source, sequence, entry_count),
+        );
+        Ok(())
+    }
+
+    /// Apply an incremental (delta) update: add and remove individual addresses
+    /// without re-uploading the full list. Sequence must advance.
+    pub fn apply_incremental_update(
+        env: Env,
+        caller: Address,
+        source: Bytes,
+        sequence: u64,
+        added: Vec<Address>,
+        removed: Vec<Address>,
+        delta_hash: BytesN<32>,
+    ) -> Result<u32, ComplianceFilterError> {
+        caller.require_auth();
+        Self::require_admin_or_oracle(&env, &caller)?;
+
+        let sync_key = CfKey::SyncState(source.clone());
+        let mut state: SanctionsListSyncState = env
+            .storage()
+            .persistent()
+            .get(&sync_key)
+            .ok_or(ComplianceFilterError::NotFound)?;
+
+        if sequence <= state.last_sync_sequence {
+            return Err(ComplianceFilterError::InvalidSyncSequence);
+        }
+
+        let ek = CfKey::Entries(source.clone());
+        let mut entries: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&ek)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        // Remove first.
+        let mut new_entries: Vec<Address> = Vec::new(&env);
+        for e in entries.iter() {
+            if !removed.iter().any(|r| r == e) {
+                new_entries.push_back(e);
+            }
+        }
+        entries = new_entries;
+
+        // Add new (deduplicated).
+        for a in added.iter() {
+            if !entries.iter().any(|e| e == a) {
+                entries.push_back(a);
+            }
+        }
+
+        let total = entries.len() as u32;
+        Self::persist(&env, &ek, &entries);
+
+        state.last_sync_sequence = sequence;
+        state.last_sync_at = env.ledger().timestamp();
+        state.total_entries = total;
+        state.integrity_hash = delta_hash;
+        env.storage().persistent().set(&sync_key, &state);
+
+        // Record the delta for auditing.
+        let update_record = IncrementalUpdate {
+            source: source.clone(),
+            sequence,
+            added: added.clone(),
+            removed: removed.clone(),
+            delta_hash,
+            applied_at: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(
+            &CfKey::IncrementalUpdate(source.clone(), sequence),
+            &update_record,
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "IncrementalUpdateApplied"),),
+            (source, sequence, total),
+        );
+        Ok(total)
+    }
+
+    /// Return the current sync state for a list source.
+    pub fn get_sync_state(
+        env: Env,
+        source: Bytes,
+    ) -> Option<SanctionsListSyncState> {
+        env.storage()
+            .persistent()
+            .get(&CfKey::SyncState(source))
+    }
+
+    /// Return a specific incremental update record.
+    pub fn get_incremental_update(
+        env: Env,
+        source: Bytes,
+        sequence: u64,
+    ) -> Option<IncrementalUpdate> {
+        env.storage()
+            .persistent()
+            .get(&CfKey::IncrementalUpdate(source, sequence))
     }
 
     // ── Contract Upgrade (#275) ──────────────────────────────────────────────

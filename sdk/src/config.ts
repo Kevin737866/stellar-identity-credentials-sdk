@@ -7,7 +7,6 @@
  * @category Configuration
  */
 
-import { SorobanRpc, Networks } from 'stellar-sdk';
 import axios from 'axios';
 import {
   StellarIdentityConfig,
@@ -18,13 +17,18 @@ import {
   NetworkError,
   ErrorCode,
 } from './errors';
+import {
+  NETWORK_PRESETS,
+  getNetworkPreset,
+  isCanonicalNetwork,
+  type StellarNetworkName,
+} from './networks';
 
 // ---------------------------------------------------------------------------
 // Contract address patterns (Stellar contract IDs are 64 hex chars)
 // ---------------------------------------------------------------------------
 
 const CONTRACT_ID_REGEX = /^[0-9a-fA-F]{64}$/;
-const DEFAULT_FUTURENET_RPC = 'https://rpc-futurenet.stellar.org';
 
 // ---------------------------------------------------------------------------
 // Default configurations for each network
@@ -40,11 +44,12 @@ const DEFAULT_FUTURENET_RPC = 'https://rpc-futurenet.stellar.org';
  * const sdk = new StellarIdentitySDK(DEFAULT_CONFIGS.testnet);
  * ```
  */
-export const DEFAULT_CONFIGS: Record<string, StellarIdentityConfig> = {
+export const DEFAULT_CONFIGS: Readonly<Record<StellarNetworkName, StellarIdentityConfig>> = {
   testnet: {
     network: 'testnet',
-    rpcUrl: 'https://soroban-testnet.stellar.org',
-    horizonUrl: 'https://horizon-testnet.stellar.org',
+    rpcUrl: NETWORK_PRESETS.testnet.rpcUrl,
+    horizonUrl: NETWORK_PRESETS.testnet.horizonUrl,
+    protocolVersion: NETWORK_PRESETS.testnet.protocolVersion,
     contracts: {
       didRegistry: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822a',
       credentialIssuer: '7d0e6362929e37a88070052636437d0a4596628f783b87762897e9524e10822b',
@@ -56,8 +61,9 @@ export const DEFAULT_CONFIGS: Record<string, StellarIdentityConfig> = {
   },
   mainnet: {
     network: 'mainnet',
-    rpcUrl: 'https://soroban-rpc.stellar.org',
-    horizonUrl: 'https://horizon.stellar.org',
+    rpcUrl: NETWORK_PRESETS.mainnet.rpcUrl,
+    horizonUrl: NETWORK_PRESETS.mainnet.horizonUrl,
+    protocolVersion: NETWORK_PRESETS.mainnet.protocolVersion,
     contracts: {
       didRegistry: '',
       credentialIssuer: '',
@@ -69,8 +75,9 @@ export const DEFAULT_CONFIGS: Record<string, StellarIdentityConfig> = {
   },
   futurenet: {
     network: 'futurenet',
-    rpcUrl: DEFAULT_FUTURENET_RPC,
-    horizonUrl: 'https://horizon-futurenet.stellar.org',
+    rpcUrl: NETWORK_PRESETS.futurenet.rpcUrl,
+    horizonUrl: NETWORK_PRESETS.futurenet.horizonUrl,
+    protocolVersion: NETWORK_PRESETS.futurenet.protocolVersion,
     contracts: {
       didRegistry: '',
       credentialIssuer: '',
@@ -134,13 +141,32 @@ export function validateConfig(config: StellarIdentityConfig): StellarIdentityCo
     );
   }
 
-  const validNetworks = ['mainnet', 'testnet', 'futurenet'];
-  if (!validNetworks.includes(config.network)) {
+  if (!config.network || config.network.trim().length === 0) {
     throw new ConfigurationError(
       ErrorCode.ConfigInvalidNetwork,
-      `Invalid network "${config.network}". Must be one of: ${validNetworks.join(', ')}.`,
-      { network: config.network },
+      'Network must be specified (mainnet, testnet, futurenet, or a custom name).',
     );
+  }
+
+  // A non-canonical name is legitimate for a private or local deployment, but
+  // then the passphrase and RPC URL must both be supplied explicitly — neither
+  // can be inferred. Checking here is what stops a misconfigured custom
+  // network from producing transactions that silently never validate.
+  if (!isCanonicalNetwork(config.network)) {
+    if (!config.networkPassphrase) {
+      throw new ConfigurationError(
+        ErrorCode.ConfigInvalidPassphrase,
+        `Custom network "${config.network}" requires an explicit networkPassphrase.`,
+        { network: config.network },
+      );
+    }
+    if (!config.rpcUrl) {
+      throw new ConfigurationError(
+        ErrorCode.ConfigInvalidRpcUrl,
+        `Custom network "${config.network}" requires an explicit rpcUrl.`,
+        { network: config.network },
+      );
+    }
   }
 
   if (config.rpcUrl) {
@@ -160,6 +186,9 @@ export function validateConfig(config: StellarIdentityConfig): StellarIdentityCo
   validateContractAddress(config.contracts.reputationScore, 'Reputation Score');
   validateContractAddress(config.contracts.zkAttestation, 'ZK Attestation');
   validateContractAddress(config.contracts.complianceFilter, 'Compliance Filter');
+  // Schema Registry was previously omitted here, so a malformed or empty
+  // address passed validation and only failed at submission time.
+  validateContractAddress(config.contracts.schemaRegistry, 'Schema Registry');
 
   return config;
 }
@@ -213,15 +242,14 @@ export function mergeConfig(
  */
 export function getRpcUrl(config: StellarIdentityConfig): string {
   if (config.rpcUrl) return config.rpcUrl;
-
-  switch (config.network) {
-    case 'mainnet':
-      return 'https://soroban-rpc.stellar.org';
-    case 'futurenet':
-      return DEFAULT_FUTURENET_RPC;
-    default:
-      return 'https://soroban-testnet.stellar.org';
+  if (isCanonicalNetwork(config.network)) {
+    return getNetworkPreset(config.network).rpcUrl;
   }
+  throw new ConfigurationError(
+    ErrorCode.ConfigInvalidRpcUrl,
+    `Custom network "${config.network}" requires an explicit rpcUrl; it cannot be inferred.`,
+    { network: config.network },
+  );
 }
 
 /**
@@ -229,29 +257,39 @@ export function getRpcUrl(config: StellarIdentityConfig): string {
  */
 export function getHorizonUrl(config: StellarIdentityConfig): string {
   if (config.horizonUrl) return config.horizonUrl;
-
-  switch (config.network) {
-    case 'mainnet':
-      return 'https://horizon.stellar.org';
-    case 'futurenet':
-      return 'https://horizon-futurenet.stellar.org';
-    default:
-      return 'https://horizon-testnet.stellar.org';
+  if (isCanonicalNetwork(config.network)) {
+    return getNetworkPreset(config.network).horizonUrl;
   }
+  // A custom network need not expose Horizon at all — a bare Soroban RPC is a
+  // common local setup — so an empty string is a valid answer here, unlike
+  // for RPC where guessing would send traffic somewhere unintended.
+  return '';
 }
 
 /**
  * Returns the Stellar network passphrase for the given network.
  */
 export function getNetworkPassphrase(config: StellarIdentityConfig): string {
-  switch (config.network) {
-    case 'mainnet':
-      return Networks.PUBLIC;
-    case 'futurenet':
-      return Networks.FUTURENET;
-    default:
-      return Networks.TESTNET;
+  // An explicit passphrase always wins. This is what lets a local or forked
+  // network run with a non-standard passphrase while still naming itself
+  // 'testnet', and it is the only way a custom network can be signed for.
+  if (config.networkPassphrase) return config.networkPassphrase;
+
+  if (isCanonicalNetwork(config.network)) {
+    return getNetworkPreset(config.network).passphrase;
   }
+
+  // Previously this fell through to `Networks.TESTNET`, so a custom network
+  // silently signed with testnet's passphrase. Every resulting transaction
+  // would fail validation on the target network, with an error that pointed
+  // nowhere near the real cause.
+  throw new ConfigurationError(
+    ErrorCode.ConfigInvalidPassphrase,
+    `Custom network "${config.network}" requires an explicit networkPassphrase. ` +
+      'It cannot be derived from the network name, and defaulting to testnet would ' +
+      'produce transactions that never validate.',
+    { network: config.network },
+  );
 }
 
 /**
