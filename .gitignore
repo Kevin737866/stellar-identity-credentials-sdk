@@ -60,16 +60,43 @@ stellar-identity-config-*.json
 pr-106.md
 pr-110.md
 
-# Python scripts (fix helpers, not part of source)
-fix_errors*.py
+# Test snapshots
+**/__snapshots__/
+*.snap
 
-# Log files checked into repo
+# Build artifacts
+dist/
+build/
+*.js.map
+
+# Logs
+*.log
 ci.log
 gh_run.log
 cargo_check.log
 
-# Baseline/benchmark text files (generated)
-gas-benchmark-baseline.txt
+# Runtime files
+*.wasm
+target/
 
-# Sandbox generated files
-sandbox/*.generated.*
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python scripts (temp fix scripts)
+fix_errors.py
+fix_errors_2.py
+
+# Sandbox outputs
+sandbox/*.json
