@@ -127,6 +127,27 @@ export enum ErrorCode {
   // ── Rate limit errors (9xxx) ─────────────────────────────────────────────
   RateLimitExceeded       = 9001,
   RateLimitWindowExpired  = 9002,
+
+  // ── Generic contract errors (10xxx) ──────────────────────────────────────
+  //
+  // Used when a contract rejects a call without a code that maps cleanly onto
+  // one of the domain ranges above. `CONTRACT_ERROR` in particular is the
+  // catch-all for a raw `tx_bad_*` / simulation failure, and is referenced by
+  // clients that predate this enum member.
+  CONTRACT_ERROR           = 10001,
+  ContractCallFailed       = 10002,
+  ContractUnexpectedResult = 10003,
+  ContractCallReverted     = 10004,
+
+  // ── Cache errors (11xxx) ─────────────────────────────────────────────────
+  CacheBackendUnavailable = 11001,
+  CacheSerializationError = 11002,
+  CacheInvalidationError  = 11003,
+
+  // ── Retry errors (12xxx) ────────────────────────────────────────────────
+  RetryAborted            = 12001,
+  RetryTimeoutExceeded    = 12002,
+  CircuitOpen             = 12003,
 }
 
 // ── Recovery hints ────────────────────────────────────────────────────────────
@@ -225,6 +246,22 @@ export const RECOVERY_HINTS: Record<ErrorCode, string> = {
   // Rate limit
   [ErrorCode.RateLimitExceeded]:      'Request rate limit exceeded. Back off and retry after the reset window (typically 60 seconds).',
   [ErrorCode.RateLimitWindowExpired]: 'Rate limit window has expired. You may retry the operation now.',
+
+  // Generic contract
+  [ErrorCode.CONTRACT_ERROR]: 'The contract rejected the transaction. Inspect `details.contractError` for the on-chain error, and confirm the target contract exists and is initialized on this network.',
+  [ErrorCode.ContractCallFailed]: 'The contract call failed. Simulate the transaction to read the exact reason before retrying.',
+  [ErrorCode.ContractUnexpectedResult]: 'The contract returned a value of an unexpected type. This usually means the deployed contract ABI differs from the one this SDK version expects; check the contract version.',
+  [ErrorCode.ContractCallReverted]: 'The contract call reverted. Re-simulate to obtain the revert reason; retrying unchanged will fail the same way.',
+
+  // Cache
+  [ErrorCode.CacheBackendUnavailable]: 'The cache backend is unavailable, so caching is bypassed. This is non-fatal: the SDK falls back to direct network reads.',
+  [ErrorCode.CacheSerializationError]: 'A cache entry could not be serialized or deserialized. The entry has been discarded and will be refetched.',
+  [ErrorCode.CacheInvalidationError]: 'A cache entry could not be invalidated. Stale data may be served until its TTL expires.',
+
+  // Retry
+  [ErrorCode.RetryAborted]: 'The retry loop was aborted before completion. Inspect `details.attempts` for how many were made.',
+  [ErrorCode.RetryTimeoutExceeded]: 'The operation did not complete within the retry budget. Increase `maxAttempts` or `maxDelayMs`, or reduce the load on the endpoint.',
+  [ErrorCode.CircuitOpen]: 'The circuit breaker is open, so the call was rejected without being attempted. Calls resume automatically after the reset timeout.',
 };
 
 // ── Error classification metadata ─────────────────────────────────────────────
@@ -327,6 +364,24 @@ const ERROR_META: Record<ErrorCode, ErrorMeta> = {
   // Rate limit
   [ErrorCode.RateLimitExceeded]:      { errorClass: 'ratelimit', retryable: true,  retryDelayMs: 60_000 },
   [ErrorCode.RateLimitWindowExpired]: { errorClass: 'ratelimit', retryable: true,  retryDelayMs: 0 },
+
+  // Generic contract
+  [ErrorCode.CONTRACT_ERROR]:           { errorClass: 'contract',   retryable: false },
+  [ErrorCode.ContractCallFailed]:       { errorClass: 'contract',   retryable: false },
+  [ErrorCode.ContractUnexpectedResult]: { errorClass: 'contract',   retryable: false },
+  [ErrorCode.ContractCallReverted]:     { errorClass: 'contract',   retryable: false },
+
+  // Cache — a cache problem should never fail the caller's identity flow,
+  // so these are classified as retryable and non-auth so the retry engine
+  // simply bypasses the cache rather than propagating.
+  [ErrorCode.CacheBackendUnavailable]:  { errorClass: 'unknown',     retryable: true,  retryDelayMs: 0 },
+  [ErrorCode.CacheSerializationError]:  { errorClass: 'unknown',     retryable: true,  retryDelayMs: 0 },
+  [ErrorCode.CacheInvalidationError]:   { errorClass: 'unknown',     retryable: true,  retryDelayMs: 0 },
+
+  // Retry
+  [ErrorCode.RetryAborted]:             { errorClass: 'network',     retryable: false },
+  [ErrorCode.RetryTimeoutExceeded]:     { errorClass: 'network',     retryable: false },
+  [ErrorCode.CircuitOpen]:              { errorClass: 'network',     retryable: true,  retryDelayMs: 5_000 },
 };
 
 // ── Base error class ──────────────────────────────────────────────────────────
@@ -475,6 +530,126 @@ export class RateLimitError extends StellarIdentityError {
     this.name = 'RateLimitError';
     Object.setPrototypeOf(this, RateLimitError.prototype);
   }
+}
+
+/** A contract call was rejected. Generally not retryable without a change. @category Errors */
+export class ContractError extends StellarIdentityError {
+  constructor(code: ErrorCode, message?: string, details?: Record<string, unknown>) {
+    super(code, message, details);
+    this.name = 'ContractError';
+    Object.setPrototypeOf(this, ContractError.prototype);
+  }
+}
+
+/** The cache layer failed. Non-fatal — the SDK falls back to a direct read. @category Errors */
+export class CacheError extends StellarIdentityError {
+  constructor(code: ErrorCode, message?: string, details?: Record<string, unknown>) {
+    super(code, message, details);
+    this.name = 'CacheError';
+    Object.setPrototypeOf(this, CacheError.prototype);
+  }
+}
+
+/** The retry engine or a circuit breaker gave up. @category Errors */
+export class RetryError extends StellarIdentityError {
+  constructor(code: ErrorCode, message?: string, details?: Record<string, unknown>) {
+    super(code, message, details);
+    this.name = 'RetryError';
+    Object.setPrototypeOf(this, RetryError.prototype);
+  }
+}
+
+// ── Error serialization ───────────────────────────────────────────────────────
+
+/**
+ * The plain-object shape produced by {@link StellarIdentityError.toJSON}.
+ */
+export interface SerializedStellarError {
+  name: string;
+  code: number;
+  errorClass: ErrorClass;
+  message: string;
+  recovery: string;
+  retryable: boolean;
+  retryDelayMs: number;
+  details: Record<string, unknown>;
+  timestamp: number;
+  stack?: string;
+}
+
+/**
+ * Rebuild a typed error from the output of {@link StellarIdentityError.toJSON}.
+ *
+ * The `code` alone is enough to recover the classification, because every
+ * code's `errorClass` / `retryable` / `recovery` are derived from the
+ * `ERROR_META` and `RECOVERY_HINTS` tables. The subclass is recovered from
+ * `name` when it matches a known class, so `instanceof` checks still work on
+ * the far side of a transport boundary.
+ *
+ * This is what makes errors safe to log as JSON and reconstruct in a worker or
+ * an error-reporting service:
+ *
+ * ```ts
+ * // In the client
+ * logger.error(err.toJSON());
+ * // In the reporting service
+ * const err = fromJSON(record);
+ * if (err instanceof NetworkError && err.retryable) requeue(record);
+ * ```
+ *
+ * Falls back to a plain {@link StellarIdentityError} when the payload is not a
+ * recognisable serialized error, so it is safe to call on arbitrary JSON.
+ */
+export function fromJSON(value: unknown): StellarIdentityError {
+  if (value instanceof StellarIdentityError) return value;
+  if (typeof value !== 'object' || value === null) {
+    return new StellarIdentityError(
+      ErrorCode.CONTRACT_ERROR,
+      typeof value === 'string' ? value : 'Unrecognised error payload',
+      { raw: value },
+    );
+  }
+
+  const record = value as Partial<SerializedStellarError> & Record<string, unknown>;
+  const code = typeof record.code === 'number' ? (record.code as ErrorCode) : ErrorCode.CONTRACT_ERROR;
+  const message = typeof record.message === 'string' ? record.message : undefined;
+  const details =
+    typeof record.details === 'object' && record.details !== null
+      ? (record.details as Record<string, unknown>)
+      : {};
+
+  const Cls = ERROR_CLASS_BY_NAME[String(record.name ?? '')];
+  if (!Cls) {
+    return new StellarIdentityError(code, message, details);
+  }
+  return new Cls(code, message, details);
+}
+
+/** Maps a serialized `name` back to its error class. */
+const ERROR_CLASS_BY_NAME: Record<string, typeof StellarIdentityError> = {
+  StellarIdentityError,
+  DIDError,
+  CredentialError,
+  ReputationError,
+  ZKProofError,
+  ComplianceError,
+  ConfigurationError,
+  NetworkError,
+  ValidationError,
+  RateLimitError,
+  ContractError,
+  CacheError,
+  RetryError,
+};
+
+/** `true` when `value` looks like the output of `toJSON`. */
+export function isSerializedError(value: unknown): value is SerializedStellarError {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as SerializedStellarError).code === 'number' &&
+    typeof (value as SerializedStellarError).message === 'string'
+  );
 }
 
 // ── Contract error mapping ────────────────────────────────────────────────────
@@ -768,6 +943,18 @@ export function isValidationError(e: unknown): e is ValidationError {
 /** @category Errors */
 export function isRateLimitError(e: unknown): e is RateLimitError {
   return e instanceof RateLimitError;
+}
+/** @category Errors */
+export function isContractError(e: unknown): e is ContractError {
+  return e instanceof ContractError;
+}
+/** @category Errors */
+export function isCacheError(e: unknown): e is CacheError {
+  return e instanceof CacheError;
+}
+/** @category Errors */
+export function isRetryError(e: unknown): e is RetryError {
+  return e instanceof RetryError;
 }
 /** Returns true for any StellarIdentityError that is safe to retry. @category Errors */
 export function isRetryableError(e: unknown): e is StellarIdentityError {
