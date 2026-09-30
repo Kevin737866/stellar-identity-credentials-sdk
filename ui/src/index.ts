@@ -67,6 +67,8 @@ export { BellIcon } from './components/icons/BellIcon';
 export type { BellIconProps } from './components/icons/BellIcon';
 export {
   NOTIFICATION_PRESENTATION,
+  NOTIFICATION_TONES_BY_TYPE,
+  getNotificationPresentation,
   NOTIFICATION_TONES,
   formatRelativeTime,
   isCredentialNotification,
@@ -101,6 +103,12 @@ export { ApiPlayground } from './pages/ApiPlayground';
 export type { ApiPlaygroundProps } from './pages/ApiPlayground';
 
 // Hooks
+export { useNetworkSwitcher } from './hooks/useNetworkSwitcher';
+export type {
+  UseNetworkSwitcherResult,
+  NetworkOption,
+} from './hooks/useNetworkSwitcher';
+
 export {
   useStellarIdentity,
   useDID,
@@ -119,6 +127,28 @@ export type {
   UseCredentialEventsOptions,
   UseCredentialEventsResult,
 } from './hooks/useCredentialEvents';
+
+// Internationalisation (#215)
+export {
+  I18nProvider,
+  LanguageSwitcher,
+  useTranslation,
+  createFormatters,
+  detectLocale,
+  matchLocale,
+  isRTL,
+  SUPPORTED_LOCALES,
+  DEFAULT_LOCALE,
+  LOCALE_LABELS,
+  TRANSLATIONS,
+} from './i18n';
+export type {
+  SupportedLocale,
+  Messages,
+  I18nContextValue,
+  I18nProviderProps,
+  LocaleFormatters,
+} from './i18n';
 
 // Analytics
 export { AnalyticsDashboard } from './components/AnalyticsDashboard';
@@ -142,6 +172,7 @@ export {
   formatNumber,
   formatPercent,
   getDateRangeBounds,
+  getDateRangePresets,
   presetLabel,
   successRate,
   summariseSeries,

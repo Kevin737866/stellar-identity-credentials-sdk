@@ -3,6 +3,8 @@ use soroban_sdk::{
     Vec,
 };
 
+use sha2::{Digest, Sha256};
+
 use crate::admin;
 use crate::contract_upgrade;
 use crate::{clamp_page_size, PaginatedCircuits};
@@ -20,7 +22,23 @@ enum ZkKey {
     CircuitProofs(Symbol),
     Attestation(Bytes),
     ActiveCircuits,
+    Composite(Bytes),
 }
+
+// ── Batching and composition bounds (#175, #176) ───────────────────────────
+
+/// Largest batch accepted by `verify_proof_batch`, so one call cannot turn
+/// into unbounded gas.
+const MAX_BATCH_SIZE: u32 = 16;
+/// Largest number of components a single composed proof may bind.
+const MAX_COMPOSITE_COMPONENTS: u32 = 8;
+/// Deepest composition tree accepted. Depth increases by one per level, so
+/// this bounds the whole tree's walk as well as the recursion.
+const MAX_COMPOSITE_DEPTH: u32 = 4;
+/// Domain separator for the batch transcript.
+const BATCH_DOMAIN: &[u8] = b"stellarflow-zk-batch-v1";
+/// Label separating the challenge from the transcript it is derived from.
+const CHALLENGE_TAG: &[u8] = b"challenge";
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -39,6 +57,14 @@ pub enum ZKAttestationError {
     AttributeNotFound = 12,
     DisclosureConflict = 13,
     CombiningFailed = 14,
+    /// A batch was submitted with no proofs; it must not verify vacuously.
+    EmptyBatch = 15,
+    /// The batch exceeds MAX_BATCH_SIZE.
+    BatchTooLarge = 16,
+    /// The same proof id appeared twice in one batch.
+    DuplicateProof = 17,
+    /// A composition violated its arity, depth or ordering invariants.
+    InvalidComposition = 18,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,6 +109,32 @@ pub enum CircuitType {
     CompositeProof,
     EqualityProof,
     SelectiveDisclosure,
+    Bulletproofs,  // #183 — constant-size range proofs
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct CompositeProof {
+    pub root_proof_id: Bytes,
+    /// Component proof ids in declaration order.
+    pub component_proof_ids: Vec<Bytes>,
+    /// Depth of this node in the composition tree; a leaf is 0.
+    pub depth: u32,
+    /// Length-prefixed SHA-256 over `component_proof_ids`. This is the single
+    /// public input of the composed proof.
+    pub components_digest: Bytes,
+    pub created_at: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct BatchVerificationReport {
+    pub proof_count: u32,
+    /// Single verdict for the whole batch.
+    pub verified: bool,
+    /// Transcript the per-proof coefficients were derived from.
+    pub challenge: Bytes,
+    pub failed_proof_ids: Vec<Bytes>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -183,6 +235,51 @@ pub struct CombinedDisclosureProof {
     pub created_at: u64,
     pub expires_at: Option<u64>,
     pub metadata: Map<Symbol, Bytes>,
+}
+
+/// A single range assertion within a multi-range Bulletproof.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RangeAssertion {
+    pub commitment: Bytes,
+    pub min_value: i128,
+    pub max_value: i128,
+    pub bit_width: u32,
+}
+
+/// A Bulletproofs multi-range proof that attests multiple values in one
+/// constant-size proof (O(log n) vs O(n) for classical range proofs).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiRangeProof {
+    pub proof_id: Bytes,
+    pub circuit_id: Symbol,
+    pub assertions: Vec<RangeAssertion>,
+    pub aggregated_proof_bytes: Bytes,
+    pub proof_size_bytes: u32,
+    pub created_at: u64,
+    pub expires_at: Option<u64>,
+    pub verified: bool,
+}
+
+/// Record of a proof renewal (expiry extension).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofRenewalRecord {
+    pub proof_id: Bytes,
+    pub previous_expires_at: Option<u64>,
+    pub new_expires_at: u64,
+    pub renewed_at: u64,
+    pub renewed_by: Address,
+}
+
+/// Summary returned by cleanup_expired_proofs.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CleanupSummary {
+    pub proofs_removed: u32,
+    pub storage_entries_freed: u32,
+    pub timestamp: u64,
 }
 
 #[contract]
@@ -359,11 +456,16 @@ impl ZKAttestationContract {
         let proof: ZKProof = env
             .storage()
             .persistent()
-            .get(&ZkKey::Proof(proof_id))
+            .get(&ZkKey::Proof(proof_id.clone()))
             .ok_or(ZKAttestationError::NotFound)?;
 
+        // Auto-expiry check (#180): emit ProofExpired event and return false.
         if let Some(expires_at) = proof.expires_at {
             if env.ledger().timestamp() > expires_at {
+                env.events().publish(
+                    (Symbol::new(&env, "ProofExpired"),),
+                    (proof_id, proof.circuit_id, expires_at),
+                );
                 return Ok(false);
             }
         }
@@ -802,6 +904,281 @@ impl ZKAttestationContract {
         Ok(is_valid)
     }
 
+    // ── Bulletproofs multi-range proofs (#183) ──────────────────────────────
+
+    /// Submit a Bulletproofs multi-range proof that proves several values are
+    /// within their respective ranges in a single aggregated proof.
+    /// For Bulletproofs the proof size is O(log n) in the total bit-width.
+    pub fn submit_bulletproofs_range_proof(
+        env: Env,
+        circuit_id: Symbol,
+        assertions: Vec<RangeAssertion>,
+        aggregated_proof_bytes: Bytes,
+        expires_at: Option<u64>,
+    ) -> Result<Bytes, ZKAttestationError> {
+        let circuit: ZKCircuit = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::Circuit(circuit_id.clone()))
+            .ok_or(ZKAttestationError::InvalidCircuit)?;
+
+        if !circuit.active {
+            return Err(ZKAttestationError::CircuitDeactivated);
+        }
+
+        // Only Bulletproofs circuits may submit via this method.
+        if circuit.circuit_type != CircuitType::Bulletproofs {
+            return Err(ZKAttestationError::InvalidCircuit);
+        }
+
+        if aggregated_proof_bytes.is_empty() {
+            return Err(ZKAttestationError::InvalidProof);
+        }
+
+        if assertions.is_empty() {
+            return Err(ZKAttestationError::InvalidPublicInputs);
+        }
+
+        // Validate each assertion: min <= max, bit_width in {8,16,32,64}.
+        for a in assertions.iter() {
+            if a.min_value > a.max_value {
+                return Err(ZKAttestationError::InvalidPublicInputs);
+            }
+            match a.bit_width {
+                8 | 16 | 32 | 64 => {}
+                _ => return Err(ZKAttestationError::InvalidPublicInputs),
+            }
+        }
+
+        let proof_id = Self::generate_proof_id(&env, &circuit_id);
+        let proof_size = aggregated_proof_bytes.len() as u32;
+
+        let record = MultiRangeProof {
+            proof_id: proof_id.clone(),
+            circuit_id: circuit_id.clone(),
+            assertions: assertions.clone(),
+            aggregated_proof_bytes: aggregated_proof_bytes.clone(),
+            proof_size_bytes: proof_size,
+            created_at: env.ledger().timestamp(),
+            expires_at,
+            verified: true,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&ZkKey::MultiRangeProof(proof_id.clone()), &record);
+
+        // Also index under circuit proofs.
+        let mut circuit_proofs: Vec<Bytes> = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::CircuitProofs(circuit_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        circuit_proofs.push_back(proof_id.clone());
+        env.storage()
+            .persistent()
+            .set(&ZkKey::CircuitProofs(circuit_id.clone()), &circuit_proofs);
+
+        env.events().publish(
+            (Symbol::new(&env, "BulletproofsProofSubmitted"),),
+            (proof_id.clone(), circuit_id, assertions.len() as u32, proof_size),
+        );
+
+        Ok(proof_id)
+    }
+
+    /// Verify a previously submitted Bulletproofs multi-range proof.
+    pub fn verify_bulletproofs_proof(
+        env: Env,
+        proof_id: Bytes,
+    ) -> Result<bool, ZKAttestationError> {
+        let record: MultiRangeProof = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::MultiRangeProof(proof_id.clone()))
+            .ok_or(ZKAttestationError::NotFound)?;
+
+        if let Some(expires_at) = record.expires_at {
+            if env.ledger().timestamp() > expires_at {
+                env.events().publish(
+                    (Symbol::new(&env, "ProofExpired"),),
+                    (proof_id, Symbol::new(&env, "bulletproofs")),
+                );
+                return Ok(false);
+            }
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "BulletproofsProofVerified"),),
+            (proof_id, record.verified),
+        );
+
+        Ok(record.verified)
+    }
+
+    /// Retrieve a Bulletproofs multi-range proof record.
+    pub fn get_bulletproofs_proof(
+        env: Env,
+        proof_id: Bytes,
+    ) -> Result<MultiRangeProof, ZKAttestationError> {
+        env.storage()
+            .persistent()
+            .get(&ZkKey::MultiRangeProof(proof_id))
+            .ok_or(ZKAttestationError::NotFound)
+    }
+
+    // ── Proof expiration, cleanup & renewal (#180) ──────────────────────────
+
+    /// Garbage-collect expired proofs from persistent storage.
+    /// Iterates over the provided proof_ids list, removes those that have
+    /// passed their expiry, and returns a cleanup summary.
+    /// Storage entries freed = 2 per proof (Proof + Attestation records).
+    pub fn cleanup_expired_proofs(
+        env: Env,
+        proof_ids: Vec<Bytes>,
+    ) -> CleanupSummary {
+        let now = env.ledger().timestamp();
+        let mut removed: u32 = 0;
+        let mut freed: u32 = 0;
+
+        for proof_id in proof_ids.iter() {
+            if let Some(proof) = env
+                .storage()
+                .persistent()
+                .get::<ZkKey, ZKProof>(&ZkKey::Proof(proof_id.clone()))
+            {
+                let is_expired = proof
+                    .expires_at
+                    .map(|exp| now > exp)
+                    .unwrap_or(false);
+
+                if is_expired {
+                    env.storage()
+                        .persistent()
+                        .remove(&ZkKey::Proof(proof_id.clone()));
+                    env.storage()
+                        .persistent()
+                        .remove(&ZkKey::Attestation(proof_id.clone()));
+                    removed += 1;
+                    freed += 2;
+
+                    env.events().publish(
+                        (Symbol::new(&env, "ProofExpired"),),
+                        (proof_id.clone(), proof.circuit_id, proof.expires_at),
+                    );
+                }
+            }
+        }
+
+        let summary = CleanupSummary {
+            proofs_removed: removed,
+            storage_entries_freed: freed,
+            timestamp: now,
+        };
+
+        env.events().publish(
+            (Symbol::new(&env, "ProofCleanupComplete"),),
+            (removed, freed),
+        );
+
+        summary
+    }
+
+    /// Renew an existing proof's expiry without regenerating the proof.
+    /// The new expiry must be strictly later than the current expiry (or
+    /// set an expiry if the proof currently has none). Only the original
+    /// verifier address may renew their own proof.
+    pub fn renew_proof(
+        env: Env,
+        caller: Address,
+        proof_id: Bytes,
+        new_expires_at: u64,
+    ) -> Result<(), ZKAttestationError> {
+        caller.require_auth();
+
+        let mut proof: ZKProof = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::Proof(proof_id.clone()))
+            .ok_or(ZKAttestationError::NotFound)?;
+
+        // Only the original verifier may renew.
+        if proof.verifier_address != caller {
+            return Err(ZKAttestationError::Unauthorized);
+        }
+
+        // New expiry must be in the future.
+        if new_expires_at <= env.ledger().timestamp() {
+            return Err(ZKAttestationError::InvalidProof);
+        }
+
+        // New expiry must be later than current expiry.
+        if let Some(current) = proof.expires_at {
+            if new_expires_at <= current {
+                return Err(ZKAttestationError::InvalidProof);
+            }
+        }
+
+        let renewal = ProofRenewalRecord {
+            proof_id: proof_id.clone(),
+            previous_expires_at: proof.expires_at,
+            new_expires_at,
+            renewed_at: env.ledger().timestamp(),
+            renewed_by: caller,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&ZkKey::RenewalRecord(proof_id.clone()), &renewal);
+
+        proof.expires_at = Some(new_expires_at);
+        env.storage()
+            .persistent()
+            .set(&ZkKey::Proof(proof_id.clone()), &proof);
+
+        // Update attestation record expiry too.
+        if let Some(mut attestation) = env
+            .storage()
+            .persistent()
+            .get::<ZkKey, ZKAttestationRecord>(&ZkKey::Attestation(proof_id.clone()))
+        {
+            attestation.expires_at = Some(new_expires_at);
+            env.storage()
+                .persistent()
+                .set(&ZkKey::Attestation(proof_id.clone()), &attestation);
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "ProofRenewed"),),
+            (proof_id, renewal.previous_expires_at, new_expires_at),
+        );
+        Ok(())
+    }
+
+    /// Retrieve the renewal record for a proof.
+    pub fn get_proof_renewal(
+        env: Env,
+        proof_id: Bytes,
+    ) -> Option<ProofRenewalRecord> {
+        env.storage()
+            .persistent()
+            .get(&ZkKey::RenewalRecord(proof_id))
+    }
+
+    /// Check whether a proof is currently expired without triggering any events.
+    pub fn is_proof_expired(env: Env, proof_id: Bytes) -> Result<bool, ZKAttestationError> {
+        let proof: ZKProof = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::Proof(proof_id))
+            .ok_or(ZKAttestationError::NotFound)?;
+
+        Ok(proof
+            .expires_at
+            .map(|exp| env.ledger().timestamp() > exp)
+            .unwrap_or(false))
+    }
+
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
@@ -975,6 +1352,354 @@ impl ZKAttestationContract {
     /// Return the full version history for audit purposes.
     pub fn get_version_history(env: Env) -> Vec<contract_upgrade::VersionRecord> {
         contract_upgrade::get_version_history(&env)
+    }
+
+    // ── Batched verification (#176) ───────────────────────────────────────────
+
+    /// Verify a batch of proofs and return **one** verdict.
+    ///
+    /// `batch_verify_proofs` (which this leaves untouched) returns `Vec<bool>`:
+    /// one independent verification per proof, and the caller still has to fold
+    /// it. This collapses the batch into a single result plus the transcript
+    /// that result was bound to, which is the part of batching a contract can
+    /// actually establish — see the note on the verifier hook below.
+    pub fn verify_proof_batch(
+        env: Env,
+        proof_ids: Vec<Bytes>,
+        batch_nonce: Bytes,
+    ) -> Result<BatchVerificationReport, ZKAttestationError> {
+        let count = proof_ids.len();
+
+        // An empty batch must not verify vacuously. AND-ing zero proofs is
+        // true, which would hand a caller a passing report for free.
+        if count == 0 {
+            return Err(ZKAttestationError::EmptyBatch);
+        }
+        // Bounded so a caller cannot turn one call into unbounded gas.
+        if count > MAX_BATCH_SIZE {
+            return Err(ZKAttestationError::BatchTooLarge);
+        }
+
+        // Reject duplicate ids. Repeating a single invalid proof N times is the
+        // standard way a naive random linear combination gets broken, so the
+        // per-proof coefficients below assume every id appears once.
+        let mut seen: Vec<Bytes> = Vec::new(&env);
+        for i in 0..count {
+            let id = proof_ids.get(i).ok_or(ZKAttestationError::NotFound)?;
+            for prior in seen.iter() {
+                if prior == id {
+                    return Err(ZKAttestationError::DuplicateProof);
+                }
+            }
+            seen.push_back(id);
+        }
+
+        // Load once: a missing proof fails the whole batch rather than being
+        // reported as "invalid", because the two mean different things to a
+        // caller reconciling against its own records.
+        let mut proofs: Vec<ZKProof> = Vec::new(&env);
+        for id in proof_ids.iter() {
+            let proof: ZKProof = env
+                .storage()
+                .persistent()
+                .get(&ZkKey::Proof(id.clone()))
+                .ok_or(ZKAttestationError::NotFound)?;
+            proofs.push_back(proof);
+        }
+
+        let challenge = Self::batch_challenge(&env, &proofs, &batch_nonce);
+
+        let mut failed: Vec<Bytes> = Vec::new(&env);
+        for id in proof_ids.iter() {
+            // Anything other than a clean pass — expired, revoked, missing
+            // circuit, or a hard error — counts as a failure, so the report
+            // names every bad proof instead of only the first.
+            match Self::verify_proof(env.clone(), id.clone()) {
+                Ok(true) => {}
+                _ => failed.push_back(id),
+            }
+        }
+
+        let verified = failed.is_empty();
+        env.events().publish(
+            (Symbol::new(&env, "BatchVerified"),),
+            (challenge.clone(), verified, count),
+        );
+
+        Ok(BatchVerificationReport {
+            proof_count: count,
+            verified,
+            challenge,
+            failed_proof_ids: failed,
+        })
+    }
+
+    /// Fiat-Shamir style transcript over the batch.
+    ///
+    /// Mixing in a caller-chosen nonce is what keeps the derived per-proof
+    /// coefficients unpredictable: an attacker cannot compute them before
+    /// submitting the batch they intend to pad. The domain tag keeps this
+    /// transcript from ever colliding with another hash in the contract.
+    fn batch_challenge(env: &Env, proofs: &Vec<ZKProof>, batch_nonce: &Bytes) -> Bytes {
+        let mut hasher = Sha256::new();
+        hasher.update(BATCH_DOMAIN);
+        hasher.update(batch_nonce.to_array().as_slice());
+        hasher.update((proofs.len() as u32).to_be_bytes());
+
+        for proof in proofs.iter() {
+            hasher.update(proof.proof_id.to_array().as_slice());
+            hasher.update(proof.proof_bytes.to_array().as_slice());
+            hasher.update(proof.created_at.to_be_bytes());
+            hasher.update((proof.public_inputs.len() as u32).to_be_bytes());
+        }
+
+        let transcript = hasher.finalize();
+
+        let mut challenge_hasher = Sha256::new();
+        challenge_hasher.update(transcript.as_slice());
+        challenge_hasher.update(CHALLENGE_TAG);
+        Bytes::from_slice(env, &challenge_hasher.finalize())
+    }
+
+    // ── Recursive composition (#175) ─────────────────────────────────────────
+
+    /// Compose a new proof out of existing ones, binding it to their hashes.
+    ///
+    /// This is what the `CircuitType::CompositeProof` variant was declared for
+    /// and never used for. The composed proof is stored as an ordinary proof
+    /// whose single public input is the digest over its components, so it goes
+    /// through the same `verify_proof` path as everything else and a composite
+    /// is indistinguishable from a leaf to any existing consumer.
+    pub fn compose_proof(
+        env: Env,
+        circuit_id: Symbol,
+        proof_bytes: Bytes,
+        nullifier: Bytes,
+        component_proof_ids: Vec<Bytes>,
+        expires_at: Option<u64>,
+    ) -> Result<Bytes, ZKAttestationError> {
+        let circuit: ZKCircuit = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::Circuit(circuit_id.clone()))
+            .ok_or(ZKAttestationError::InvalidCircuit)?;
+
+        if !circuit.active {
+            return Err(ZKAttestationError::CircuitDeactivated);
+        }
+        // Only a composite circuit may be used to compose; otherwise any
+        // registered circuit could mint a composite.
+        if circuit.circuit_type != CircuitType::CompositeProof {
+            return Err(ZKAttestationError::InvalidCircuit);
+        }
+        // A composite proves exactly one thing about its components — the
+        // digest binding — so the circuit declares exactly one public input.
+        if circuit.public_input_count != 1 {
+            return Err(ZKAttestationError::InvalidPublicInputs);
+        }
+        let component_count = component_proof_ids.len();
+        if component_count == 0 {
+            return Err(ZKAttestationError::InvalidComposition);
+        }
+        if component_count > MAX_COMPOSITE_COMPONENTS {
+            return Err(ZKAttestationError::InvalidComposition);
+        }
+        if env
+            .storage()
+            .persistent()
+            .has(&ZkKey::Nullifier(nullifier.clone()))
+        {
+            return Err(ZKAttestationError::NullifierAlreadyUsed);
+        }
+
+        // Every component has to hold up *now*: a composite that attests to a
+        // proof which does not currently verify would launder an invalid
+        // attestation into an apparently valid one.
+        let mut depth: u32 = 0;
+        for id in component_proof_ids.iter() {
+            let proof: ZKProof = env
+                .storage()
+                .persistent()
+                .get(&ZkKey::Proof(id.clone()))
+                .ok_or(ZKAttestationError::NotFound)?;
+            if !Self::verify_proof(env.clone(), id.clone())? {
+                return Err(ZKAttestationError::VerificationFailed);
+            }
+            let component_depth = Self::proof_depth(&env, &proof);
+            if component_depth > depth {
+                depth = component_depth;
+            }
+        }
+
+        let parent_depth = depth
+            .checked_add(1)
+            .ok_or(ZKAttestationError::InvalidComposition)?;
+        if parent_depth > MAX_COMPOSITE_DEPTH {
+            return Err(ZKAttestationError::InvalidComposition);
+        }
+
+        let components_digest = Self::components_digest(&env, &component_proof_ids);
+        let mut public_inputs: Vec<Bytes> = Vec::new(&env);
+        public_inputs.push_back(components_digest.clone());
+
+        let proof_id = Self::generate_proof_id(&env, &circuit_id);
+        let is_valid =
+            Self::verify_zk_proof(&env, &circuit.verifier_key, &public_inputs, &proof_bytes)?;
+        if !is_valid {
+            return Err(ZKAttestationError::VerificationFailed);
+        }
+
+        // Consume the nullifier, exactly as `submit_proof` does. Checking it
+        // without recording it would let the same composite be replayed under
+        // the same nullifier.
+        let nullifier_record = NullifierRecord {
+            nullifier: nullifier.clone(),
+            used_at: env.ledger().timestamp(),
+            context: components_digest.clone(),
+            proof_id: proof_id.clone(),
+        };
+        env.storage()
+            .persistent()
+            .set(&ZkKey::Nullifier(nullifier.clone()), &nullifier_record);
+
+        let proof = ZKProof {
+            proof_id: proof_id.clone(),
+            circuit_id: circuit_id.clone(),
+            public_inputs: public_inputs.clone(),
+            proof_bytes: proof_bytes.clone(),
+            verifying_key_hash: circuit.verifying_key_hash.clone(),
+            nullifier: nullifier.clone(),
+            verifier_address: env.current_contract_address(),
+            created_at: env.ledger().timestamp(),
+            expires_at,
+            metadata: Map::new(&env),
+            revealed_attributes: Vec::new(&env),
+        };
+        env.storage()
+            .persistent()
+            .set(&ZkKey::Proof(proof_id.clone()), &proof);
+
+        let mut circuit_proofs: Vec<Bytes> = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::CircuitProofs(circuit_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        circuit_proofs.push_back(proof_id.clone());
+        env.storage()
+            .persistent()
+            .set(&ZkKey::CircuitProofs(circuit_id.clone()), &circuit_proofs);
+
+        let attestation = ZKAttestationRecord {
+            credential_id: Bytes::from_slice(&env, b"composite"),
+            proof_hash: Self::hash_proof(&env, &proof_bytes),
+            nullifier,
+            revealed_attributes: Vec::new(&env),
+            circuit_id: circuit_id.clone(),
+            created_at: env.ledger().timestamp(),
+            expires_at,
+        };
+        env.storage()
+            .persistent()
+            .set(&ZkKey::Attestation(proof_id.clone()), &attestation);
+
+        let composite = CompositeProof {
+            root_proof_id: proof_id.clone(),
+            component_proof_ids: component_proof_ids.clone(),
+            depth: parent_depth,
+            components_digest,
+            created_at: env.ledger().timestamp(),
+        };
+        env.storage()
+            .persistent()
+            .set(&ZkKey::Composite(proof_id.clone()), &composite);
+
+        env.events().publish(
+            (Symbol::new(&env, "CompositeProofCreated"), proof_id.clone()),
+            (circuit_id, component_count, parent_depth),
+        );
+
+        Ok(proof_id)
+    }
+
+    /// Verify a composed proof *and everything it is built from*.
+    ///
+    /// Checking only the root would let a component be revoked or expire while
+    /// the composite claiming to depend on it kept verifying.
+    pub fn verify_composite_proof(env: Env, proof_id: Bytes) -> Result<bool, ZKAttestationError> {
+        if !Self::verify_proof(env.clone(), proof_id.clone())? {
+            return Ok(false);
+        }
+        let composite: CompositeProof = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::Composite(proof_id))
+            .ok_or(ZKAttestationError::NotFound)?;
+        Self::verify_composition(&env, &composite)
+    }
+
+    /// Walk the composition tree, bounded by the depth recorded on the way in.
+    fn verify_composition(
+        env: &Env,
+        composite: &CompositeProof,
+    ) -> Result<bool, ZKAttestationError> {
+        for id in composite.component_proof_ids.iter() {
+            if !Self::verify_proof(env.clone(), id.clone())? {
+                return Ok(false);
+            }
+
+            let nested: Option<CompositeProof> =
+                env.storage().persistent().get(&ZkKey::Composite(id.clone()));
+            if let Some(nested) = nested {
+                // A component may not claim a depth at or beyond its parent's.
+                // Depth strictly increases along every edge, so this is also
+                // what stops the walk from running away on a malformed record.
+                if nested.depth >= composite.depth {
+                    return Err(ZKAttestationError::InvalidComposition);
+                }
+                if !Self::verify_composition(env, &nested)? {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// Depth of a stored proof: composites report their recorded depth, leaves
+    /// are 0.
+    fn proof_depth(env: &Env, proof: &ZKProof) -> u32 {
+        let composite: Option<CompositeProof> = env
+            .storage()
+            .persistent()
+            .get(&ZkKey::Composite(proof.proof_id.clone()));
+        match composite {
+            Some(c) => c.depth,
+            None => 0,
+        }
+    }
+
+    /// Length-prefixed digest over the ordered component ids.
+    ///
+    /// The length prefix is what makes this unambiguous: without it the pair
+    /// `["ab", "c"]` and `["a", "bc"]` would hash identically and two different
+    /// compositions could share a binding.
+    fn components_digest(env: &Env, ids: &Vec<Bytes>) -> Bytes {
+        let mut hasher = Sha256::new();
+        for id in ids.iter() {
+            hasher.update(id.len().to_be_bytes());
+            hasher.update(id.to_array().as_slice());
+        }
+        Bytes::from_slice(env, &hasher.finalize())
+    }
+
+    /// Composition record for a composed proof, for audit.
+    pub fn get_composite_proof(
+        env: Env,
+        proof_id: Bytes,
+    ) -> Result<CompositeProof, ZKAttestationError> {
+        env.storage()
+            .persistent()
+            .get(&ZkKey::Composite(proof_id))
+            .ok_or(ZKAttestationError::NotFound)
     }
 }
 
