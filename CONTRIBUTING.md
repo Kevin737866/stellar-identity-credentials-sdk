@@ -25,25 +25,7 @@ Thank you for your interest in contributing to the Stellar Identity and Verifiab
 ## Local Development Setup
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/Kevin737866/stellar-identity-credentials-sdk.git
-cd stellar-identity-credentials-sdk
 
-# 2. Install Rust dependencies
-cargo build
-
-# 3. Install Node.js dependencies
-npm install
-cd ui && npm install && cd ..
-
-# 4. Build contracts
-cargo build --target wasm32-unknown-unknown --release
-
-# 5. Build SDK
-npm run build
-
-# 6. Build UI components
-cd ui && npm run build && cd ..
 ```
 
 ## Available Scripts
@@ -111,9 +93,7 @@ cd ui && npm run build && cd ..
 
 ### Commit Message Format
 ```
-feat|fix|docs|test|refactor|chore: <description>
 
-- Detailed bullet points for complex changes
 ```
 
 ### Pull Request Checklist
