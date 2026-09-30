@@ -533,6 +533,44 @@ export type {
 export { StatusListClient } from './statusListClient';
 export type { StatusListMetadata } from './statusListClient';
 
+// Cross-platform / React Native support (#204)
+export {
+  detectPlatform,
+  resetPlatformCache,
+  isReactNative,
+  isBrowser,
+  isNode,
+  getCapabilities,
+  bytesToHex,
+  hexToBytes,
+  bytesToBase64,
+  base64ToBytes,
+  stringToBytes,
+  bytesToString,
+  randomBytes,
+  sha256,
+  assertNetworkReachable,
+} from './platform';
+export type {
+  RuntimePlatform,
+  PlatformCapabilities,
+  RandomSource,
+  NetworkCheckOptions,
+} from './platform';
+
+export {
+  AsyncStorageBackend,
+  AsyncDIDCache,
+  BiometricKeyManager,
+  encodeSecretForStorage,
+} from './reactNative';
+export type {
+  AsyncStorageLike,
+  AsyncCacheEntry,
+  BiometricResult,
+  LocalAuthenticationLike,
+  KeyLoader,
+} from './reactNative';
 // Privacy Enhancements — Issues #188, #189, #190, #191
 export { DataPortabilityManager } from './dataPortability';
 export type {
