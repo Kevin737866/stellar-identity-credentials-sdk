@@ -3,6 +3,7 @@ extern crate alloc;
 pub mod admin;
 pub mod admin_multisig;
 pub mod audit_trail;
+pub mod batch_optimizer;
 pub mod compliance_filter;
 pub mod contract_telemetry;
 pub mod contract_upgrade;
@@ -11,19 +12,21 @@ pub mod credential_issuer;
 pub mod credential_offer;
 pub mod did_recovery;
 pub mod did_registry;
+pub mod event_index;
 pub mod gas_benchmark;
-pub mod performance_optimizer;
 pub mod rate_limiter;
-pub mod reentrancy_guard;
 pub mod reputation_oracle;
 pub mod reputation_score;
 pub mod schema_registry;
 pub mod status_list;
 pub mod storage_optimization;
+pub mod validation;
 pub mod zk_attestation;
 
 #[cfg(test)]
 mod e2e_identity_lifecycle;
+#[cfg(test)]
+mod e2e_testnet;
 #[cfg(test)]
 mod fuzz_test_script;
 #[cfg(test)]
@@ -59,6 +62,15 @@ pub use contract_version::VersionHistoryEntry;
 pub use contract_version::VERSION_MAJOR;
 pub use contract_version::VERSION_MINOR;
 pub use contract_version::VERSION_PATCH;
+pub use compliance_filter::ComplianceRuleCondition;
+pub use compliance_filter::RuleViolation;
+pub use compliance_filter::ComplianceEvaluationInput;
+pub use compliance_filter::ComplianceEvaluationResult;
+pub use compliance_filter::IncrementalUpdate;
+pub use compliance_filter::SanctionsListSource;
+pub use compliance_filter::SanctionsListSyncState;
+pub use compliance_filter::TravelRuleAuditRecord;
+pub use compliance_filter::TravelRuleInfo;
 pub use credential_issuer::CredentialIssuer;
 pub use credential_offer::CredentialOffer;
 pub use credential_offer::CredentialOfferContract;
@@ -77,6 +89,14 @@ pub use did_registry::DIDRegistry;
 pub use did_registry::MultiSigConfig;
 pub use did_registry::PendingMultiSigOperation;
 pub use did_registry::Signer;
+pub use event_index::EventFilter;
+pub use event_index::EventRecord;
+pub use event_index::EventStreamPage;
+pub use event_index::IndexedEventType;
+pub use event_index::PaginatedEvents;
+pub use rate_limiter::RateLimitConfig;
+pub use rate_limiter::RateLimitError;
+pub use rate_limiter::RateLimitStatus;
 pub use reputation_oracle::DisputeStatus;
 pub use reputation_oracle::OracleDataFeed;
 pub use reputation_oracle::OracleDispute;
@@ -86,6 +106,9 @@ pub use reputation_oracle::PaginatedFeeds;
 pub use reputation_oracle::ReputationOracle;
 pub use reputation_oracle::ReputationOracleError;
 pub use reputation_score::ReputationScore;
+pub use reputation_score::ReputationTier;
+pub use reputation_score::TierRequirements;
+pub use reputation_score::TierThresholds;
 pub use schema_registry::CredentialSchemaRegistry;
 pub use status_list::BitstringStatusList;
 pub use status_list::StatusListError;
@@ -94,13 +117,14 @@ pub use zk_attestation::CombinedDisclosureProof;
 pub use zk_attestation::PredicateInfo;
 pub use zk_attestation::PredicateType;
 pub use zk_attestation::SelectiveDisclosureProof;
+pub use zk_attestation::SupportedCurve;
 pub use zk_attestation::ZKAttestationContract;
 pub use zk_attestation::ZKAttestationContractClient;
 pub use zk_attestation::ZKAttestationRecord;
-
-pub use status_list::BitstringStatusList;
-pub use status_list::StatusListError;
-pub use status_list::StatusListMeta;
+pub use zk_attestation::CleanupSummary;
+pub use zk_attestation::MultiRangeProof;
+pub use zk_attestation::ProofRenewalRecord;
+pub use zk_attestation::RangeAssertion;
 
 #[contracttype]
 #[derive(Clone)]

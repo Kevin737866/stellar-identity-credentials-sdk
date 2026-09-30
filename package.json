@@ -26,6 +26,9 @@
     "dev": "tsup --watch",
     "test": "jest",
     "lint": "eslint \"sdk/src/**/*.ts\" --max-warnings=9999",
+    "docs": "typedoc",
+    "docs:watch": "typedoc --watch",
+    "docs:check": "typedoc --emit none",
     "prepare": "npm run build"
   },
   "keywords": [

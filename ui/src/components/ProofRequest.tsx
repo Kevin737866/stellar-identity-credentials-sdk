@@ -21,6 +21,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Skeleton, SkeletonList } from '@/components/ui/skeleton';
+import { useTranslation } from '../i18n';
 import { 
   ZKProofsClient, 
   ZKProof, 
@@ -50,6 +52,7 @@ interface ProofRequestProps {
 }
 
 export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypair }) => {
+  const { t, format } = useTranslation();
   const [proofs, setProofs] = useState<ZKProof[]>([]);
   const [circuits, setCircuits] = useState<any[]>([]);
   const [selectedProof, setSelectedProof] = useState<ZKProof | null>(null);
@@ -93,7 +96,7 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
       });
       setVerificationResults(verificationMap);
     } catch (error: any) {
-      setError(error.message || 'Failed to load proofs');
+      setError(error.message || t('proof.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -106,7 +109,7 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
       const loadedCircuits = await Promise.all(circuitPromises);
       setCircuits(loadedCircuits);
     } catch (error: any) {
-      console.error('Failed to load circuits:', error);
+      console.error(t('proof.circuitsLoadFailed'), error);
     }
   };
 
@@ -116,7 +119,7 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
       setError(null);
       
       if (!newProof.circuitId || !newProof.proofBytes) {
-        setError('Please fill in all required fields');
+        setError(t('proof.requiredFields'));
         return;
       }
 
@@ -131,7 +134,7 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
         metadata: newProof.metadata
       });
 
-      setSuccess(`Proof created successfully: ${proofId}`);
+      setSuccess(t('proof.createSucceeded', { id: proofId }));
       setShowCreateDialog(false);
       setNewProof({
         circuitId: '',
@@ -142,7 +145,7 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
       });
       await loadProofs();
     } catch (error: any) {
-      setError(error.message || 'Failed to create proof');
+      setError(error.message || t('proof.createFailed'));
     } finally {
       setLoading(false);
     }
@@ -164,10 +167,10 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
         proofBytes
       );
 
-      setSuccess(`Age proof created successfully: ${proofId}`);
+      setSuccess(t('proof.ageSucceeded', { id: proofId }));
       await loadProofs();
     } catch (error: any) {
-      setError(error.message || 'Failed to create age proof');
+      setError(error.message || t('proof.ageFailed'));
     } finally {
       setLoading(false);
     }
@@ -188,10 +191,10 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
         proofBytes
       );
 
-      setSuccess(`Income proof created successfully: ${proofId}`);
+      setSuccess(t('proof.incomeSucceeded', { id: proofId }));
       await loadProofs();
     } catch (error: any) {
-      setError(error.message || 'Failed to create income proof');
+      setError(error.message || t('proof.incomeFailed'));
     } finally {
       setLoading(false);
     }
@@ -206,7 +209,7 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
         [proofId]: result
       }));
     } catch (error: any) {
-      setError(error.message || 'Failed to verify proof');
+      setError(error.message || t('proof.verifyFailed'));
     } finally {
       setLoading(false);
     }
@@ -221,9 +224,9 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
 
   const getStatusBadge = (verification: ZKVerificationResult) => {
     if (verification.valid) {
-      return <Badge variant="default">Valid</Badge>;
+      return <Badge variant="default">{t('proof.status.valid')}</Badge>;
     }
-    return <Badge variant="destructive">Invalid</Badge>;
+    return <Badge variant="destructive">{t('proof.status.invalid')}</Badge>;
   };
 
   const getCircuitIcon = (circuitId: string) => {
@@ -243,9 +246,22 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
     return (
       <Card>
         <CardContent className="p-6">
-          <div className="flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <span className="ml-2">Loading zero-knowledge proofs...</span>
+          <div
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+            aria-label={t('proof.loading')}
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <Skeleton shape="circle" height={40} width={40} />
+              <div style={{ flex: 1 }}>
+                <Skeleton height={16} shape="text" width={6} />
+                <div style={{ height: 'var(--space-2)' }} />
+                <Skeleton height={11} shape="text" width={9} />
+              </div>
+            </div>
+            <SkeletonList rows={3} />
+            <span className="sr-only">{t('proof.loading')}</span>
           </div>
         </CardContent>
       </Card>
@@ -273,19 +289,19 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
           <div className="flex justify-between items-center">
             <CardTitle className="flex items-center">
               <Zap className="h-5 w-5 mr-2" />
-              Zero-Knowledge Proofs
+              {t('proof.title')}
             </CardTitle>
             <div className="space-x-2">
               <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
                 <DialogTrigger asChild>
                   <Button>
                     <Plus className="h-4 w-4 mr-2" />
-                    Create Proof
+                    {t('proof.create')}
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="max-w-2xl">
                   <DialogHeader>
-                    <DialogTitle>Create Zero-Knowledge Proof</DialogTitle>
+                    <DialogTitle>{t('proof.createNew')}</DialogTitle>
                   </DialogHeader>
                   <CreateProofForm
                     proof={newProof}
@@ -302,9 +318,9 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
         <CardContent>
           <Tabs defaultValue="quick-actions" className="w-full">
             <TabsList>
-              <TabsTrigger value="quick-actions">Quick Actions</TabsTrigger>
-              <TabsTrigger value="my-proofs">My Proofs</TabsTrigger>
-              <TabsTrigger value="circuits">Available Circuits</TabsTrigger>
+              <TabsTrigger value="quick-actions">{t('proof.quickActions')}</TabsTrigger>
+              <TabsTrigger value="my-proofs">{t('proof.myProofs')}</TabsTrigger>
+              <TabsTrigger value="circuits">{t('proof.availableCircuits')}</TabsTrigger>
             </TabsList>
             
             <TabsContent value="quick-actions" className="space-y-4">
@@ -315,10 +331,10 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
                       <div>
                         <h3 className="font-medium flex items-center">
                           <Calendar className="h-4 w-4 mr-2" />
-                          Age Verification
+                          {t('proof.age')}
                         </h3>
                         <p className="text-sm text-gray-600 mt-1">
-                          Prove you're over 18 without revealing your age
+                          {t('proof.ageDescription')}
                         </p>
                       </div>
                       <Button
@@ -326,7 +342,7 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
                         disabled={loading}
                       >
                         <Lock className="h-4 w-4 mr-2" />
-                        Create Proof
+                        {t('proof.create')}
                       </Button>
                     </div>
                   </CardContent>
@@ -338,10 +354,10 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
                       <div>
                         <h3 className="font-medium flex items-center">
                           <DollarSign className="h-4 w-4 mr-2" />
-                          Income Verification
+                          {t('proof.income')}
                         </h3>
                         <p className="text-sm text-gray-600 mt-1">
-                          Prove minimum income without revealing exact amount
+                          {t('proof.incomeDescription')}
                         </p>
                       </div>
                       <Button
@@ -349,7 +365,7 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
                         disabled={loading}
                       >
                         <Lock className="h-4 w-4 mr-2" />
-                        Create Proof
+                        {t('proof.create')}
                       </Button>
                     </div>
                   </CardContent>
@@ -361,10 +377,10 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
                       <div>
                         <h3 className="font-medium flex items-center">
                           <UserCheck className="h-4 w-4 mr-2" />
-                          Identity Verification
+                          {t('proof.identity')}
                         </h3>
                         <p className="text-sm text-gray-600 mt-1">
-                          Prove you own a credential without revealing details
+                          {t('proof.identityDescription')}
                         </p>
                       </div>
                       <Button
@@ -380,7 +396,7 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
                         }}
                       >
                         <Lock className="h-4 w-4 mr-2" />
-                        Create Proof
+                        {t('proof.create')}
                       </Button>
                     </div>
                   </CardContent>
@@ -392,17 +408,17 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
                       <div>
                         <h3 className="font-medium flex items-center">
                           <Shield className="h-4 w-4 mr-2" />
-                          Custom Proof
+                          {t('proof.customTitle')}
                         </h3>
                         <p className="text-sm text-gray-600 mt-1">
-                          Create a custom zero-knowledge proof
+                          {t('proof.customDescription')}
                         </p>
                       </div>
                       <Button
                         onClick={() => setShowCreateDialog(true)}
                       >
                         <Plus className="h-4 w-4 mr-2" />
-                        Custom
+                        {t('proof.custom')}
                       </Button>
                     </div>
                   </CardContent>
@@ -414,8 +430,8 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
               {proofs.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   <Shield className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-                  <p>No proofs found</p>
-                  <p className="text-sm">Create your first zero-knowledge proof</p>
+                  <p>{t('proof.empty')}</p>
+                  <p className="text-sm">{t('proof.emptyHint')}</p>
                 </div>
               ) : (
                 <div className="grid gap-4">
@@ -431,16 +447,18 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
                                 {verification && getStatusIcon(verification)}
                                 {verification && getStatusBadge(verification)}
                                 <span className="text-sm text-gray-500">
-                                  {new Date(proof.createdAt).toLocaleDateString()}
+                                  {format.formatDate(new Date(proof.createdAt))}
                                 </span>
                               </div>
-                              
+
+                              {/* Circuit ids are on-chain identifiers, not UI copy: they are
+                                  never translated, only shortened to fit the card. */}
                               <h3 className="font-medium mb-1">
-                                {proof.circuitId.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                {format.truncateMiddle(proof.circuitId, 24)}
                               </h3>
-                              
+
                               <p className="text-sm text-gray-600 mb-2">
-                                Circuit: {proof.circuitId}
+                                {t('proof.circuitLabel')}: {proof.circuitId}
                               </p>
                               
                               <div className="flex flex-wrap gap-1 mb-2">
@@ -453,7 +471,7 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
                               
                               {proof.expiresAt && (
                                 <p className="text-xs text-gray-500">
-                                  Expires: {new Date(proof.expiresAt).toLocaleDateString()}
+                                  {t('proof.expires')}: {format.formatDate(new Date(proof.expiresAt))}
                                 </p>
                               )}
                             </div>
@@ -495,13 +513,15 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
                             {getCircuitIcon(circuit.circuitId)}
                             <h3 className="font-medium">{circuit.name}</h3>
                             <Badge variant={circuit.active ? 'default' : 'secondary'}>
-                              {circuit.active ? 'Active' : 'Inactive'}
+                              {circuit.active ? t('proof.active') : t('proof.inactive')}
                             </Badge>
                           </div>
+                          {/* Name and description come from the server in English; they are
+                              data, not localisable copy. */}
                           <p className="text-sm text-gray-600 mb-2">{circuit.description}</p>
                           <div className="text-xs text-gray-500">
-                            <p>Public inputs: {circuit.publicInputCount}</p>
-                            <p>Private inputs: {circuit.privateInputCount}</p>
+                            <p>{t('proof.publicInputsCount', { count: format.formatNumber(circuit.publicInputCount) })}</p>
+                            <p>{t('proof.privateInputsCount', { count: format.formatNumber(circuit.privateInputCount) })}</p>
                           </div>
                         </div>
                         <Button
@@ -517,7 +537,7 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
                             setShowCreateDialog(true);
                           }}
                         >
-                          Use Circuit
+                          {t('proof.useCircuit')}
                         </Button>
                       </div>
                     </CardContent>
@@ -533,7 +553,7 @@ export const ProofRequest: React.FC<ProofRequestProps> = ({ sdk, address, keypai
         <Dialog open={!!selectedProof} onOpenChange={() => setSelectedProof(null)}>
           <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Proof Details</DialogTitle>
+              <DialogTitle>{t('proof.details')}</DialogTitle>
             </DialogHeader>
             <ProofDetailView proof={selectedProof} />
           </DialogContent>
@@ -558,6 +578,7 @@ const CreateProofForm: React.FC<CreateProofFormProps> = ({
   onSubmit,
   loading
 }) => {
+  const { t } = useTranslation();
   const selectedCircuit = circuits.find(c => c.circuitId === proof.circuitId);
 
   const addPublicInput = () => {
@@ -586,7 +607,7 @@ const CreateProofForm: React.FC<CreateProofFormProps> = ({
   return (
     <div className="space-y-4">
       <div>
-        <Label>Circuit</Label>
+        <Label>{t('proof.circuitLabel')}</Label>
         <Select
           value={proof.circuitId}
           onValueChange={(value) => onChange({ 
@@ -596,7 +617,7 @@ const CreateProofForm: React.FC<CreateProofFormProps> = ({
           })}
         >
           <SelectTrigger>
-            <SelectValue placeholder="Select circuit" />
+            <SelectValue placeholder={t('proof.selectCircuit')} />
           </SelectTrigger>
           <SelectContent>
             {circuits.map((circuit) => (
@@ -610,14 +631,14 @@ const CreateProofForm: React.FC<CreateProofFormProps> = ({
 
       {selectedCircuit && (
         <div>
-          <Label>Public Inputs</Label>
+          <Label>{t('proof.publicInputs')}</Label>
           <div className="space-y-2 mt-2">
             {proof.publicInputs.map((input: string, index: number) => (
               <div key={index} className="flex space-x-2">
                 <Input
                   value={input}
                   onChange={(e) => updatePublicInput(index, e.target.value)}
-                  placeholder={`Input ${index + 1}`}
+                  placeholder={t('proof.inputPlaceholder', { index: index + 1 })}
                 />
                 <Button
                   variant="outline"
@@ -634,25 +655,25 @@ const CreateProofForm: React.FC<CreateProofFormProps> = ({
               className="w-full"
             >
               <Plus className="h-4 w-4 mr-2" />
-              Add Input
+              {t('proof.addInput')}
             </Button>
           </div>
         </div>
       )}
 
       <div>
-        <Label htmlFor="proofBytes">Proof Bytes</Label>
+        <Label htmlFor="proofBytes">{t('proof.proofBytes')}</Label>
         <Textarea
           id="proofBytes"
           value={proof.proofBytes}
           onChange={(e) => onChange({ ...proof, proofBytes: e.target.value })}
-          placeholder="Generated proof bytes from ZK circuit"
+          placeholder={t('proof.proofBytesPlaceholder')}
           rows={4}
         />
       </div>
 
       <div>
-        <Label htmlFor="expiresAt">Expiration Date (Optional)</Label>
+        <Label htmlFor="expiresAt">{t('proof.expirationDateOptional')}</Label>
         <Input
           id="expiresAt"
           type="date"
@@ -662,7 +683,7 @@ const CreateProofForm: React.FC<CreateProofFormProps> = ({
       </div>
 
       <Button onClick={onSubmit} disabled={loading} className="w-full">
-        {loading ? 'Creating...' : 'Create Proof'}
+        {loading ? t('proof.creating') : t('proof.create')}
       </Button>
     </div>
   );
@@ -673,17 +694,18 @@ interface ProofDetailViewProps {
 }
 
 const ProofDetailView: React.FC<ProofDetailViewProps> = ({ proof }) => {
+  const { t, format } = useTranslation();
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <Label className="text-sm font-medium">Proof ID</Label>
+          <Label className="text-sm font-medium">{t('proof.proofId')}</Label>
           <code className="block bg-gray-100 px-3 py-2 rounded text-sm mt-1 break-all">
             {proof.proofId}
           </code>
         </div>
         <div>
-          <Label className="text-sm font-medium">Circuit ID</Label>
+          <Label className="text-sm font-medium">{t('proof.circuitId')}</Label>
           <code className="block bg-gray-100 px-3 py-2 rounded text-sm mt-1">
             {proof.circuitId}
           </code>
@@ -692,30 +714,30 @@ const ProofDetailView: React.FC<ProofDetailViewProps> = ({ proof }) => {
 
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <Label className="text-sm font-medium">Verifier Address</Label>
+          <Label className="text-sm font-medium">{t('proof.verifierAddress')}</Label>
           <code className="block bg-gray-100 px-3 py-2 rounded text-sm mt-1">
             {proof.verifierAddress}
           </code>
         </div>
         <div>
-          <Label className="text-sm font-medium">Created At</Label>
+          <Label className="text-sm font-medium">{t('proof.createdAt')}</Label>
           <p className="text-sm mt-1">
-            {new Date(proof.createdAt).toLocaleString()}
+            {format.formatDateTime(new Date(proof.createdAt))}
           </p>
         </div>
       </div>
 
       {proof.expiresAt && (
         <div>
-          <Label className="text-sm font-medium">Expires At</Label>
+          <Label className="text-sm font-medium">{t('proof.expiresAt')}</Label>
           <p className="text-sm mt-1">
-            {new Date(proof.expiresAt).toLocaleString()}
+            {format.formatDateTime(new Date(proof.expiresAt))}
           </p>
         </div>
       )}
 
       <div>
-        <Label className="text-sm font-medium">Public Inputs</Label>
+        <Label className="text-sm font-medium">{t('proof.publicInputs')}</Label>
         <div className="space-y-1 mt-1">
           {proof.publicInputs.map((input, index) => (
             <code key={index} className="block bg-gray-100 px-3 py-2 rounded text-sm">
@@ -726,7 +748,7 @@ const ProofDetailView: React.FC<ProofDetailViewProps> = ({ proof }) => {
       </div>
 
       <div>
-        <Label className="text-sm font-medium">Proof Bytes</Label>
+        <Label className="text-sm font-medium">{t('proof.proofBytes')}</Label>
         <pre className="bg-gray-100 p-4 rounded text-sm mt-1 overflow-x-auto">
           {proof.proofBytes}
         </pre>
@@ -734,7 +756,7 @@ const ProofDetailView: React.FC<ProofDetailViewProps> = ({ proof }) => {
 
       {Object.keys(proof.metadata).length > 0 && (
         <div>
-          <Label className="text-sm font-medium">Metadata</Label>
+          <Label className="text-sm font-medium">{t('proof.metadata')}</Label>
           <div className="grid grid-cols-2 gap-2 mt-1">
             {Object.entries(proof.metadata).map(([key, value]) => (
               <div key={key} className="bg-gray-100 p-2 rounded text-sm">

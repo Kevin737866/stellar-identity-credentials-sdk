@@ -162,3 +162,110 @@
     --color-ring: var(--color-primary-400);
   }
 }
+
+/* ─── Accessibility Utilities ─── */
+
+/**
+ * Visually hidden but still announced by screen readers.
+ * Used for live-region labels on skeletons and icon-only buttons.
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/**
+ * Visible only when focused via keyboard. Used to surface skip links.
+ */
+.focus-visible-only:not(:focus):not(:focus-visible) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* ─── Skeleton Shimmer (#217) ─── */
+
+/**
+ * A sweep of light across a loading placeholder.
+ *
+ * The gradient is drawn on a pseudo-element rather than animating
+ * `background-position` so the animation stays on the compositor and does
+ * not repaint on every frame.
+ */
+@keyframes skeleton-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.45) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/**
+ * Respect the OS "reduce motion" setting: hold the placeholder static rather
+ * than animating it. WCAG 2.3.3 does not require animation, so removing it is
+ * always safe.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+    transform: none;
+    opacity: 0;
+  }
+}
+
+/* Dark mode needs a lower-contrast sweep to stay visible without glaring. */
+[data-theme='dark'] .skeleton::after,
+.dark .skeleton::after {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+}
+
+/**
+ * A visible focus ring for keyboard users.
+ *
+ * `:focus-visible` keeps the ring off mouse clicks, which is what makes a
+ * keyboard-navigable UI feel intentional rather than noisy.
+ */
+:focus-visible {
+  outline: 2px solid var(--color-ring, var(--color-primary-500));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}

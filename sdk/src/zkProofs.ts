@@ -636,6 +636,88 @@ export class ZKProofsClient {
   }
 
   /**
+   * Retrieve the list of disclosed attribute names from a selective disclosure proof.
+   */
+  async getDisclosedAttributes(proofId: string): Promise<string[]> {
+    try {
+      const retval = await this.simulateRead('get_disclosed_attributes', [
+        nativeToScVal(new TextEncoder().encode(proofId), { type: 'bytes' }),
+      ]);
+      const res = scValToNative(retval);
+      return Array.isArray(res) ? res.map(String) : [];
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Verify a Groth16 zero-knowledge proof on-chain using Soroban pairing checks.
+   */
+  async verifyGroth16Proof(
+    curve: 'bls12_381' | 'bn254',
+    proof: { a: string; b: string; c: string },
+    publicInputs: string[],
+    verifyingKey: string
+  ): Promise<boolean> {
+    try {
+      const curveNum = curve === 'bn254' ? 1 : 0;
+      const retval = await this.simulateRead('verify_groth16_proof', [
+        nativeToScVal(curveNum, { type: 'u32' }),
+        nativeToScVal(Buffer.from(proof.a, 'hex'), { type: 'bytes' }),
+        nativeToScVal(Buffer.from(proof.b, 'hex'), { type: 'bytes' }),
+        nativeToScVal(Buffer.from(proof.c, 'hex'), { type: 'bytes' }),
+        nativeToScVal(publicInputs.map(input => Buffer.from(input, 'utf-8')), { type: 'vec' }),
+        nativeToScVal(Buffer.from(verifyingKey, 'utf-8'), { type: 'bytes' }),
+      ]);
+      return Boolean(scValToNative(retval));
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Prove a credential holder's country is within an allowed set.
+   */
+  async createCountryMembershipProof(
+    submitterKeypair: Keypair,
+    country: string,
+    allowedCountries: string[],
+    credentialId: string,
+    circuitId: string,
+    options?: { context?: string; expiresAt?: number }
+  ): Promise<string> {
+    const nonce = this.generateSalt();
+    const commitment = this.generateCommitment(country, nonce);
+    const nullifier = this.generateNullifier(
+      `${credentialId}_country_membership`,
+      circuitId,
+      options?.context || 'default'
+    );
+    const predicates: PredicateInfo[] = [{
+      attributeName: 'country',
+      predicateType: PredicateType.InSet,
+      allowedValues: allowedCountries,
+    }];
+
+    return this.createSelectiveDisclosureProof(submitterKeypair, {
+      circuitId,
+      credentialId,
+      publicInputs: [commitment, ...allowedCountries],
+      proofBytes: `{"set_membership_proof":{"country":"${country}"}}`,
+      nullifier,
+      revealedAttributes: [],
+      hiddenAttributes: ['country'],
+      predicates,
+      expiresAt: options?.expiresAt,
+      metadata: {
+        type: 'country_membership',
+        allowedCountries: allowedCountries.join(','),
+        context: options?.context || 'default',
+      },
+    });
+  }
+
+  /**
    * Prove a specific attribute value is greater than a threshold.
    */
   async createGreaterThanProof(

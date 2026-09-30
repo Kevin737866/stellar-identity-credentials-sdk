@@ -31,14 +31,81 @@ export { Logger, LogLevel } from './logger';
 export { GDPREngine } from './gdpr';
 export type { ConsentRecord, ProcessingRecord, GDPRComplianceOptions } from './gdpr';
 export { DataMinimizationEngine } from './dataMinimization';
-export type { 
-  MinimalDisclosurePolicy, 
-  BlindedAttribute, 
-  SaltedHashCommitment, 
-  AttributeExpiration 
+export type {
+  MinimalDisclosurePolicy,
+  BlindedAttribute,
+  SaltedHashCommitment,
+  AttributeExpiration,
+  // Issue #189: new Data Minimization types
+  ProofRequest,
+  AuditEntry,
+  ConsentReceipt,
 } from './dataMinimization';
 
 export { ComplianceClient } from './compliance';
+
+// Batch operations (Issue #208)
+export { BatchClient, paginate, MAX_CONTRACT_BATCH_SIZE, DEFAULT_PAGE_SIZE } from './batch';
+export type {
+  BatchItem,
+  BatchResult,
+  BatchProgress,
+  BatchProgressCallback,
+  BatchOptions,
+  OptimisticHooks,
+  BatchDIDRequest,
+  BatchIssueRequest,
+} from './batch';
+
+// Middleware / plugin architecture (Issue #210)
+export {
+  MiddlewareChain,
+  createMiddlewareChain,
+  createLoggingMiddleware,
+  createMetricsMiddleware,
+  createRateLimitMiddleware,
+  createCacheMiddleware,
+} from './middleware';
+export type {
+  SDKOperation,
+  Middleware,
+  MiddlewareContext,
+  MiddlewareOperation,
+  ChainRunResult,
+  LoggerMiddlewareOptions,
+  MetricsMiddlewareOptions,
+  RateLimitMiddlewareOptions,
+  CacheMiddlewareOptions,
+  OperationMetric,
+  OperationStats,
+} from './middleware';
+
+// Real-time event subscription over WebSocket (Issue #209)
+export {
+  EventStream,
+  IDENTITY_EVENT_TYPES,
+  toWebSocketUrl,
+  computeBackoffDelay,
+  matchesFilters,
+  parseEvent,
+  didToAddress,
+  WS_CONNECTING,
+  WS_OPEN,
+  WS_CLOSING,
+  WS_CLOSED,
+} from './eventStream';
+export type {
+  IdentityEventType,
+  IdentityEvent,
+  EventFilters,
+  EventHandler,
+  EventSubscription,
+  BackoffOptions,
+  EventStreamOptions,
+  StreamStatus,
+  StreamMetrics,
+  WebSocketLike,
+} from './eventStream';
 
 export {
   DEFAULT_CONFIGS,
@@ -231,6 +298,7 @@ import { ZKProofsClient } from './zkProofs';
 import { SchemaRegistryClient } from './schemaClient';
 import { CacheManager } from './cacheManager';
 import { EventSubscriber } from './eventSubscriber';
+import { BatchClient } from './batch';
 import { RegulatoryReportingClient } from './regulatoryReporting';
 import { ExpirationManager } from './expirationManager';
 import { StellarIdentityConfig } from './types';
@@ -267,6 +335,7 @@ export class StellarIdentitySDK {
   public cache: CacheManager;
   public events: EventSubscriber;
   public gdpr: GDPREngine;
+  public batch: BatchClient;
   private config: StellarIdentityConfig;
 
   constructor(config: StellarIdentityConfig, options?: { validate?: boolean }) {
@@ -282,6 +351,10 @@ export class StellarIdentitySDK {
     this.cache = new CacheManager();
     this.events = new EventSubscriber(config);
     this.gdpr = new GDPREngine(this.did, this.credentials);
+    this.batch = new BatchClient(config, {
+      didClient: this.did,
+      credentialClient: this.credentials,
+    });
   }
 
   /**
@@ -315,6 +388,10 @@ export class StellarIdentitySDK {
     this.reputation = new ReputationClient(this.config);
     this.zkProofs = new ZKProofsClient(this.config);
     this.events = new EventSubscriber(this.config);
+    this.batch = new BatchClient(this.config, {
+      didClient: this.did,
+      credentialClient: this.credentials,
+    });
   }
 
   /**
@@ -432,6 +509,26 @@ export class StellarIdentitySDK {
   }
 }
 
+// Multi-network support (#212)
+export {
+  STELLAR_NETWORKS,
+  NETWORK_PRESETS,
+  getNetworkPreset,
+  isCanonicalNetwork,
+  createCustomNetwork,
+  resolveNetwork,
+  validateNetworkConfig,
+  assertNetworkValid,
+  assertNetworkCompatible,
+  detectNetwork,
+  describeNetwork,
+} from './networks';
+export type {
+  StellarNetworkName,
+  StellarNetworkConfig,
+  NetworkDetectionResult,
+} from './networks';
+
 // W3C Bitstring Status List (#267)
 export { StatusListClient } from './statusListClient';
 export type { StatusListMetadata } from './statusListClient';
@@ -474,3 +571,23 @@ export type {
   LocalAuthenticationLike,
   KeyLoader,
 } from './reactNative';
+// Privacy Enhancements — Issues #188, #189, #190, #191
+export { DataPortabilityManager } from './dataPortability';
+export type {
+  W3CVerifiableCredential,
+  CredentialExportPackage,
+} from './dataPortability';
+
+export { ConsentManager } from './consentManager';
+export type {
+  ConsentScope,
+  ConsentRecord as ConsentManagerRecord,
+  ConsentHistoryEntry,
+} from './consentManager';
+
+export { AnonymousCredentialManager } from './anonymousCredentials';
+export type {
+  AnonymousCredential,
+  AttributeProof,
+  AnonymousPresentation,
+} from './anonymousCredentials';

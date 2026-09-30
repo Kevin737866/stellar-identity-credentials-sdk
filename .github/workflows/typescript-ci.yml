@@ -32,10 +32,27 @@ jobs:
         run: cd ui && npm run build
 
       - name: Run SDK tests with coverage
-        run: npm test -- --coverage --coverageThreshold='{"global":{"branches":80,"functions":80,"lines":80,"statements":80}}'
+        run: npm test -- --coverage --coverageThreshold='{"global":{"branches":90,"functions":90,"lines":90,"statements":90}}'
+
+      - name: Run SDK testnet integration tests
+        # Opt-in: skipped unless secrets are configured for the repository.
+        run: |
+          if [ -n "${{ secrets.SDK_TESTNET_SECRET }}" ]; then
+            SDK_INTEGRATION=1 SDK_TESTNET_SECRET="${{ secrets.SDK_TESTNET_SECRET }}" \
+              npx jest --testPathIgnorePatterns='__nothing__' \
+              sdk/src/__tests__/integration --ci
+          else
+            echo "SDK_TESTNET_SECRET not configured; skipping testnet integration tests"
+          fi
 
       - name: Run UI tests with coverage
         run: cd ui && npx jest --coverage --coverageThreshold='{"global":{"branches":80,"functions":80,"lines":80,"statements":80}}'
+
+      - name: Accessibility tests (axe-core, WCAG 2.1 AA)
+        # jest-axe is registered in ui/jest.setup.ts, so the dedicated suites
+        # run as part of the normal UI test step. This step runs them in
+        # isolation to make an a11y regression obvious in the job log.
+        run: cd ui && npx jest --ci src/components/__tests__/accessibility.test.tsx src/hooks/__tests__/useFocusTrap.test.tsx
 
       - name: Lint
         run: |

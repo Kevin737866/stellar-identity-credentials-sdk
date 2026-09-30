@@ -1,14 +1,19 @@
 import React from 'react';
 import {
   CredentialNotification,
-  NOTIFICATION_PRESENTATION,
   NOTIFICATION_TONES,
-  formatRelativeTime,
+  getNotificationPresentation,
 } from '../types/notifications';
+import { useTranslation } from '../i18n';
 
 export interface NotificationRowProps {
   notification: CredentialNotification;
   onActivate: (notification: CredentialNotification) => void;
+  /**
+   * The translator from `useTranslation()`. Omit to fall back to the
+   * deprecated English presentation table.
+   */
+  t?: (key: string) => string;
 }
 
 /**
@@ -19,8 +24,10 @@ export interface NotificationRowProps {
 export const NotificationRow: React.FC<NotificationRowProps> = ({
   notification,
   onActivate,
+  t,
 }) => {
-  const presentation = NOTIFICATION_PRESENTATION[notification.type];
+  const { format } = useTranslation();
+  const presentation = getNotificationPresentation(notification.type, t);
 
   return (
     <li>
@@ -100,7 +107,7 @@ export const NotificationRow: React.FC<NotificationRowProps> = ({
             color: 'var(--color-text-secondary)',
           }}
         >
-          {formatRelativeTime(notification.createdAt)}
+          {format.formatRelativeTime(notification.createdAt)}
         </span>
       </button>
     </li>

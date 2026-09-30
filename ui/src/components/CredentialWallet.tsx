@@ -20,12 +20,22 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Skeleton,
+  SkeletonCard,
+  SkeletonDetail,
+  SkeletonList,
+  SkeletonTable,
+} from '@/components/ui/skeleton';
+import { LiveAnnouncer } from '@/components/ui/live-region';
+import { CredentialDetail } from '@/components/CredentialDetail';
 import { 
   CredentialClient, 
   VerifiableCredential, 
   CredentialVerificationResult 
 } from '@stellar-identity/sdk';
 import { Keypair } from 'stellar-sdk';
+import { useTranslation } from '@/i18n';
 import { 
   Shield, 
   CheckCircle, 
@@ -45,6 +55,16 @@ interface CredentialWalletProps {
   keypair: Keypair;
 }
 
+/**
+ * Human-readable name for a credential, used in button labels and headings.
+ * Falls back to the id so a credential with no recognisable type is still
+ * nameable.
+ */
+function credentialLabel(credential: VerifiableCredential): string {
+  const named = credential.type?.find(type => type !== 'VerifiableCredential');
+  return named ?? credential.id;
+}
+
 export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address, keypair }) => {
   const [credentials, setCredentials] = useState<VerifiableCredential[]>([]);
   const [selectedCredential, setSelectedCredential] = useState<VerifiableCredential | null>(null);
@@ -61,6 +81,8 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
     credentialData: '',
     expirationDate: ''
   });
+
+  const { t, format } = useTranslation();
 
   useEffect(() => {
     loadCredentials();
@@ -85,7 +107,7 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
       });
       setVerificationResults(verificationMap);
     } catch (error: any) {
-      setError(error.message || 'Failed to load credentials');
+      setError(error.message || t('credential.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -97,7 +119,7 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
       setError(null);
       
       if (!newCredential.subject || newCredential.credentialType.length === 0 || !newCredential.credentialData) {
-        setError('Please fill in all required fields');
+        setError(t('credential.requiredFields'));
         return;
       }
 
@@ -113,7 +135,7 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
         proof: await generateProof(credentialData)
       });
 
-      setSuccess(`Credential issued successfully: ${credentialId}`);
+      setSuccess(t('credential.issueSucceeded', { id: credentialId }));
       setShowIssueDialog(false);
       setNewCredential({
         subject: '',
@@ -123,14 +145,14 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
       });
       await loadCredentials();
     } catch (error: any) {
-      setError(error.message || 'Failed to issue credential');
+      setError(error.message || t('credential.issueFailed'));
     } finally {
       setLoading(false);
     }
   };
 
   const revokeCredential = async (credentialId: string) => {
-    if (!confirm('Are you sure you want to revoke this credential?')) {
+    if (!confirm(t('credential.revokeConfirm'))) {
       return;
     }
 
@@ -138,11 +160,15 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
       setLoading(true);
       setError(null);
       
+      // The reason is persisted on chain and shown to third-party verifiers,
+      // so it stays a stable English identifier rather than being localised.
+      // Translating it would make the recorded reason depend on the issuer's
+      // UI language, which is not what the field means.
       await sdk.credentials.revokeCredential(keypair, credentialId, 'User requested revocation');
-      setSuccess('Credential revoked successfully');
+      setSuccess(t('credential.revokeSucceeded'));
       await loadCredentials();
     } catch (error: any) {
-      setError(error.message || 'Failed to revoke credential');
+      setError(error.message || t('credential.revokeFailed'));
     } finally {
       setLoading(false);
     }
@@ -173,52 +199,73 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
       
       if (navigator.share) {
         await navigator.share({
-          title: 'Verifiable Credential',
-          text: 'Share your verifiable credential',
+          title: t('credential.shareSheetTitle'),
+          text: t('credential.shareSheetText'),
           url: shareUrl
         });
       } else {
         await navigator.clipboard.writeText(shareUrl);
-        setSuccess('Share link copied to clipboard!');
+        setSuccess(t('credential.shareSucceeded'));
       }
     } catch (error: any) {
-      setError(error.message || 'Failed to share credential');
+      setError(error.message || t('credential.shareFailed'));
     }
   };
 
   const getStatusIcon = (verification: CredentialVerificationResult) => {
+    // The badge beside it already names the state, so the icon is decorative
+    // and must be hidden from assistive tech to avoid a duplicate reading.
     if (verification.revoked) {
-      return <XCircle className="h-4 w-4 text-red-500" />;
+      return <XCircle className="h-4 w-4 text-red-500" aria-hidden="true" />;
     }
     if (verification.expired) {
-      return <Clock className="h-4 w-4 text-yellow-500" />;
+      return <Clock className="h-4 w-4 text-yellow-500" aria-hidden="true" />;
     }
     if (verification.valid) {
-      return <CheckCircle className="h-4 w-4 text-green-500" />;
+      return <CheckCircle className="h-4 w-4 text-green-500" aria-hidden="true" />;
     }
-    return <AlertCircle className="h-4 w-4 text-gray-500" />;
+    return <AlertCircle className="h-4 w-4 text-gray-500" aria-hidden="true" />;
   };
 
   const getStatusBadge = (verification: CredentialVerificationResult) => {
     if (verification.revoked) {
-      return <Badge variant="destructive">Revoked</Badge>;
+      return <Badge variant="destructive">{t('credential.status.revoked')}</Badge>;
     }
     if (verification.expired) {
-      return <Badge variant="secondary">Expired</Badge>;
+      return <Badge variant="secondary">{t('credential.status.expired')}</Badge>;
     }
     if (verification.valid) {
-      return <Badge variant="default">Valid</Badge>;
+      return <Badge variant="default">{t('credential.status.valid')}</Badge>;
     }
-    return <Badge variant="outline">Unknown</Badge>;
+    return <Badge variant="outline">{t('credential.status.unknown')}</Badge>;
   };
 
   if (loading) {
+    // Skeletons mirror the credential cards below so the list does not jump
+    // when the credentials arrive.
     return (
       <Card>
         <CardContent className="p-6">
-          <div className="flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <span className="ml-2">Loading credentials...</span>
+          <div
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+            aria-label={t('common.loadingAria')}
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <Skeleton shape="circle" height={40} width={40} />
+              <div style={{ flex: 1 }}>
+                <Skeleton height={18} shape="text" width={5} />
+                <div style={{ height: 'var(--space-2)' }} />
+                <Skeleton height={11} shape="text" width={7} />
+              </div>
+            </div>
+            <div className="grid gap-4">
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+            </div>
+            <span className="sr-only">{t('common.loading')}</span>
           </div>
         </CardContent>
       </Card>
@@ -246,19 +293,19 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
           <div className="flex justify-between items-center">
             <CardTitle className="flex items-center">
               <Shield className="h-5 w-5 mr-2" />
-              Credential Wallet
+              {t('credential.wallet')}
             </CardTitle>
             <div className="space-x-2">
               <Dialog open={showIssueDialog} onOpenChange={setShowIssueDialog}>
                 <DialogTrigger asChild>
                   <Button>
                     <Plus className="h-4 w-4 mr-2" />
-                    Issue Credential
+                    {t('credential.issue')}
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="max-w-2xl">
                   <DialogHeader>
-                    <DialogTitle>Issue New Credential</DialogTitle>
+                    <DialogTitle>{t('credential.issueNew')}</DialogTitle>
                   </DialogHeader>
                   <IssueCredentialForm
                     credential={newCredential}
@@ -275,8 +322,8 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
           {credentials.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               <FileText className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-              <p>No credentials found</p>
-              <p className="text-sm">Issue your first credential to get started</p>
+              <p>{t('credential.empty')}</p>
+              <p className="text-sm">{t('credential.emptyHint')}</p>
             </div>
           ) : (
             <div className="grid gap-4">
@@ -291,7 +338,7 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
                             {getStatusIcon(verification)}
                             {getStatusBadge(verification)}
                             <span className="text-sm text-gray-500">
-                              {new Date(credential.issuanceDate).toLocaleDateString()}
+                              {format.formatDate(credential.issuanceDate)}
                             </span>
                           </div>
                           
@@ -300,7 +347,7 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
                           </h3>
                           
                           <p className="text-sm text-gray-600 mb-2">
-                            Issued by: {credential.issuer.substring(0, 8)}...
+                            {t('credential.issuedBy', { issuer: `${credential.issuer.substring(0, 8)}...` })}
                           </p>
                           
                           <div className="flex flex-wrap gap-1 mb-2">
@@ -313,41 +360,51 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
                           
                           {credential.expirationDate && (
                             <p className="text-xs text-gray-500">
-                              Expires: {new Date(credential.expirationDate).toLocaleDateString()}
+                              {t('credential.expirationDate')}: {format.formatDate(credential.expirationDate)}
                             </p>
                           )}
                         </div>
                         
                         <div className="flex space-x-2">
+                          {/* Icon-only actions: each needs a name, since the
+                              icon alone conveys nothing to a screen reader. */}
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => setSelectedCredential(credential)}
+                            aria-label={t('credential.viewDetailsFor', { label: credentialLabel(credential) })}
+                            title={t('credential.viewDetails')}
                           >
-                            <Eye className="h-4 w-4" />
+                            <Eye className="h-4 w-4" aria-hidden="true" />
                           </Button>
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => downloadCredential(credential)}
+                            aria-label={t('credential.exportJsonFor', { label: credentialLabel(credential) })}
+                            title={t('credential.exportJson')}
                           >
-                            <Download className="h-4 w-4" />
+                            <Download className="h-4 w-4" aria-hidden="true" />
                           </Button>
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => shareCredential(credential)}
                             disabled={!verification?.valid}
+                            aria-label={t('credential.shareFor', { label: credentialLabel(credential) })}
+                            title={t('credential.shareAction')}
                           >
-                            <Share className="h-4 w-4" />
+                            <Share className="h-4 w-4" aria-hidden="true" />
                           </Button>
                           {verification?.valid && (
                             <Button
                               variant="destructive"
                               size="sm"
                               onClick={() => revokeCredential(credential.id)}
+                              aria-label={t('credential.revokeFor', { label: credentialLabel(credential) })}
+                              title={t('credential.revokeAction')}
                             >
-                              <XCircle className="h-4 w-4" />
+                              <XCircle className="h-4 w-4" aria-hidden="true" />
                             </Button>
                           )}
                         </div>
@@ -365,12 +422,21 @@ export const CredentialWallet: React.FC<CredentialWalletProps> = ({ sdk, address
         <Dialog open={!!selectedCredential} onOpenChange={() => setSelectedCredential(null)}>
           <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Credential Details</DialogTitle>
+              <DialogTitle>{t('credential.details')}</DialogTitle>
             </DialogHeader>
-            <CredentialDetailView credential={selectedCredential} />
+            <CredentialDetail
+              credential={selectedCredential}
+              verification={verificationResults[selectedCredential.id]}
+            />
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Errors and confirmations are announced, not just rendered. */}
+      <LiveAnnouncer
+        message={error ?? (success ? `Success: ${success}` : '')}
+        politeness={error ? 'assertive' : 'polite'}
+      />
     </div>
   );
 };
@@ -388,6 +454,11 @@ const IssueCredentialForm: React.FC<IssueCredentialFormProps> = ({
   onSubmit,
   loading
 }) => {
+  const { t } = useTranslation();
+
+  // Credential type identifiers are written into the credential on chain and
+  // compared by verifiers, so they are data rather than copy and must not be
+  // translated. Only the surrounding labels are localised.
   const credentialTypes = [
     'KYCVerification',
     'EducationCredential',
@@ -400,7 +471,7 @@ const IssueCredentialForm: React.FC<IssueCredentialFormProps> = ({
   return (
     <div className="space-y-4">
       <div>
-        <Label htmlFor="subject">Subject Address</Label>
+        <Label htmlFor="subject">{t('credential.subjectAddress')}</Label>
         <Input
           id="subject"
           value={credential.subject}
@@ -410,7 +481,7 @@ const IssueCredentialForm: React.FC<IssueCredentialFormProps> = ({
       </div>
 
       <div>
-        <Label>Credential Types</Label>
+        <Label>{t('credential.typesLabel')}</Label>
         <Select
           value={credential.credentialType[0] || ''}
           onValueChange={(value) => onChange({ 
@@ -419,7 +490,7 @@ const IssueCredentialForm: React.FC<IssueCredentialFormProps> = ({
           })}
         >
           <SelectTrigger>
-            <SelectValue placeholder="Select credential type" />
+            <SelectValue placeholder={t('credential.typesLabel')} />
           </SelectTrigger>
           <SelectContent>
             {credentialTypes.map((type) => (
@@ -432,7 +503,7 @@ const IssueCredentialForm: React.FC<IssueCredentialFormProps> = ({
       </div>
 
       <div>
-        <Label htmlFor="credentialData">Credential Data (JSON)</Label>
+        <Label htmlFor="credentialData">{t('credential.dataLabel')}</Label>
         <Textarea
           id="credentialData"
           value={credential.credentialData}
@@ -443,7 +514,7 @@ const IssueCredentialForm: React.FC<IssueCredentialFormProps> = ({
       </div>
 
       <div>
-        <Label htmlFor="expirationDate">Expiration Date (Optional)</Label>
+        <Label htmlFor="expirationDate">{t('credential.expirationOptional')}</Label>
         <Input
           id="expirationDate"
           type="date"
@@ -453,85 +524,8 @@ const IssueCredentialForm: React.FC<IssueCredentialFormProps> = ({
       </div>
 
       <Button onClick={onSubmit} disabled={loading} className="w-full">
-        {loading ? 'Issuing...' : 'Issue Credential'}
+        {loading ? t('credential.issuing') : t('credential.issue')}
       </Button>
-    </div>
-  );
-};
-
-interface CredentialDetailViewProps {
-  credential: VerifiableCredential;
-}
-
-const CredentialDetailView: React.FC<CredentialDetailViewProps> = ({ credential }) => {
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <Label className="text-sm font-medium">Credential ID</Label>
-          <code className="block bg-gray-100 px-3 py-2 rounded text-sm mt-1 break-all">
-            {credential.id}
-          </code>
-        </div>
-        <div>
-          <Label className="text-sm font-medium">Type</Label>
-          <div className="flex flex-wrap gap-1 mt-1">
-            {credential.type.map((type, index) => (
-              <Badge key={index} variant="outline">
-                {type}
-              </Badge>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <Label className="text-sm font-medium">Issuer</Label>
-          <code className="block bg-gray-100 px-3 py-2 rounded text-sm mt-1">
-            {credential.issuer}
-          </code>
-        </div>
-        <div>
-          <Label className="text-sm font-medium">Subject</Label>
-          <code className="block bg-gray-100 px-3 py-2 rounded text-sm mt-1">
-            {credential.subject}
-          </code>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <Label className="text-sm font-medium">Issuance Date</Label>
-          <p className="text-sm mt-1">
-            {new Date(credential.issuanceDate).toLocaleString()}
-          </p>
-        </div>
-        {credential.expirationDate && (
-          <div>
-            <Label className="text-sm font-medium">Expiration Date</Label>
-            <p className="text-sm mt-1">
-              {new Date(credential.expirationDate).toLocaleString()}
-            </p>
-          </div>
-        )}
-      </div>
-
-      <div>
-        <Label className="text-sm font-medium">Credential Data</Label>
-        <pre className="bg-gray-100 p-4 rounded text-sm mt-1 overflow-x-auto">
-          {JSON.stringify(credential.credentialData, null, 2)}
-        </pre>
-      </div>
-
-      {credential.proof && (
-        <div>
-          <Label className="text-sm font-medium">Proof</Label>
-          <pre className="bg-gray-100 p-4 rounded text-sm mt-1 overflow-x-auto">
-            {credential.proof}
-          </pre>
-        </div>
-      )}
     </div>
   );
 };

@@ -185,6 +185,28 @@ export interface ReputationComparison {
   winner: 'didA' | 'didB' | 'tie';
 }
 
+export enum ReputationTier {
+  Bronze = 'Bronze',
+  Silver = 'Silver',
+  Gold = 'Gold',
+  Platinum = 'Platinum',
+  Diamond = 'Diamond',
+}
+
+export interface TierThresholds {
+  bronzeMin: number;
+  silverMin: number;
+  goldMin: number;
+  platinumMin: number;
+  diamondMin: number;
+}
+
+export interface TierRequirements {
+  tier: ReputationTier;
+  minScore: number;
+  maxScore: number;
+}
+
 export interface ReputationTierProof {
   did: string;
   tier: string;
@@ -269,9 +291,20 @@ export interface SanctionsList {
 }
 
 import { Keypair } from 'stellar-sdk';
+import type { StellarNetworkName } from './networks';
 
 export interface StellarIdentityConfig {
-  network: 'mainnet' | 'testnet' | 'futurenet';
+  /**
+   * Network identifier.
+   *
+   * Widened from the bare `'mainnet' | 'testnet' | 'futurenet'` union so a
+   * custom or private deployment is expressible. A canonical name is still
+   * preferred; anything else must be accompanied by `networkPassphrase`,
+   * because the passphrase cannot be derived from an arbitrary name.
+   *
+   * @see StellarNetworkConfig
+   */
+  network: StellarNetworkName | (string & {});
   contracts: {
     didRegistry: string;
     credentialIssuer: string;
@@ -283,6 +316,22 @@ export interface StellarIdentityConfig {
   rpcUrl?: string;
   horizonUrl?: string;
   keypair?: Keypair;
+  /**
+   * Network passphrase.
+   *
+   * Required whenever `network` is not one of the three canonical names.
+   * Omitted for canonical networks, where it is looked up from the preset —
+   * setting it explicitly is still honoured, which is what a local testnet
+   * with a non-standard passphrase needs.
+   */
+  networkPassphrase?: string;
+  /**
+   * Protocol version the target network speaks.
+   *
+   * Checked before submission so a mismatch is a clear error rather than an
+   * opaque simulation failure.
+   */
+  protocolVersion?: number;
 }
 
 export interface CredentialSchema {

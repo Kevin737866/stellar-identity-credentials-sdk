@@ -67,6 +67,8 @@ export { BellIcon } from './components/icons/BellIcon';
 export type { BellIconProps } from './components/icons/BellIcon';
 export {
   NOTIFICATION_PRESENTATION,
+  NOTIFICATION_TONES_BY_TYPE,
+  getNotificationPresentation,
   NOTIFICATION_TONES,
   formatRelativeTime,
   isCredentialNotification,
@@ -101,6 +103,12 @@ export { ApiPlayground } from './pages/ApiPlayground';
 export type { ApiPlaygroundProps } from './pages/ApiPlayground';
 
 // Hooks
+export { useNetworkSwitcher } from './hooks/useNetworkSwitcher';
+export type {
+  UseNetworkSwitcherResult,
+  NetworkOption,
+} from './hooks/useNetworkSwitcher';
+
 export {
   useStellarIdentity,
   useDID,
@@ -108,6 +116,39 @@ export {
   useReputation,
   useCompliance,
 } from './hooks/useStellarIdentity';
+
+// Real-time credential events over WebSocket
+export {
+  useCredentialEvents,
+  CREDENTIAL_EVENT_TYPES,
+  IDENTITY_EVENT_TYPES,
+} from './hooks/useCredentialEvents';
+export type {
+  UseCredentialEventsOptions,
+  UseCredentialEventsResult,
+} from './hooks/useCredentialEvents';
+
+// Internationalisation (#215)
+export {
+  I18nProvider,
+  LanguageSwitcher,
+  useTranslation,
+  createFormatters,
+  detectLocale,
+  matchLocale,
+  isRTL,
+  SUPPORTED_LOCALES,
+  DEFAULT_LOCALE,
+  LOCALE_LABELS,
+  TRANSLATIONS,
+} from './i18n';
+export type {
+  SupportedLocale,
+  Messages,
+  I18nContextValue,
+  I18nProviderProps,
+  LocaleFormatters,
+} from './i18n';
 
 // Analytics
 export { AnalyticsDashboard } from './components/AnalyticsDashboard';
@@ -131,6 +172,7 @@ export {
   formatNumber,
   formatPercent,
   getDateRangeBounds,
+  getDateRangePresets,
   presetLabel,
   successRate,
   summariseSeries,
@@ -153,3 +195,51 @@ export {
   svgElementToPngBlob,
   triggerDownload,
 } from './utils/analyticsExport';
+
+// Skeleton placeholders (#217)
+export {
+  Skeleton,
+  SkeletonText,
+  SkeletonAvatar,
+  SkeletonList,
+  SkeletonCard,
+  SkeletonDetail,
+  SkeletonTable,
+} from './components/ui/skeleton';
+export type { SkeletonProps } from './components/ui/skeleton';
+
+// Accessibility primitives (#216)
+export { LiveAnnouncer, useAnnouncer } from './components/ui/live-region';
+export type {
+  LiveAnnouncerProps,
+  UseAnnouncerResult,
+  Politeness,
+} from './components/ui/live-region';
+export {
+  useFocusTrap,
+  useFocusOnMount,
+  useRovingIndex,
+  getFocusableElements,
+} from './hooks/useFocusTrap';
+export type { FocusTrapOptions } from './hooks/useFocusTrap';
+export { DialogDescription, DialogFooter } from './components/ui/modal';
+export { ProgressWithLabel } from './components/ui/progress';
+
+// Credential detail view (#218)
+export { CredentialDetail, flattenAttributes, buildExportPayload } from './components/CredentialDetail';
+export type { CredentialDetailProps, CredentialHistoryEntry } from './components/CredentialDetail';
+
+// Onboarding wizard (#219)
+export {
+  OnboardingWizard,
+  ONBOARDING_STEPS,
+  readProgress,
+  resolveInitialStep,
+} from './components/OnboardingWizard';
+export type {
+  OnboardingWizardProps,
+  OnboardingStep,
+  OnboardingStepId,
+  OnboardingProgress,
+  StorageLike,
+} from './components/OnboardingWizard';
