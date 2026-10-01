@@ -232,7 +232,9 @@ export function matchesFilters(event: IdentityEvent, filters: EventFilters = {})
   }
   if (filters.did !== undefined) {
     const eventDID = (event.data?.did ?? event.data?.address) as string | undefined;
-    if (eventDID !== filters.did && eventDID !== didToAddress(filters.did)) {
+    const eventIdentity = eventDID ? (didToAddress(eventDID) ?? eventDID) : undefined;
+    const filterIdentity = didToAddress(filters.did) ?? filters.did;
+    if (eventIdentity !== filterIdentity) {
       return false;
     }
   }

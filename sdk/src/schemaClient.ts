@@ -15,8 +15,12 @@ import {
   CredentialSchema,
   SchemaValidationResult,
   SchemaVersion,
+  PortableSchema,
+  SchemaImportConflictStrategy,
+  SchemaImportResult,
 } from './types';
 import { StellarIdentityError, mapContractError } from './errors';
+import { createPortableSchema, verifyPortableSchema } from './schemaPortability';
 
 export class SchemaRegistryClient {
   private rpc: SorobanRpc.Server;
@@ -106,6 +110,61 @@ export class SchemaRegistryClient {
     ]);
 
     return this.parseSchema(scValToNative(retval));
+  }
+
+  /** Export a schema with all registry metadata and a SHA-256 integrity checksum. */
+  async exportSchema(schemaId: string, version?: number): Promise<PortableSchema> {
+    return createPortableSchema(await this.getSchema(schemaId, version));
+  }
+
+  /** Export every schema visible on the current registry page. */
+  async exportSchemas(page = 1, pageSize = 100): Promise<PortableSchema[]> {
+    const ids = await this.listSchemas(page, pageSize);
+    const bundles: PortableSchema[] = [];
+    for (const id of ids) bundles.push(await this.exportSchema(id));
+    return bundles;
+  }
+
+  /** Import a checksummed schema; registration is signed by the destination issuer. */
+  async importSchema(
+    issuerKeypair: Keypair,
+    bundle: PortableSchema,
+    conflictStrategy: SchemaImportConflictStrategy = 'error',
+    txOptions?: TransactionOptions,
+  ): Promise<SchemaImportResult> {
+    if (!verifyPortableSchema(bundle)) throw new Error('Portable schema checksum or format is invalid');
+    const { schema } = bundle;
+    if (await this.validateSchema(schema.id)) {
+      const existing = await this.getSchema(schema.id);
+      if (existing.version === schema.version && existing.definition === schema.definition) {
+        return { schemaId: schema.id, imported: false, skipped: true, reason: 'Schema version is already present' };
+      }
+      if (conflictStrategy === 'skip') {
+        return { schemaId: schema.id, imported: false, skipped: true, reason: 'Schema ID already exists' };
+      }
+      if (conflictStrategy !== 'replace') throw new Error(`Schema version conflict for '${schema.id}'`);
+      if (schema.version <= existing.version) {
+        throw new Error(`Imported schema version ${schema.version} must be newer than current version ${existing.version}`);
+      }
+      await this.updateSchema(issuerKeypair, schema.id, schema.definition, txOptions);
+    } else {
+      await this.registerSchema(issuerKeypair, schema.id, schema.definition, txOptions);
+    }
+    return { schemaId: schema.id, imported: true };
+  }
+
+  /** Import a bundle list in order and return an outcome for each schema. */
+  async importSchemas(
+    issuerKeypair: Keypair,
+    bundles: PortableSchema[],
+    conflictStrategy: SchemaImportConflictStrategy = 'error',
+    txOptions?: TransactionOptions,
+  ): Promise<SchemaImportResult[]> {
+    const results: SchemaImportResult[] = [];
+    for (const bundle of bundles) {
+      results.push(await this.importSchema(issuerKeypair, bundle, conflictStrategy, txOptions));
+    }
+    return results;
   }
 
   async listSchemas(page: number, pageSize: number): Promise<string[]> {
