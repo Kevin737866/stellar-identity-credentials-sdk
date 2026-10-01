@@ -1,5 +1,6 @@
 import { SchemaRegistryClient } from '../schemaClient';
 import { StellarIdentityConfig } from '../types';
+import { createPortableSchema } from '../schemaPortability';
 
 const mockToScAddress = jest.fn().mockReturnValue(Buffer.alloc(32));
 
@@ -257,6 +258,52 @@ describe('SchemaRegistryClient', () => {
 
       const result = await client.validateSchema('nonexistent');
       expect(result).toBe(false);
+    });
+  });
+
+  describe('portable schema import', () => {
+    const portable = createPortableSchema({
+      id: 'portable-schema',
+      issuer: VALID_ISSUER,
+      version: 2,
+      definition: '{"type":"object"}',
+      created: 100,
+      updated: 200,
+    });
+
+    it('rejects a bundle whose checksum does not match its contents', async () => {
+      await expect(client.importSchema(mockIssuerKeypair, {
+        ...portable,
+        checksum: 'bad-checksum',
+      })).rejects.toThrow('checksum or format is invalid');
+    });
+
+    it('detects version conflicts and permits an explicit newer-version replacement', async () => {
+      jest.spyOn(client, 'validateSchema').mockResolvedValue(true);
+      jest.spyOn(client, 'getSchema').mockResolvedValue({
+        ...portable.schema,
+        version: 1,
+        definition: '{"type":"string"}',
+      });
+      const update = jest.spyOn(client, 'updateSchema').mockResolvedValue(undefined);
+
+      await expect(client.importSchema(mockIssuerKeypair, portable)).rejects.toThrow('version conflict');
+      await expect(client.importSchema(mockIssuerKeypair, portable, 'replace')).resolves.toMatchObject({
+        schemaId: 'portable-schema',
+        imported: true,
+      });
+      expect(update).toHaveBeenCalledWith(mockIssuerKeypair, 'portable-schema', portable.schema.definition, undefined);
+    });
+
+    it('imports a batch sequentially and returns individual outcomes', async () => {
+      const importOne = jest.spyOn(client, 'importSchema')
+        .mockResolvedValueOnce({ schemaId: 'one', imported: true })
+        .mockResolvedValueOnce({ schemaId: 'two', imported: false, skipped: true });
+      await expect(client.importSchemas(mockIssuerKeypair, [portable, portable])).resolves.toEqual([
+        { schemaId: 'one', imported: true },
+        { schemaId: 'two', imported: false, skipped: true },
+      ]);
+      expect(importOne).toHaveBeenCalledTimes(2);
     });
   });
 });

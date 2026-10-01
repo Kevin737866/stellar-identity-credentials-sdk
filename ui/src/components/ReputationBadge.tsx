@@ -60,19 +60,9 @@ interface ReputationBadgeProps {
 
 const TIERS: TierConfig[] = [
   {
-    id: 'diamond',
-    nameKey: 'reputation.tiers.diamond',
-    minScore: 950,
-    color: 'bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-600',
-    textColor: 'text-cyan-700',
-    bgColor: 'bg-cyan-50',
-    borderColor: 'border-cyan-300',
-    icon: <Gem className="h-5 w-5 text-cyan-600" />,
-  },
-  {
     id: 'platinum',
     nameKey: 'reputation.tiers.platinum',
-    minScore: 800,
+    minScore: 751,
     color: 'bg-gradient-to-r from-purple-500 via-pink-500 to-amber-400',
     textColor: 'text-purple-700',
     bgColor: 'bg-purple-50',
@@ -82,7 +72,7 @@ const TIERS: TierConfig[] = [
   {
     id: 'gold',
     nameKey: 'reputation.tiers.gold',
-    minScore: 600,
+    minScore: 501,
     color: 'bg-amber-500',
     textColor: 'text-amber-700',
     bgColor: 'bg-amber-50',
@@ -92,7 +82,7 @@ const TIERS: TierConfig[] = [
   {
     id: 'silver',
     nameKey: 'reputation.tiers.silver',
-    minScore: 300,
+    minScore: 251,
     color: 'bg-gray-400',
     textColor: 'text-gray-700',
     bgColor: 'bg-gray-50',
@@ -108,16 +98,6 @@ const TIERS: TierConfig[] = [
     bgColor: 'bg-amber-50',
     borderColor: 'border-amber-500',
     icon: <Shield className="h-5 w-5 text-amber-700" />,
-  },
-  {
-    id: 'unranked',
-    nameKey: 'reputation.tiers.unranked',
-    minScore: 0,
-    color: 'bg-gray-300',
-    textColor: 'text-gray-600',
-    bgColor: 'bg-gray-50',
-    borderColor: 'border-gray-200',
-    icon: <BarChart3 className="h-5 w-5 text-gray-400" />,
   },
 ];
 
@@ -230,16 +210,11 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
     }
   };
 
+  const toTierScore = (score: number): number => score <= 100 ? score * 10 : score;
+
   const getTier = (score: number): TierConfig => {
-    if (score <= 100) {
-      if (score >= 98) return TIERS.find(c => c.id === 'diamond')!;
-      if (score >= 85) return TIERS.find(c => c.id === 'platinum')!;
-      if (score >= 70) return TIERS.find(c => c.id === 'gold')!;
-      if (score >= 50) return TIERS.find(c => c.id === 'silver')!;
-      if (score >= 25) return TIERS.find(c => c.id === 'bronze')!;
-      return TIERS.find(c => c.id === 'unranked')!;
-    }
-    return TIERS.find(t => score >= t.minScore) || TIERS[TIERS.length - 1];
+    const normalizedScore = toTierScore(score);
+    return TIERS.find(t => normalizedScore >= t.minScore) || TIERS[TIERS.length - 1];
   };
 
   const getTrendIcon = (trend: 'up' | 'down' | 'stable') => {
@@ -254,11 +229,12 @@ export const ReputationBadge: React.FC<ReputationBadgeProps> = ({
   };
 
   const getScoreWithinTier = (score: number, tier: TierConfig): number => {
+    const normalizedScore = toTierScore(score);
     const tierIndex = TIERS.indexOf(tier);
     if (tierIndex === 0) return 100;
     const nextTierMin = TIERS[tierIndex - 1].minScore;
     const range = nextTierMin - tier.minScore;
-    return ((score - tier.minScore) / range) * 100;
+    return ((normalizedScore - tier.minScore) / range) * 100;
   };
 
   if (loading) {

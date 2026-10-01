@@ -15,6 +15,16 @@ export { CredentialClient } from './credentialClient';
 export { ReputationClient } from './reputation';
 export { ZKProofsClient } from './zkProofs';
 export { SchemaRegistryClient } from './schemaClient';
+export { createPortableSchema, verifyPortableSchema } from './schemaPortability';
+export {
+  aggregateReputationCategories,
+  getReputationCategoryBreakdown,
+  recalculateDecayedScore,
+  getReputationTier,
+  ReputationTierChangeEmitter,
+  DEFAULT_REPUTATION_TIERS,
+} from './reputationScoring';
+export type { ReputationTierDefinition } from './reputationScoring';
 export { CacheManager, DataType } from './cacheManager';
 export { compressPayload, decompressPayload, compressionRatio } from './compression';
 export { EventSubscriber } from './eventSubscriber';
@@ -265,6 +275,16 @@ export type {
   ReputationBreakdown,
   ReputationComparison,
   ReputationTierProof,
+  PortableSchema,
+  CredentialSchema,
+  SchemaImportConflictStrategy,
+  SchemaImportResult,
+  ReputationCategoryScores,
+  ReputationCategoryWeights,
+  ReputationCategoryBreakdown,
+  ReputationEvent,
+  DecayOptions,
+  DecayedReputationResult,
   TrustEdge,
   TrustAttestation,
   TrustGraph,
