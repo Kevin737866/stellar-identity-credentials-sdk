@@ -343,7 +343,7 @@ export function createRateLimitMiddleware(options: RateLimitMiddlewareOptions): 
         );
       }
 
-      const waitMs = Math.max(1, timestamps[0] + windowMs - now);
+      const waitMs = Math.max(1, Math.min(timestamps[0] + windowMs - now, deadline - now));
       await new Promise(resolve => setTimeout(resolve, waitMs));
     }
   };

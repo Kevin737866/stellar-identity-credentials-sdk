@@ -343,6 +343,57 @@ export interface CredentialSchema {
   updated: number;
 }
 
+/** A schema plus source metadata that can be moved between registry instances. */
+export interface PortableSchema {
+  format: 'stellar-identity-schema';
+  formatVersion: 1;
+  schema: CredentialSchema;
+  checksum: string;
+}
+
+export type SchemaImportConflictStrategy = 'error' | 'skip' | 'replace';
+
+export interface SchemaImportResult {
+  schemaId: string;
+  imported: boolean;
+  skipped?: boolean;
+  reason?: string;
+}
+
+export interface ReputationCategoryScores {
+  transaction_reliability: number;
+  credential_trustworthiness: number;
+  community_trust: number;
+  activity_volume: number;
+}
+
+export type ReputationCategoryWeights = ReputationCategoryScores;
+
+export interface ReputationCategoryBreakdown {
+  subscores: ReputationCategoryScores;
+  weights: ReputationCategoryWeights;
+  aggregateScore: number;
+}
+
+export interface ReputationEvent {
+  score: number;
+  timestamp: number;
+  eventType: string;
+}
+
+export interface DecayOptions {
+  /** Exponential decay rate per day. Zero preserves historical, non-decayed scores. */
+  decayRatePerDay: number;
+  /** Score used when there are no events, preserving callers' prior score. */
+  fallbackScore?: number;
+  now?: number;
+}
+
+export interface DecayedReputationResult {
+  score: number;
+  history: Array<ReputationEvent & { decayFactor: number; weightedScore: number }>;
+}
+
 export interface SchemaValidationResult {
   valid: boolean;
   errors: string[];
