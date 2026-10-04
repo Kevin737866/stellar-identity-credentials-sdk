@@ -21,6 +21,8 @@
     "sdk/src/revocationRegistry.ts",
     "sdk/src/revocationTypes.ts",
     "sdk/src/walletConnector.ts",
+    "sdk/src/cacheManager.ts",
+    "sdk/src/cacheBackend.ts",
     "sdk/src/dataMinimization.ts",
     "sdk/src/gdpr.ts",
     "sdk/src/compression.ts",
