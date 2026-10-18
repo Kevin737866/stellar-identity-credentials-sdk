@@ -45,6 +45,21 @@ pub const DEFAULT_PAGE_SIZE: u32 = 10;
 /// TTL for event log entries (in ledgers). ~1 year.
 pub const EVENT_TTL_LEDGERS: u32 = 6_307_200;
 
+/// Maximum number of events a single [`record_event_batch`] flush may append.
+/// Bounds the worst-case storage cost of one batch call.
+pub const MAX_BATCH_SIZE: u32 = 100;
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// Errors returned by the batch recording path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EventIndexError {
+    /// The batch contained more events than [`MAX_BATCH_SIZE`].
+    BatchTooLarge,
+}
+
 // ---------------------------------------------------------------------------
 // Storage keys
 // ---------------------------------------------------------------------------
@@ -286,6 +301,10 @@ pub fn record_event(
     resource: Option<Bytes>,
     data: Bytes,
 ) -> u64 {
+    // Only the emitting contract (or a caller it authorises) may append to the
+    // index and advance the sequence counter.
+    actor.require_auth();
+
     let seq = current_head(env) + 1;
     env.storage().instance().set(&EvKey::Counter, &seq);
 
@@ -399,11 +418,19 @@ impl EventBatchWriter {
 
     /// Write every staged record to persistent storage, appending to each
     /// secondary index in a single read-modify-write pass.
-    pub fn flush(self, env: &Env) -> Vec<EventRecord> {
+    pub fn flush(self, env: &Env) -> Result<Vec<EventRecord>, EventIndexError> {
+        if self.records.len() > MAX_BATCH_SIZE as u32 {
+            return Err(EventIndexError::BatchTooLarge);
+        }
+
         let mut head = current_head(env);
         let mut pending: Vec<(IndexKind, u64)> = Vec::new(env);
 
         for record in self.records.iter() {
+            // Every event in the batch must be authorised by its emitting
+            // contract, so an unauthenticated caller cannot inject records.
+            record.actor.require_auth();
+
             head = core::cmp::max(head, record.seq);
             env.storage()
                 .persistent()
@@ -1004,7 +1031,7 @@ mod tests {
             assert_eq!(writer.len(), 3);
             assert!(!writer.is_empty());
 
-            let flushed = writer.flush(&h.env);
+            let flushed = writer.flush(&h.env).unwrap();
             assert_eq!(flushed.len(), 3);
             assert_eq!(flushed.get(0).unwrap().seq, 1);
             assert_eq!(flushed.get(2).unwrap().seq, 3);
@@ -1091,5 +1118,66 @@ mod tests {
             let page = query_events(&h.env, filter, 0, 10);
             assert_eq!(page.total, 0);
         });
+    }
+
+    #[test]
+    fn flush_rejects_batches_over_the_maximum() {
+        let h = Harness::new();
+        h.run(|| {
+            let a = Address::generate(&h.env);
+            let b = Address::generate(&h.env);
+
+            let mut writer = record_event_batch(&h.env);
+            for _ in 0..MAX_BATCH_SIZE + 1 {
+                writer.push(
+                    &h.env,
+                    IndexedEventType::CredentialCreated,
+                    a.clone(),
+                    Some(b.clone()),
+                    None,
+                    Bytes::new(&h.env),
+                );
+            }
+            assert_eq!(
+                writer.flush(&h.env),
+                Err(EventIndexError::BatchTooLarge)
+            );
+        });
+    }
+
+    #[test]
+    fn record_event_requires_authorisation() {
+        // An environment without `mock_all_auths`, so no caller is authorised
+        // to act on behalf of any address.
+        let env = Env::default();
+        env.ledger().set(LedgerInfo {
+            timestamp: 1_700_000_000,
+            protocol_version: 22,
+            sequence_number: 1000,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 50_000,
+            min_persistent_entry_ttl: 50_000,
+            max_entry_ttl: 50_000,
+        });
+        let host = env.register(EventLogHost, ());
+        let actor = Address::generate(&env);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            env.as_contract(&host, || {
+                record_event(
+                    &env,
+                    IndexedEventType::CredentialCreated,
+                    actor.clone(),
+                    None,
+                    None,
+                    Bytes::new(&env),
+                );
+            })
+        }));
+        assert!(
+            outcome.is_err(),
+            "an unauthenticated append to the event index must be rejected"
+        );
     }
 }

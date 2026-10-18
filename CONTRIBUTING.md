@@ -167,6 +167,26 @@ Waivers do **not** mean the CI check is skipped. Instead:
 - The inline suppression must reference the waiver issue number
 - This keeps CI green while documenting the intentional exception
 
+## Code Ownership and Review Requirements
+
+This repository uses a [`CODEOWNERS`](CODEOWNERS) file to direct review capacity at
+security-critical paths. The following policy is enforced:
+
+- **CODEOWNERS exists and covers** contracts implementing verification, key
+  management and governance; SDK cryptography, error handling and configuration;
+  CI/CD workflows; and the ADRs that state security properties.
+- **Branch protection requires owner review** for changes touching CODEOWNERS
+  paths. A sensitive change cannot merge on red CI or without the approval of an
+  owner for that path.
+- **The ownership list is documented here** and implies that the listed owners
+  are responsible for reviewing, approving and (when necessary) waiving changes
+  to their paths. See the Waiver Process above for the exception mechanism.
+- **A test pull request touching a protected path** is used to confirm the owner
+  review requirement triggers before the policy is considered effective.
+
+Please check [`CODEOWNERS`](CODEOWNERS) before opening a pull request so you know
+which reviewers your changes will route to.
+
 ## Code of Conduct
 
 Please note that this project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md). By participating in this project, you agree to abide by its terms.
@@ -364,6 +384,26 @@ Waivers do **not** mean the CI check is skipped. Instead:
 - The lint error is suppressed via inline comment (e.g., `#[allow(clippy::cognitive_complexity)]` in Rust or `// eslint-disable-next-line complexity` in TypeScript)
 - The inline suppression must reference the waiver issue number
 - This keeps CI green while documenting the intentional exception
+
+## Code Ownership and Review Requirements
+
+This repository uses a [`CODEOWNERS`](CODEOWNERS) file to direct review capacity at
+security-critical paths. The following policy is enforced:
+
+- **CODEOWNERS exists and covers** contracts implementing verification, key
+  management and governance; SDK cryptography, error handling and configuration;
+  CI/CD workflows; and the ADRs that state security properties.
+- **Branch protection requires owner review** for changes touching CODEOWNERS
+  paths. A sensitive change cannot merge on red CI or without the approval of an
+  owner for that path.
+- **The ownership list is documented here** and implies that the listed owners
+  are responsible for reviewing, approving and (when necessary) waiving changes
+  to their paths. See the Waiver Process above for the exception mechanism.
+- **A test pull request touching a protected path** is used to confirm the owner
+  review requirement triggers before the policy is considered effective.
+
+Please check [`CODEOWNERS`](CODEOWNERS) before opening a pull request so you know
+which reviewers your changes will route to.
 
 ## Code of Conduct
 
