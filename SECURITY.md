@@ -6,39 +6,77 @@ The Stellar Identity team takes security seriously. We appreciate your efforts t
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Instead, please report them via email to **security@stellar-identity.org** with:
+### Preferred channel: GitHub Private Vulnerability Reporting
+
+The primary reporting path is **[GitHub Private Vulnerability Reporting](https://github.com/Kevin737866/stellar-identity-credentials-sdk/security/advisories/new)** on this repository. Use the "Report a vulnerability" button on the Security tab to open a private advisory thread with the maintainers. This channel is hosted by GitHub and does not depend on any third-party infrastructure, so it is the path we can guarantee is monitored as long as the repository is active.
+
+> **Maintainer note:** if the advisory form is not visible, enable
+> *Settings → Security → Private vulnerability reporting* on the
+> repository. A quarterly check (tracked alongside the release checklist)
+> must confirm the form is still available and that a test advisory is
+> received and acknowledged.
+
+### Secondary channel: email
+
+If you cannot use GitHub advisories, email **security@stellar-identity.org**.
+This mailbox is provided for convenience; its availability has **not** been
+independently verified by the current maintainers, so prefer the GitHub
+channel above. If you receive no acknowledgement within 5 business days,
+open a public GitHub issue asking for maintainer contact **without
+disclosing vulnerability details**.
+
+In either channel, please include:
 
 - A description of the vulnerability and its potential impact
 - Steps to reproduce or a proof-of-concept
 - Affected component(s) and version(s)
 - Any suggested mitigations
 
-You will receive an acknowledgement within **24 hours**. Updates on the investigation will be provided every 48 hours until the issue is resolved.
+Acknowledgement targets (best-effort, volunteer-maintained — see below):
 
-## Vulnerability Remediation SLA
+| Channel | Acknowledgement target |
+|---|---|
+| GitHub Private Vulnerability Reporting | 5 business days |
+| Email (security@stellar-identity.org) | 5 business days (if delivered) |
 
-| Severity | Acknowledgement | Remediation |
+Reports are triaged in the order received. You will receive status updates
+as the investigation progresses; a report that is not acknowledged within
+the target above should be re-sent through the other channel.
+
+## Vulnerability Remediation Targets
+
+The following are **targets**, not contractual SLAs; this project is
+volunteer-maintained and remediation timing depends on severity,
+availability of maintainers and the complexity of a fix.
+
+| Severity | Acknowledgement target | Remediation target |
 |---|---|---|
-| Critical | 24 hours | 24 hours |
-| High | 24 hours | 7 days |
-| Medium | 48 hours | 30 days |
-| Low | 48 hours | Next release |
+| Critical | 5 business days | Best effort — fix or mitigation first, advisory after |
+| High | 5 business days | 30 days |
+| Medium | 10 business days | Next minor release |
+| Low | 10 business days | Best effort |
 
 ## Supported Versions
 
+This project has **not yet published a tagged release**. There is therefore
+no version range that receives security fixes today:
+
 | Version | Supported |
 |---|---|
-| 0.1.x | ✅ |
+| unreleased (master) | ⚠️ best effort only |
+
+Once a release is tagged, this table will list concrete supported ranges
+(for example `>= 0.2 < 0.3`) and the deprecation policy for older lines.
 
 ## Disclosure Policy
 
-1. Reporter submits vulnerability to security@stellar-identity.org
-2. Team acknowledges receipt within 24 hours
+1. Reporter submits a vulnerability via GitHub Private Vulnerability Reporting (preferred) or email
+2. Team acknowledges receipt (target: 5 business days)
 3. Team validates and assesses the severity (Critical / High / Medium / Low)
 4. A fix is developed, tested, and reviewed
-5. A patch release is published along with a security advisory on GitHub
+5. A patch or mitigation is published along with a security advisory on GitHub
 6. Credit is given to the reporter (unless anonymity is requested)
-7. A post-mortem is published for Critical and High vulnerabilities within 30 days
+7. A post-mortem is published for Critical and High vulnerabilities when capacity allows
 
 ## Security Audit Checklist
 
