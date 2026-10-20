@@ -660,10 +660,14 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## 🆘 Support
 
-- **Documentation**: [docs.stellar-identity.org](https://docs.stellar-identity.org)
-- **Discord**: [Stellar Identity Discord](https://discord.gg/stellar-identity)
-- **Issues**: [GitHub Issues](https://github.com/stellar-identity/sdk/issues)
-- **Email**: support@stellar-identity.org
+- **Security**: [GitHub Private Vulnerability Reporting](https://github.com/Kevin737866/stellar-identity-credentials-sdk/security/advisories/new) (see [`SECURITY.md`](SECURITY.md))
+- **Documentation**: guides in the [`docs/`](docs/) directory of this repository
+- **Issues**: [GitHub Issues](https://github.com/Kevin737866/stellar-identity-credentials-sdk/issues)
+
+> **Note:** external channels (a hosted docs site, Discord server, or
+> `support@` mailbox) are not currently maintained by the active
+> maintainers; the repository links above are the channels we can commit
+> to monitoring.
 
 ## 🗺️ Roadmap
 

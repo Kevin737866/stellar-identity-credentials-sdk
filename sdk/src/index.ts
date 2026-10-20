@@ -16,6 +16,15 @@ export { CredentialClient } from './credentialClient';
 export { ReputationClient } from './reputation';
 export { ZKProofsClient } from './zkProofs';
 export { SchemaRegistryClient } from './schemaClient';
+export {
+  checkContractCompatibility,
+  SUPPORTED_CONTRACT_VERSION,
+} from './compatibility';
+export type {
+  CompatibilityOutcome,
+  CompatibilityResult,
+  SemanticVersion,
+} from './compatibility';
 export { createPortableSchema, verifyPortableSchema } from './schemaPortability';
 export {
   aggregateReputationCategories,

@@ -10,6 +10,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  repo-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on zero-byte tracked files under docs/ or src/
+        run: node scripts/check-empty-files.js
+
   fmt:
     runs-on: ubuntu-latest
     steps:
