@@ -2,6 +2,13 @@
 
 This guide walks you through common integration patterns with the Stellar Identity Credentials SDK.
 
+> **Feature status note.** Some flows below depend on contract modules that
+> are not yet compiled into the deployed contracts (`presentation`,
+> `regulatory_reporting`). Where a step depends on one it is marked
+> **[planned]** in place. Treat unmarked steps as executable today against
+> testnet. Run `npm run docs:check-commands` to verify the commands
+> referenced in this guide exist in the repository.
+
 ## Prerequisites
 
 - Node.js 18+
@@ -66,8 +73,21 @@ const signed = await connector.signTransaction(xdr, { network: 'testnet' });
 
 Your app needs an **issuer keypair** with admin rights on the `CredentialIssuer` contract.
 
+> ⚠️ **Never hard-code key material.** Load the issuer secret from the
+> environment (or a secret manager) and keep it out of source control.
+> The `S...` placeholder below is deliberately invalid — replace it with a
+> secret injected at runtime, and fail fast when it is missing.
+
 ```typescript
-const issuerKeypair = Keypair.fromSecret('SXXX...');  // store securely
+import { Keypair } from 'stellar-sdk';
+
+// Load from the environment — never paste a secret into source code.
+// Example .env entry: ISSUER_SECRET_KEY=SABC...  (testnet account only)
+const issuerSecret = process.env.ISSUER_SECRET_KEY;
+if (!issuerSecret) {
+  throw new Error('ISSUER_SECRET_KEY is not set — see .env.example');
+}
+const issuerKeypair = Keypair.fromSecret(issuerSecret);
 
 // Issue a KYC credential after verifying the user off-chain
 const credId = await sdk.credentials.issueKYCCredential(
@@ -112,6 +132,10 @@ const allValid = results.every(r => r.valid);
 ### Verifying a Presentation
 
 When a user presents credentials via a Verifiable Presentation:
+
+> **[planned]** Full on-chain presentation support (`src/presentation.rs`)
+> is not yet compiled into the deployed contracts. The SDK method below
+> works against locally mocked presentations only.
 
 ```typescript
 const isValid = await sdk.credentials.verifyPresentation(presentationObject);
@@ -197,6 +221,10 @@ const isAdult = await sdk.zkProofs.verifyAgeProof(proofId, 18);
 ```
 
 ### Step 4 — Generate a compliance report
+
+> **[planned]** Regulatory reporting (`src/regulatory_reporting.rs`) is not
+> yet compiled into the deployed contracts; reports assemble from on-chain
+> audit-trail data that only exists once the contract module ships.
 
 ```typescript
 const report = await compliance.generateComplianceReport(userAddress, issuerKeypair);

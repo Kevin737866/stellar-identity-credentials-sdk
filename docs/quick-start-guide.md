@@ -4,6 +4,11 @@ Step-by-step tutorials for common workflows using the Stellar Identity Credentia
 Each tutorial includes prerequisites, copy-paste code snippets, expected output, and 
 troubleshooting tips.
 
+> **Feature status note.** Tutorials that depend on contract modules which are
+> not yet compiled into the deployed contracts (`presentation`,
+> `regulatory_reporting`) are marked **[planned]** in place. All other steps
+> target the deployed testnet contracts.
+
 ---
 
 ## Prerequisites
@@ -531,6 +536,10 @@ async function complianceScreening() {
 
   // ── Step 4: Generate a compliance report ──────────────────────────────
   console.log('\n📊 Step 4: Generating compliance report...');
+
+  // NOTE [planned]: regulatory reporting (src/regulatory_reporting.rs) is not
+  // yet compiled into the deployed contracts; this section only produces
+  // meaningful output once the on-chain audit trail ships.
 
   // First, create a DID for the user so we can generate a report
   const userDID = await sdk.did.createDID(userKeypair, {

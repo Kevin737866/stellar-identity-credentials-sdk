@@ -102,6 +102,7 @@ Thank you for your interest in contributing to the Stellar Identity and Verifiab
 - [ ] New tests added for new functionality
 - [ ] Documentation updated (if applicable)
 - [ ] No linting or formatting errors
+- [ ] Issues closed by this PR link the test that demonstrates the behaviour (see [`docs/issue-closure-policy.md`](docs/issue-closure-policy.md))
 
 ## Testing Guidelines
 
@@ -320,6 +321,7 @@ feat|fix|docs|test|refactor|chore: <description>
 - [ ] New tests added for new functionality
 - [ ] Documentation updated (if applicable)
 - [ ] No linting or formatting errors
+- [ ] Issues closed by this PR link the test that demonstrates the behaviour (see [`docs/issue-closure-policy.md`](docs/issue-closure-policy.md))
 
 ## Testing Guidelines
 

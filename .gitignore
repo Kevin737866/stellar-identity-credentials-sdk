@@ -27,6 +27,11 @@ target/
 *.swp
 *.swo
 
+# One-off repair scripts (Issue #518) — these are ad-hoc migration artefacts
+# and must never be committed; real migrations belong in scripts/ with tests.
+fix_errors*.py
+fix_errors*.sh
+
 # Test coverage & reports
 coverage/
 **/coverage/
