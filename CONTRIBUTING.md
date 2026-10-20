@@ -167,6 +167,33 @@ Waivers do **not** mean the CI check is skipped. Instead:
 - The inline suppression must reference the waiver issue number
 - This keeps CI green while documenting the intentional exception
 
+## Dependency policy and compatibility matrix
+
+This is a security-sensitive SDK, so dependency currency is treated as a security
+requirement, not housekeeping.
+
+- **Automated updates**: Dependabot is configured (`.github/dependabot.yml`) for
+  both Cargo and npm. Patch and minor updates auto-merge after green checks;
+  majors require review; security advisories take priority and are tracked to
+  closure.
+- **Pinned toolchain**: The Rust toolchain is pinned in `rust-toolchain.toml`;
+  supported Node versions are declared in the `engines` field of
+  `package.json`.
+- **Compatibility matrix**: The SDK, contracts and Stellar network protocol must
+  stay compatible. The current matrix is:
+
+  | Component | Version | Notes |
+  |-----------|---------|-------|
+  | Rust toolchain | 1.75.0 | Pinned in `rust-toolchain.toml` |
+  | soroban-sdk | 22.0.0 | Exact pin |
+  | stellar-sdk | ^12.0.0 | Caret range; reviewed on major bumps |
+  | Node.js | >=18 | Declared in `engines` |
+  | Stellar protocol | v22 | Matches `protocol_version` in tests |
+
+  Review the matrix quarterly and record the review. Before a mainnet release,
+  confirm the SDK version, contract version and protocol version are all
+  compatible and document any drift.
+
 ## Code of Conduct
 
 Please note that this project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md). By participating in this project, you agree to abide by its terms.
@@ -364,6 +391,33 @@ Waivers do **not** mean the CI check is skipped. Instead:
 - The lint error is suppressed via inline comment (e.g., `#[allow(clippy::cognitive_complexity)]` in Rust or `// eslint-disable-next-line complexity` in TypeScript)
 - The inline suppression must reference the waiver issue number
 - This keeps CI green while documenting the intentional exception
+
+## Dependency policy and compatibility matrix
+
+This is a security-sensitive SDK, so dependency currency is treated as a security
+requirement, not housekeeping.
+
+- **Automated updates**: Dependabot is configured (`.github/dependabot.yml`) for
+  both Cargo and npm. Patch and minor updates auto-merge after green checks;
+  majors require review; security advisories take priority and are tracked to
+  closure.
+- **Pinned toolchain**: The Rust toolchain is pinned in `rust-toolchain.toml`;
+  supported Node versions are declared in the `engines` field of
+  `package.json`.
+- **Compatibility matrix**: The SDK, contracts and Stellar network protocol must
+  stay compatible. The current matrix is:
+
+  | Component | Version | Notes |
+  |-----------|---------|-------|
+  | Rust toolchain | 1.75.0 | Pinned in `rust-toolchain.toml` |
+  | soroban-sdk | 22.0.0 | Exact pin |
+  | stellar-sdk | ^12.0.0 | Caret range; reviewed on major bumps |
+  | Node.js | >=18 | Declared in `engines` |
+  | Stellar protocol | v22 | Matches `protocol_version` in tests |
+
+  Review the matrix quarterly and record the review. Before a mainnet release,
+  confirm the SDK version, contract version and protocol version are all
+  compatible and document any drift.
 
 ## Code of Conduct
 

@@ -171,6 +171,12 @@ pub enum GcKey {
     DomainTotals(StorageDomain),
     /// The registered candidate list for a domain.
     Candidates(StorageDomain),
+    /// The authorised maintainer address for registration and collection.
+    Admin,
+    /// Address that ran the most recent collection run (audit attribution).
+    LastOperator,
+    /// Ledger timestamp of the most recent collection run.
+    LastRunTimestamp,
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +198,10 @@ pub enum GcError {
     UnsupportedContract = 5,
     /// A collection call failed inside a registered contract.
     CollectionFailed = 6,
+    /// The caller is not the authorised maintainer.
+    Unauthorized = 7,
+    /// The domain is protected and may not be garbage collected.
+    DomainNotCollectable = 8,
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +226,49 @@ pub fn resolve_batch_size(batch_size: u32) -> Result<u32, GcError> {
 /// Decide whether a single candidate is collectable at `now`.
 pub fn is_expired(expires_at: u64, now: u64) -> bool {
     now > expires_at
+}
+
+/// Returns `true` when `domain` holds live identity records that must never
+/// be swept by an operational collection job.
+pub fn domain_is_protected(domain: &StorageDomain) -> bool {
+    matches!(
+        domain,
+        StorageDomain::Credentials | StorageDomain::Revocation
+    )
+}
+
+/// The authorised maintainer for registration and collection runs, if set.
+pub fn get_admin(env: &Env) -> Option<Address> {
+    env.storage().persistent().get(&GcKey::Admin)
+}
+
+/// Configure the authorised maintainer.  When no maintainer is configured yet
+/// the caller bootstraps the role; otherwise only the current maintainer may
+/// rotate it.
+pub fn set_admin(env: &Env, admin: Address) -> Result<(), GcError> {
+    if let Some(current) = get_admin(env) {
+        current.require_auth();
+    }
+    env.storage().persistent().set(&GcKey::Admin, &admin);
+    Ok(())
+}
+
+/// Require the authorised maintainer to have signed the current call.
+pub fn require_admin(env: &Env) -> Result<(), GcError> {
+    let admin = match get_admin(env) {
+        Some(a) => a,
+        None => return Err(GcError::Unauthorized),
+    };
+    admin.require_auth();
+    Ok(())
+}
+
+/// Record the operator and timestamp of a collection run for audit attribution.
+pub fn record_collection_run(env: &Env, operator: &Address) {
+    env.storage().persistent().set(&GcKey::LastOperator, operator);
+    env.storage()
+        .persistent()
+        .set(&GcKey::LastRunTimestamp, &env.ledger().timestamp());
 }
 
 /// Run a garbage-collection pass over `candidates`.
@@ -281,8 +334,14 @@ pub fn partition_candidates(env: &Env, candidates: &Vec<GcCandidate>) -> (Vec<By
 }
 
 /// Record the outcome of a collection run in the module's own storage and emit
-/// a `StorageGarbageCollected` event, so the savings are auditable.
-pub fn record_collection(env: &Env, domain: &StorageDomain, result: &GcResult) {
+/// a `StorageGarbageCollected` event, so the savings are auditable.  `operator`
+/// is the authorised maintainer who ran the collection, stored for attribution.
+pub fn record_collection(
+    env: &Env,
+    domain: &StorageDomain,
+    result: &GcResult,
+    operator: &Address,
+) {
     let run = get_run_count(env) + 1;
     env.storage().persistent().set(&GcKey::RunCount, &run);
     env.storage().persistent().set(
@@ -303,6 +362,8 @@ pub fn record_collection(env: &Env, domain: &StorageDomain, result: &GcResult) {
     );
 
     env.storage().persistent().set(&GcKey::LastResult, result);
+
+    record_collection_run(env, operator);
 
     env.events().publish(
         (Symbol::new(env, "StorageGarbageCollected"),),
@@ -401,9 +462,14 @@ pub fn run_registered_collection(
     domain: &StorageDomain,
     batch_size: u32,
 ) -> Result<GcResult, GcError> {
+    require_admin(env)?;
+    if domain_is_protected(domain) {
+        return Err(GcError::DomainNotCollectable);
+    }
+    let admin = get_admin(env).expect("authorised maintainer required");
     let candidates = get_candidates(env, domain);
     let result = collect_garbage(env, &candidates, batch_size)?;
-    record_collection(env, domain, &result);
+    record_collection(env, domain, &result, &admin);
     Ok(result)
 }
 
@@ -480,8 +546,17 @@ pub struct StorageGarbageCollector;
 #[contractimpl]
 impl StorageGarbageCollector {
     /// Register the candidate list this collector will sweep.
-    pub fn register_candidates(env: Env, domain: StorageDomain, candidates: Vec<GcCandidate>) {
+    pub fn register_candidates(
+        env: Env,
+        domain: StorageDomain,
+        candidates: Vec<GcCandidate>,
+    ) -> Result<(), GcError> {
+        require_admin(&env)?;
+        if domain_is_protected(&domain) {
+            return Err(GcError::DomainNotCollectable);
+        }
         register_candidates(&env, &domain, &candidates);
+        Ok(())
     }
 
     /// The registered candidate list for a domain.
@@ -505,8 +580,10 @@ impl StorageGarbageCollector {
         candidates: Vec<GcCandidate>,
         batch_size: u32,
     ) -> Result<GcResult, GcError> {
+        require_admin(&env)?;
+        let admin = get_admin(&env).expect("authorised maintainer required");
         let result = collect_garbage(&env, &candidates, batch_size)?;
-        record_collection(&env, &StorageDomain::Cache, &result);
+        record_collection(&env, &StorageDomain::Cache, &result, &admin);
         Ok(result)
     }
 
@@ -760,5 +837,42 @@ mod tests {
             result.unwrap().contracts_skipped,
             list.len() - MAX_CONTRACTS_PER_RUN
         );
+    }
+
+    #[test]
+    fn protected_domains_are_not_collectable() {
+        assert!(domain_is_protected(&StorageDomain::Credentials));
+        assert!(domain_is_protected(&StorageDomain::Revocation));
+        assert!(!domain_is_protected(&StorageDomain::Cache));
+        assert!(!domain_is_protected(&StorageDomain::Proofs));
+    }
+
+    #[test]
+    fn maintainer_can_be_bootstrapped_and_read() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        // No maintainer is configured yet, so bootstrapping requires no auth.
+        assert_eq!(set_admin(&env, admin.clone()), Ok(()));
+        assert_eq!(get_admin(&env), Some(admin.clone()));
+    }
+
+    #[test]
+    fn require_admin_rejects_when_no_maintainer_configured() {
+        let env = setup_env();
+        assert_eq!(require_admin(&env), Err(GcError::Unauthorized));
+    }
+
+    #[test]
+    fn run_collection_refuses_protected_domain() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        set_admin(&env, admin.clone()).unwrap();
+        env.mock_all_auths();
+        let result = run_registered_collection(
+            &env,
+            &StorageDomain::Credentials,
+            DEFAULT_BATCH_SIZE,
+        );
+        assert_eq!(result, Err(GcError::DomainNotCollectable));
     }
 }

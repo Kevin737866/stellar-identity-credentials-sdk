@@ -3,6 +3,7 @@ use soroban_sdk::{
 };
 
 use crate::admin;
+use crate::audit_trail::{emit_audit_event, AuditEventType};
 use crate::batch_optimizer::{IndexAppender, IndexKey};
 use crate::contract_upgrade;
 use crate::event_index::{self, EventFilter, EventRecord, EventStreamPage, IndexedEventType};
@@ -675,6 +676,14 @@ impl CredentialIssuer {
             reason.unwrap_or(Bytes::from_slice(&env, b"unspecified")),
         );
 
+        emit_audit_event(
+            &env,
+            issuer,
+            AuditEventType::CredentialRevoked,
+            Some(credential_id),
+            reason.unwrap_or(Bytes::from_slice(&env, b"unspecified")),
+        );
+
         Ok(())
     }
 
@@ -932,6 +941,14 @@ impl CredentialIssuer {
             Bytes::from_slice(&env, b"issuer_authorized"),
         );
 
+        emit_audit_event(
+            &env,
+            admin,
+            AuditEventType::RoleGranted,
+            None,
+            Bytes::from_slice(&env, b"authorized to issue credentials"),
+        );
+
         Ok(())
     }
 
@@ -981,6 +998,14 @@ impl CredentialIssuer {
             Some(issuer),
             None,
             Bytes::from_slice(&env, b"issuer_deauthorized"),
+        );
+
+        emit_audit_event(
+            &env,
+            admin,
+            AuditEventType::RoleRevoked,
+            None,
+            Bytes::from_slice(&env, b"deauthorized from issuing credentials"),
         );
 
         Ok(())
@@ -2039,7 +2064,17 @@ impl CredentialIssuer {
         caller.require_auth();
         validation::require_non_zero_address(&env, &new_admin)?;
         admin::transfer_admin(&env, &caller, new_admin)
-            .map_err(|_| CredentialIssuerError::Unauthorized)
+            .map_err(|_| CredentialIssuerError::Unauthorized)?;
+
+        emit_audit_event(
+            &env,
+            caller,
+            AuditEventType::AdminTransferred,
+            None,
+            Bytes::from_slice(&env, b"contract admin transferred"),
+        );
+
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -2058,7 +2093,17 @@ impl CredentialIssuer {
         config: RateLimitConfig,
     ) -> Result<(), CredentialIssuerError> {
         admin.require_auth();
-        rate_limiter::set_limit(&env, &admin, operation, config).map_err(Into::into)
+        rate_limiter::set_limit(&env, &admin, operation, config).map_err(Into::into)?;
+
+        emit_audit_event(
+            &env,
+            admin,
+            AuditEventType::ComplianceRuleChanged,
+            None,
+            Bytes::from_slice(&env, b"rate limit overridden"),
+        );
+
+        Ok(())
     }
 
     /// Read the effective rate limit for an operation (override or default).
@@ -2080,7 +2125,17 @@ impl CredentialIssuer {
         operation: Symbol,
     ) -> Result<(), CredentialIssuerError> {
         admin.require_auth();
-        rate_limiter::clear_limit(&env, &admin, operation).map_err(Into::into)
+        rate_limiter::clear_limit(&env, &admin, operation).map_err(Into::into)?;
+
+        emit_audit_event(
+            &env,
+            admin,
+            AuditEventType::ComplianceRuleChanged,
+            None,
+            Bytes::from_slice(&env, b"rate limit override cleared"),
+        );
+
+        Ok(())
     }
 
     /// Exempt a trusted issuer from throttling. Admin only.
@@ -2093,10 +2148,24 @@ impl CredentialIssuer {
         admin.require_auth();
         validation::require_non_zero_address(&env, &address)?;
         if exempt {
-            rate_limiter::exempt_address(&env, &admin, address).map_err(Into::into)
+            rate_limiter::exempt_address(&env, &admin, address).map_err(Into::into)?
         } else {
-            rate_limiter::unexempt_address(&env, &admin, address).map_err(Into::into)
-        }
+            rate_limiter::unexempt_address(&env, &admin, address).map_err(Into::into)?
+        };
+
+        emit_audit_event(
+            &env,
+            admin,
+            AuditEventType::ComplianceRuleChanged,
+            None,
+            if exempt {
+                Bytes::from_slice(&env, b"rate limit exemption granted")
+            } else {
+                Bytes::from_slice(&env, b"rate limit exemption revoked")
+            },
+        );
+
+        Ok(())
     }
 
     /// Whether an address is currently exempt from throttling.
