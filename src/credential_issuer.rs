@@ -881,7 +881,7 @@ impl CredentialIssuer {
                 Bytes::from_slice(&env, b"batch"),
             );
         }
-        events.flush(&env);
+        events.flush(&env).expect("batch is within the MAX_BATCH_SIZE limit");
 
         env.events().publish(
             (Symbol::new(&env, "BatchCredentialIssued"),),
@@ -1123,7 +1123,7 @@ impl CredentialIssuer {
                     expired_reason.clone(),
                 );
             }
-            events.flush(&env);
+            events.flush(&env).expect("batch is within the MAX_BATCH_SIZE limit");
         }
 
         Ok(revoked)
@@ -1698,7 +1698,7 @@ impl CredentialIssuer {
                 reason.clone().unwrap_or(Bytes::new(&env)),
             );
         }
-        events.flush(&env);
+        events.flush(&env).expect("batch is within the MAX_BATCH_SIZE limit");
 
         env.events().publish(
             (Symbol::new(&env, "BatchRevocationExecuted"),),

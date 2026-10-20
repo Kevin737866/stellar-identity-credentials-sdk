@@ -1,0 +1,33 @@
+# CODEOWNERS
+
+# Security-critical paths require review from the security/maintainer team.
+# These paths implement verification, key management, governance, SDK
+# cryptography, error handling, configuration, and CI/CD credential-bearing
+# workflows. Changes touching them cannot merge without an owner's approval.
+
+# Zero-knowledge proof system, credential issuance and DID registry.
+/src/zk_attestation.rs @Kevin737866
+/src/credential_issuer.rs @Kevin737866
+/src/did_registry.rs @Kevin737866
+/src/admin_multisig.rs @Kevin737866
+/src/contract_upgrade.rs @Kevin737866
+/src/event_index.rs @Kevin737866
+/src/storage_gc.rs @Kevin737866
+/src/contract_telemetry.rs @Kevin737866
+/src/audit_trail.rs @Kevin737866
+
+# SDK cryptography, error handling and configuration.
+/src/compliance_filter.rs @Kevin737866
+/src/admin.rs @Kevin737866
+
+# Credential-bearing CI/CD workflows.
+/.github/workflows/npm-publish.yml @Kevin737866
+/.github/workflows/deploy-mainnet.yml @Kevin737866
+/.github/workflows/deploy-testnet.yml @Kevin737866
+/.github/workflows/security.yml @Kevin737866
+
+# Documentation that states security properties.
+/docs/adr/ @Kevin737866
+
+# Default ownership for everything else.
+* @Kevin737866

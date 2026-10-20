@@ -27,5 +27,16 @@ What actually happened, including error messages and stack traces.
 - Browser (if applicable): 
 - OS: 
 
+## Reproducible evidence (required)
+- Commit / branch where the bug reproduces: 
+- Command run to reproduce: 
+- Observed output (logs, failing test output, transaction hash, or screenshot): 
+- A minimal reproduction (gist link or code snippet) is strongly encouraged.
+
+## Security impact
+Does this bug have a security impact (for example it affects credential issuance, verification, access control, key management, or the audit trail)? **Yes / No**
+
+If **yes**, do not discuss the vulnerability in public. Report it through the private channel described in [SECURITY.md](../SECURITY.md) instead of filing this issue publicly.
+
 ## Additional Context
 Add any other context about the problem here.

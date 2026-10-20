@@ -167,32 +167,25 @@ Waivers do **not** mean the CI check is skipped. Instead:
 - The inline suppression must reference the waiver issue number
 - This keeps CI green while documenting the intentional exception
 
-## Dependency policy and compatibility matrix
+## Code Ownership and Review Requirements
 
-This is a security-sensitive SDK, so dependency currency is treated as a security
-requirement, not housekeeping.
+This repository uses a [`CODEOWNERS`](CODEOWNERS) file to direct review capacity at
+security-critical paths. The following policy is enforced:
 
-- **Automated updates**: Dependabot is configured (`.github/dependabot.yml`) for
-  both Cargo and npm. Patch and minor updates auto-merge after green checks;
-  majors require review; security advisories take priority and are tracked to
-  closure.
-- **Pinned toolchain**: The Rust toolchain is pinned in `rust-toolchain.toml`;
-  supported Node versions are declared in the `engines` field of
-  `package.json`.
-- **Compatibility matrix**: The SDK, contracts and Stellar network protocol must
-  stay compatible. The current matrix is:
+- **CODEOWNERS exists and covers** contracts implementing verification, key
+  management and governance; SDK cryptography, error handling and configuration;
+  CI/CD workflows; and the ADRs that state security properties.
+- **Branch protection requires owner review** for changes touching CODEOWNERS
+  paths. A sensitive change cannot merge on red CI or without the approval of an
+  owner for that path.
+- **The ownership list is documented here** and implies that the listed owners
+  are responsible for reviewing, approving and (when necessary) waiving changes
+  to their paths. See the Waiver Process above for the exception mechanism.
+- **A test pull request touching a protected path** is used to confirm the owner
+  review requirement triggers before the policy is considered effective.
 
-  | Component | Version | Notes |
-  |-----------|---------|-------|
-  | Rust toolchain | 1.75.0 | Pinned in `rust-toolchain.toml` |
-  | soroban-sdk | 22.0.0 | Exact pin |
-  | stellar-sdk | ^12.0.0 | Caret range; reviewed on major bumps |
-  | Node.js | >=18 | Declared in `engines` |
-  | Stellar protocol | v22 | Matches `protocol_version` in tests |
-
-  Review the matrix quarterly and record the review. Before a mainnet release,
-  confirm the SDK version, contract version and protocol version are all
-  compatible and document any drift.
+Please check [`CODEOWNERS`](CODEOWNERS) before opening a pull request so you know
+which reviewers your changes will route to.
 
 ## Code of Conduct
 
@@ -392,32 +385,25 @@ Waivers do **not** mean the CI check is skipped. Instead:
 - The inline suppression must reference the waiver issue number
 - This keeps CI green while documenting the intentional exception
 
-## Dependency policy and compatibility matrix
+## Code Ownership and Review Requirements
 
-This is a security-sensitive SDK, so dependency currency is treated as a security
-requirement, not housekeeping.
+This repository uses a [`CODEOWNERS`](CODEOWNERS) file to direct review capacity at
+security-critical paths. The following policy is enforced:
 
-- **Automated updates**: Dependabot is configured (`.github/dependabot.yml`) for
-  both Cargo and npm. Patch and minor updates auto-merge after green checks;
-  majors require review; security advisories take priority and are tracked to
-  closure.
-- **Pinned toolchain**: The Rust toolchain is pinned in `rust-toolchain.toml`;
-  supported Node versions are declared in the `engines` field of
-  `package.json`.
-- **Compatibility matrix**: The SDK, contracts and Stellar network protocol must
-  stay compatible. The current matrix is:
+- **CODEOWNERS exists and covers** contracts implementing verification, key
+  management and governance; SDK cryptography, error handling and configuration;
+  CI/CD workflows; and the ADRs that state security properties.
+- **Branch protection requires owner review** for changes touching CODEOWNERS
+  paths. A sensitive change cannot merge on red CI or without the approval of an
+  owner for that path.
+- **The ownership list is documented here** and implies that the listed owners
+  are responsible for reviewing, approving and (when necessary) waiving changes
+  to their paths. See the Waiver Process above for the exception mechanism.
+- **A test pull request touching a protected path** is used to confirm the owner
+  review requirement triggers before the policy is considered effective.
 
-  | Component | Version | Notes |
-  |-----------|---------|-------|
-  | Rust toolchain | 1.75.0 | Pinned in `rust-toolchain.toml` |
-  | soroban-sdk | 22.0.0 | Exact pin |
-  | stellar-sdk | ^12.0.0 | Caret range; reviewed on major bumps |
-  | Node.js | >=18 | Declared in `engines` |
-  | Stellar protocol | v22 | Matches `protocol_version` in tests |
-
-  Review the matrix quarterly and record the review. Before a mainnet release,
-  confirm the SDK version, contract version and protocol version are all
-  compatible and document any drift.
+Please check [`CODEOWNERS`](CODEOWNERS) before opening a pull request so you know
+which reviewers your changes will route to.
 
 ## Code of Conduct
 
