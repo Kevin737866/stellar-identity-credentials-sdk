@@ -41,6 +41,10 @@
   ],
   "author": "Stellar Identity Team",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
   "dependencies": {
     "@albedo-link/intent": "^0.13.0",
     "@types/snarkjs": "^0.7.9",

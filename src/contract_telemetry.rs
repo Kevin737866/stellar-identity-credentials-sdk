@@ -33,7 +33,9 @@
 //! of those is off; `unhealthy` means it is paused or the error rate has
 //! crossed the hard threshold.
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Bytes, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec,
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -181,6 +183,8 @@ pub enum TelemetryKey {
     BucketIndex,
     /// Current paused flag, mirrored from the owning contract.
     Paused,
+    /// The configured owner who may change paused state and tracked entries.
+    Owner,
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +200,8 @@ pub enum TelemetryError {
     TooManyBuckets = 2,
     /// A supplied entry count exceeded the u32 range.
     InvalidEntryCount = 3,
+    /// The caller is not the configured owner.
+    Unauthorized = 4,
 }
 
 // ---------------------------------------------------------------------------
@@ -304,8 +310,9 @@ pub fn record_operation(env: &Env, operation: Symbol, success: bool, storage_ttl
 }
 
 /// Declare how many state entries the owning contract tracks, which becomes
-/// the `tracked_entries` metric.
+/// the `tracked_entries` metric.  Only the configured owner may call this.
 pub fn set_tracked_entries(env: &Env, entries: u32) -> Result<(), TelemetryError> {
+    require_owner(env)?;
     env.storage()
         .persistent()
         .set(&TelemetryKey::TrackedEntries, &entries);
@@ -313,11 +320,38 @@ pub fn set_tracked_entries(env: &Env, entries: u32) -> Result<(), TelemetryError
 }
 
 /// Mirror the owning contract's paused flag so health checks can read it
-/// without a cross-contract call.
-pub fn set_paused(env: &Env, paused: bool) {
+/// without a cross-contract call.  Only the configured owner may write it.
+pub fn set_paused(env: &Env, paused: bool) -> Result<(), TelemetryError> {
+    require_owner(env)?;
     env.storage()
         .persistent()
         .set(&TelemetryKey::Paused, &paused);
+    Ok(())
+}
+
+/// The configured owner who may change paused state and tracked entries.
+pub fn get_owner(env: &Env) -> Option<Address> {
+    env.storage().persistent().get(&TelemetryKey::Owner)
+}
+
+/// Configure the owner.  When no owner is configured yet the caller bootstraps
+/// the role; otherwise only the current owner may rotate it.
+pub fn set_owner(env: &Env, owner: Address) -> Result<(), TelemetryError> {
+    if let Some(current) = get_owner(env) {
+        current.require_auth();
+    }
+    env.storage().persistent().set(&TelemetryKey::Owner, &owner);
+    Ok(())
+}
+
+/// Require the configured owner to have signed the current call.
+pub fn require_owner(env: &Env) -> Result<(), TelemetryError> {
+    let owner = match get_owner(env) {
+        Some(o) => o,
+        None => return Err(TelemetryError::Unauthorized),
+    };
+    owner.require_auth();
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -566,13 +600,16 @@ impl ContractTelemetry {
     }
 
     /// Declare the number of tracked state entries.
-    pub fn set_tracked_entries(env: Env, entries: u32) -> Result<(), TelemetryError> {
+    pub fn set_tracked_entries(
+        env: Env,
+        entries: u32,
+    ) -> Result<(), TelemetryError> {
         set_tracked_entries(&env, entries)
     }
 
     /// Mirror the owning contract's paused flag.
-    pub fn set_paused(env: Env, paused: bool) {
-        set_paused(&env, paused);
+    pub fn set_paused(env: Env, paused: bool) -> Result<(), TelemetryError> {
+        set_paused(&env, paused)
     }
 
     /// Prometheus text exposition of the current snapshot.
@@ -801,8 +838,10 @@ mod tests {
     #[test]
     fn paused_contract_is_unhealthy() {
         let env = setup_env();
+        let owner = Address::generate(&env);
+        set_owner(&env, owner.clone()).unwrap();
         record_operation(&env, op(&env, "issue"), true, 5_000);
-        set_paused(&env, true);
+        set_paused(&env, true).unwrap();
         let report = get_health_status(&env);
         assert_eq!(report.status, HealthStatus::Unhealthy);
         assert!(report.is_paused);
@@ -908,6 +947,8 @@ mod tests {
     #[test]
     fn tracked_entries_are_reported() {
         let env = setup_env();
+        let owner = Address::generate(&env);
+        set_owner(&env, owner.clone()).unwrap();
         set_tracked_entries(&env, 17).unwrap();
         let snapshot = get_metrics(&env, 1, DEFAULT_BUCKET_SECONDS).unwrap();
         assert_eq!(snapshot.tracked_entries, 17);
@@ -931,8 +972,10 @@ mod tests {
     #[test]
     fn prometheus_export_reports_paused() {
         let env = setup_env();
+        let owner = Address::generate(&env);
+        set_owner(&env, owner.clone()).unwrap();
         record_operation(&env, op(&env, "issue"), true, 5_000);
-        set_paused(&env, true);
+        set_paused(&env, true).unwrap();
         let exported = prometheus_export(&env, "did_registry", 4).unwrap();
         let text: alloc::string::String = exported.to_array().iter().map(|b| *b as char).collect();
         assert!(text.contains("did_registry_up 0"));
@@ -945,5 +988,35 @@ mod tests {
         let exported = prometheus_export(&env, "empty", 2).unwrap();
         let text: alloc::string::String = exported.to_array().iter().map(|b| *b as char).collect();
         assert!(text.contains("empty_up 1"));
+    }
+
+    #[test]
+    fn owner_can_be_bootstrapped_and_read() {
+        let env = setup_env();
+        let owner = Address::generate(&env);
+        assert_eq!(set_owner(&env, owner.clone()), Ok(()));
+        assert_eq!(get_owner(&env), Some(owner.clone()));
+    }
+
+    #[test]
+    fn require_owner_rejects_when_no_owner_configured() {
+        let env = setup_env();
+        assert_eq!(require_owner(&env), Err(TelemetryError::Unauthorized));
+    }
+
+    #[test]
+    fn set_paused_rejects_without_owner_auth() {
+        // No owner is configured, so the authorisation check rejects the call.
+        let env = setup_env();
+        assert_eq!(set_paused(&env, true), Err(TelemetryError::Unauthorized));
+    }
+
+    #[test]
+    fn set_tracked_entries_rejects_without_owner_auth() {
+        let env = setup_env();
+        assert_eq!(
+            set_tracked_entries(&env, 17),
+            Err(TelemetryError::Unauthorized)
+        );
     }
 }
